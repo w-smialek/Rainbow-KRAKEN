@@ -21,6 +21,22 @@ def Amplitude_fun(tau,ene_Eg,A_i,A_j,om0_i,om0_j,s_i,s_j,phi_i,phi_j):
                 * np.exp(-1/2*( delta**2/s**2 + tau**2/s_t**2 + 2j*s_i/s_j*delta/s*tau/s_t )))
     return prefactor*T_eg*wofz(wofz_arg)
 
+def Amplitude_fun2(tau,ene_Eg,A_i,A_j,om0_i,om0_j,s_i,s_j,phi_i,phi_j):
+    s = np.sqrt(s_i**2+s_j**2)
+    s_t = np.sqrt(s_i**(-2)+s_j**(-2))
+    delta = om0_i + om0_j - ene_Eg/hbar
+    wofz_arg = s_t/np.sqrt(2)*((om0_j-s_j**2/s**2*delta-1j*tau/s_t**2) - ene_Eg/hbar)
+
+    prefactor = (-pi*A_i*A_j/(4*s_i*s_j)
+                * np.exp(-1/2*( tau**2/s_t**2 + 2j*s_i/s_j*delta/s*tau/s_t )))
+    return prefactor*T_eg*wofz(wofz_arg)
+
+def Feyn_diag_ij2(pulse_params_i,pulse_params_j,ene_Eg):
+    tau_i,A_i,om0_i,s_i,phi_i = pulse_params_i
+    tau_j,A_j,om0_j,s_j,phi_j = pulse_params_j
+
+    return np.exp(1j*ene_Eg/hbar*tau_j)*Amplitude_fun2(tau_i-tau_j,ene_Eg,A_i,A_j,om0_i,om0_j,s_i,s_j,phi_i,phi_j)
+
 def Feyn_diag_ij(pulse_params_i,pulse_params_j,ene_Eg):
     tau_i,A_i,om0_i,s_i,phi_i = pulse_params_i
     tau_j,A_j,om0_j,s_j,phi_j = pulse_params_j
@@ -155,14 +171,17 @@ def resample(spec_corrected,rho_hi,rho_lo,om_ref,E,OM_T,N_NEW):
 
     return Sig_cc_cubic_mesh, small_sig, extent
 
-def plot_mat(mat,extent,cmap='viridis',mode='abs',show=True,saveloc=None,caption=None):
+def plot_mat(mat,extent,cmap='viridis',mode='abs',show=True,saveloc=None,caption=None,xlabel='x',ylabel='y',title=None):
 
     if mode == 'abs':
         plt.figure()
         im = plt.imshow(np.abs(mat), extent=extent, origin='lower', aspect='auto', cmap=cmap)
-        plt.xlabel('x')
-        plt.ylabel('y')
-        plt.title('|M|')
+        plt.xlabel(xlabel)
+        plt.ylabel(ylabel)
+        if title:
+            plt.title(title)
+        else:
+            plt.title('|M|')
         plt.colorbar(im)
         if caption is not None:
             plt.text(0.02, 0.98, caption, transform=plt.gca().transAxes, 
@@ -174,8 +193,8 @@ def plot_mat(mat,extent,cmap='viridis',mode='abs',show=True,saveloc=None,caption
         fig, axes = plt.subplots(1, 2, figsize=(10, 4), sharex=True, sharey=True)
         im0 = axes[0].imshow(np.abs(mat), extent=extent, origin='lower', aspect='auto', cmap=cmap)
         axes[0].set_title('|M|')
-        axes[0].set_xlabel('x')
-        axes[0].set_ylabel('y')
+        axes[0].set_xlabel(xlabel)
+        axes[0].set_ylabel(ylabel)
         fig.colorbar(im0, ax=axes[0])
         if caption is not None:
             axes[0].text(0.02, 0.98, caption, transform=axes[0].transAxes, 
@@ -185,8 +204,11 @@ def plot_mat(mat,extent,cmap='viridis',mode='abs',show=True,saveloc=None,caption
 
         im1 = axes[1].imshow(np.angle(mat), extent=extent, origin='lower', aspect='auto', cmap='hsv', vmin=-np.pi, vmax=np.pi)
         axes[1].set_title('arg(M)')
-        axes[1].set_xlabel('x')
+        axes[1].set_xlabel(xlabel)
         fig.colorbar(im1, ax=axes[1])
+
+        if title:
+            fig.suptitle(title)
 
         plt.tight_layout()
 
@@ -194,8 +216,8 @@ def plot_mat(mat,extent,cmap='viridis',mode='abs',show=True,saveloc=None,caption
         fig, axes = plt.subplots(1, 2, figsize=(10, 4), sharex=True, sharey=True)
         im0 = axes[0].imshow(np.real(mat), extent=extent, origin='lower', aspect='auto', cmap=cmap)
         axes[0].set_title('Re{M}')
-        axes[0].set_xlabel('x')
-        axes[0].set_ylabel('y')
+        axes[0].set_xlabel(xlabel)
+        axes[0].set_ylabel(ylabel)
         fig.colorbar(im0, ax=axes[0])
         if caption is not None:
             axes[0].text(0.02, 0.98, caption, transform=axes[0].transAxes, 
@@ -205,8 +227,11 @@ def plot_mat(mat,extent,cmap='viridis',mode='abs',show=True,saveloc=None,caption
 
         im1 = axes[1].imshow(np.imag(mat), extent=extent, origin='lower', aspect='auto', cmap=cmap)
         axes[1].set_title('Im{M}')
-        axes[1].set_xlabel('x')
+        axes[1].set_xlabel(xlabel)
         fig.colorbar(im1, ax=axes[1])
+
+        if title:
+            fig.suptitle(title)
 
         plt.tight_layout()
 
@@ -221,8 +246,8 @@ E_lo = 60
 E_hi = 64
 T_reach = 100
 
-N_E = 600
-N_T = 600
+N_E = 1000
+N_T = 1000
 
 E_range = np.linspace(E_lo,E_hi,N_E)
 T_range = np.linspace(-T_reach,T_reach,N_T)
@@ -238,12 +263,16 @@ om_probe = 1.55/hbar
 s_probe = 0.30/hbar
 pulse_probe = (T,A_probe,om_probe,s_probe,0)
 
-for tau_ref in np.linspace(0,250,6):
+for tau_ref in [0]:#np.linspace(0,50,6):
 
     A_ref = 1
     om_ref = 1.55/hbar
     s_ref = 0.01/hbar
-    pulse_ref = (0*T + tau_ref,A_ref,om_ref,s_ref,0)
+    pulse_ref = (T + tau_ref,A_ref,om_ref,s_ref,0)
+
+    plot_mat(Feyn_diag_ij2(pulse_ref,pulse_xuv,E),[E_lo, E_hi, -T_reach, T_reach],cmap='plasma',mode='phase',show=False,saveloc=f"ims/wwofz{tau_ref:.2f}.png",caption=f"tau = {tau_ref:.2f}",
+             xlabel = r'$E_f$ [eV]', ylabel = r'$\tau_{ref}$ [fs]', title = 'Time delay modulation of xuv-ref amplitude (should be Ef-constant)')
+
 
     amplit12 = Feyn_diag_ij(pulse_xuv,pulse_probe,E)
     amplit21 = Feyn_diag_ij(pulse_probe,pulse_xuv,E)
@@ -271,6 +300,6 @@ for tau_ref in np.linspace(0,250,6):
     rho_reconstructed, small_sig, small_extent = resample(spectrum_corrected, rho_hi, rho_lo, om_ref, E, OM_T, 200)
 
     # plot_mat(small_sig,small_extent,cmap='plasma',mode='phase',show=False,saveloc=f"ims/imsm{tau_ref:.2f}.png",caption=f"tau = {tau_ref:.2f}")
-    plot_mat(rho_reconstructed,[rho_lo,rho_hi,rho_lo,rho_hi],cmap='plasma',mode='phase',show=False,saveloc=f"ims/imrec_sc_{tau_ref:.2f}.png",caption=f"tau = {tau_ref:.2f}")
+    # plot_mat(rho_reconstructed,[rho_lo,rho_hi,rho_lo,rho_hi],cmap='plasma',mode='phase',show=False,saveloc=f"ims/imrec_sc_{tau_ref:.2f}.png",caption=f"tau = {tau_ref:.2f}")
 
 # plt.show()
