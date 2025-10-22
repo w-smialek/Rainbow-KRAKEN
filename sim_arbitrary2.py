@@ -25,7 +25,7 @@ def Amplitude_ij(pulse_params_i,pulse_params_j,ene_Eg):
 
     prefactor = (-pi*A_i*A_j/(4*s_i*s_j)*np.exp(-1j*phi_i*np.sign(om0_i))*np.exp(-1j*phi_j*np.sign(om0_j))*np.exp(1j*om0_i*tau)
                 * np.exp(-1/2*( delta**2/s**2 + tau**2/s_t**2 + 2j*s_i/s_j*delta/s*tau/s_t )))
-    return wofz(wofz_arg)
+    return prefactor*T_eg*wofz(wofz_arg)
 
 def modulating_function(om_t,ene_Eg,pulse_params_x,pulse_params_p,big_sigma):
     tau_x,A_x,om0_x,s_x,phi_x = pulse_params_x
@@ -44,6 +44,39 @@ def correcting_function(om_t,ene_Eg,pulse_params_x,pulse_params_p,dzeta=1e-3,big
     err_area_plus = np.where(mod_plus<dzeta)
     mod_plus[err_area_plus] = 1
     mod2_plus = modulating_function(om_t,ene_Eg,pulse_params_x,pulse_params_p,big_sigma)
+
+    correction_plus = om_t*mod2_plus/mod_plus
+    correction_plus[err_area_plus] = 0
+    return correction_plus
+
+def modulating_function_multi(om_t,ene_Eg,pulse_params_x,probes,big_sigma):
+    tau_x,A_x,om0_x,s_x,phi_x = pulse_params_x
+
+    retval = 0
+    A_tot = 0
+
+    for probe in probes:
+        tau_p,A_p,om0_p,s_p,phi_p = probe
+
+        s_p = s_p + big_sigma
+        s = np.sqrt(s_x**2 + s_p**2)
+        s_t = np.sqrt(s_x**(-2) + s_p**(-2))
+
+        delta_p = om0_x + om0_p - ene_Eg/hbar
+        delta_E = om0_x - ene_Eg/hbar - s_x**2/s**2 * delta_p
+
+        retval += A_p*np.exp(-1/2*((delta_p/s)**2 + (s_t * (om_t + delta_E))**2))
+        A_tot += A_p
+
+        plot_mat(retval,[1,2,1,2],cmap='plasma',mode='abs')
+
+    return retval/A_tot
+
+def correcting_function_multi(om_t,ene_Eg,pulse_params_x,probes,dzeta=1e-3,big_sigma=1000):
+    mod_plus = modulating_function_multi(om_t,ene_Eg,pulse_params_x,probes,0)
+    err_area_plus = np.where(mod_plus<dzeta)
+    mod_plus[err_area_plus] = 1
+    mod2_plus = modulating_function_multi(om_t,ene_Eg,pulse_params_x,probes,big_sigma)
 
     correction_plus = om_t*mod2_plus/mod_plus
     correction_plus[err_area_plus] = 0
@@ -149,9 +182,9 @@ def resample(spec_corrected,rho_hi,rho_lo,om_ref,E,OM_T,N_NEW):
 
     Sig_cc_cubic_mesh = new_Sig_cc_interp(re_spline, im_spline, EPS1, EPS2)
 
-    Sig_cc_cubic_mesh = 1/2*(Sig_cc_cubic_mesh + np.conjugate(Sig_cc_cubic_mesh.T))
+    # Sig_cc_cubic_mesh = 1/2*(Sig_cc_cubic_mesh + np.conjugate(Sig_cc_cubic_mesh.T))
 
-    Sig_cc_cubic_mesh = Sig_cc_cubic_mesh/np.sum(np.diag(Sig_cc_cubic_mesh))
+    Sig_cc_cubic_mesh = Sig_cc_cubic_mesh/np.sum(np.diag(np.abs(Sig_cc_cubic_mesh)))
 
     return Sig_cc_cubic_mesh, small_sig, extent
 
@@ -203,8 +236,8 @@ E_lo = 60.5
 E_hi = 63.5
 T_reach = 100
 
-N_E = 600
-N_T = 600
+N_E = 900
+N_T = 900
 
 E_range = np.linspace(E_lo,E_hi,N_E)
 T_range = np.linspace(-T_reach,T_reach,N_T)
@@ -215,14 +248,34 @@ om_xuv = 60.65/hbar
 s_xuv = 0.15/hbar
 pulse_xuv = (0*T,A_xuv,om_xuv,s_xuv,0)
 
-A_probe = 1
+A_xuv2 = 0.3
+om_xuv2 = 60.75/hbar
+s_xuv2 = 0.05/hbar
+pulse_xuv2 = (0*T,A_xuv2,om_xuv2,s_xuv2,0)
+
+A_xuv3 = 0.1
+om_xuv3 = 60.57/hbar
+s_xuv3 = 0.03/hbar
+pulse_xuv3 = (0*T,A_xuv3,om_xuv3,s_xuv3,0)
+
+A_probe = 0.8
 om_probe = 1.55/hbar
-s_probe = 0.20/hbar
+s_probe = 0.15/hbar
 pulse_probe = (T,A_probe,om_probe,s_probe,0)
+
+A_probe2 = 0.02
+om_probe2 = 1.6/hbar
+s_probe2 = 0.01/hbar
+pulse_probe2 = (T,A_probe2,om_probe2,s_probe2,0)
+
+A_probe3 = 0.03
+om_probe3 = 1.46/hbar
+s_probe3 = 0.02/hbar
+pulse_probe3 = (T,A_probe3,om_probe3,s_probe3,0)
 
 A_ref = 1
 om_ref = 1.55/hbar
-s_ref = 0.01/hbar
+s_ref = 0.005/hbar
 pulse_ref = (0*T,A_ref,om_ref,s_ref,0)
 
 ###
@@ -237,7 +290,7 @@ def Amplitude_ij_num(spectrum_fun_i,support_i,spectrum_fun_j,support_j,tau_range
     lo_i, hi_i = support_i
     lo_j, hi_j = support_j
 
-    limit_lo = lo_i + lo_j
+    limit_lo = lo_i + lo_j # INCORRECT, THIS IS THE LIMIT FOR ENE!! (works for usual parameters by accident) TODO
     limit_hi = hi_i + hi_j
 
     numerator_fun = lambda om, Ene, tau_i, tau_j: spectrum_fun_i(Ene/hbar - om) * np.exp(1j*(Ene/hbar - om)*tau_i) * spectrum_fun_j(om) * np.exp(1j*om*tau_j)
@@ -259,31 +312,84 @@ def Amplitude_ij_num(spectrum_fun_i,support_i,spectrum_fun_j,support_j,tau_range
                                         1j*pi*regularization_val)
     return integral_ress
 
-# def spectrum_fun(A,om0,s,om):
-#     return A/(2*s)*np.exp(-(om-om0)**2/(2*s**2)) # In theory plus negative freq part but it doesnt ever contribute
+def spectrum_fun(A,om0,s,om):
+    return A/(2*s)*np.exp(-(om-om0)**2/(2*s**2)) # In theory plus negative freq part but it doesnt ever contribute
+
+def sp_tot(gausses,om):
+    retval = 0
+    for gauss in gausses:
+        _,a0,om0,s0,_ = gauss
+        retval += spectrum_fun(a0,om0,s0,om)
+    return retval
+
+def Amplitude(xuvs,refprobes,E):
+    n_t, n_e = E.shape
+    amplit_tot = np.zeros((n_t,n_e)).astype(complex)
+
+    for xuv in xuvs:
+        for rp in refprobes:
+            amplit_tot += Amplitude_ij(xuv,rp,E)
+            amplit_tot += Amplitude_ij(rp,xuv,E)
+    return amplit_tot
+
+refs = [pulse_ref]
+probes = [pulse_probe,pulse_probe2,pulse_probe3]
+xuvs = [pulse_xuv]#,pulse_xuv2,pulse_xuv3]
+# extend() returns None because it mutates in-place. Use concatenation to create a new list
+refprobes = refs + probes
+
+om_xuv_range = np.linspace(om_xuv-6*s_xuv,om_xuv+6*s_xuv,N_E)
+plt.plot(om_xuv_range,sp_tot(xuvs, om_xuv_range))
+plt.show()
+om_probe_range = np.linspace(om_probe3-6*s_probe,om_probe3+6*s_probe,N_E)
+plt.plot(om_probe_range,sp_tot(probes, om_probe_range))
+plt.show()
+om_ref_range = np.linspace(om_ref-6*s_ref,om_ref+6*s_ref,N_E)
+plt.plot(om_ref_range,sp_tot(refs, om_ref_range))
+plt.show()
+
+amplit_tot = Amplitude(xuvs,refprobes,E)
+
+# amplit21 = Amplitude_ij(pulse_probe,pulse_xuv,E)
+# amplit12 = Amplitude_ij(pulse_xuv,pulse_probe,E)
+# amplit31 = Amplitude_ij(pulse_ref,pulse_xuv,E)
+# amplit13 = Amplitude_ij(pulse_xuv,pulse_ref,E)
 
 # amplit21_num = Amplitude_ij_num(lambda om: spectrum_fun(A_probe,om_probe,s_probe,om), (om_probe-6*s_probe,om_probe+6*s_probe), 
 #                                 lambda om: spectrum_fun(A_xuv,om_xuv,s_xuv,om), (om_xuv-6*s_xuv,om_xuv+6*s_xuv), T_range, 0*T_range, E_range)
 
 # plot_mat(amplit21_num,[E_lo,E_hi,-T_reach,T_reach],cmap='plasma',mode='phase')
 
-amplit21 = Amplitude_ij(pulse_probe,pulse_xuv,E)
-amplit12 = Amplitude_ij(pulse_xuv,pulse_probe,E)
-amplit31 = Amplitude_ij(pulse_ref,pulse_xuv,E)
-amplit13 = Amplitude_ij(pulse_xuv,pulse_ref,E)
+# amplit_tot = amplit21+amplit12+amplit31+amplit13
 
-amplit_tot = amplit21+amplit12+amplit31+amplit13
 
-plot_mat(np.minimum(np.abs(amplit21)**2,0.01),[E_lo,E_hi,-T_reach,T_reach],cmap='plasma',mode='phase')
-plot_mat(np.abs(amplit31)**2,[E_lo,E_hi,-T_reach,T_reach],cmap='plasma',mode='phase')
 
-# plot_mat(amplit21_num- amplit21,[E_lo,E_hi,-T_reach,T_reach],cmap='plasma',mode='phase')
-
-    # return spec_shift, OM_T, energy_axis_shift[0], energy_axis_shift[-1]
-
-plot_mat(np.abs(amplit21)**2,[E_lo,E_hi,-T_reach,T_reach],cmap='plasma',mode='phase')
-
+plot_mat(amplit_tot,[E_lo,E_hi,-T_reach,T_reach],cmap='plasma',mode='phase')
 
 f_a_21, OM_T, em_lo, em_hi = CFT(T_range,np.abs(amplit_tot)**2)
 
 plot_mat(f_a_21,[E_lo,E_hi,em_lo,em_hi],cmap='plasma',mode='phase')
+
+# correct = correcting_function(OM_T,E,pulse_xuv,pulse_probe,dzeta=0.01)
+correct = correcting_function_multi(OM_T,E,pulse_xuv,probes,dzeta=0.001)
+
+corr = correct*f_a_21
+
+rho_lo = 59
+rho_hi = 62
+fin, small, extent_small = resample(corr,rho_hi,rho_lo,om_ref,E,OM_T,N_T)
+
+plot_mat(small,extent_small,cmap='plasma',mode='phase')
+
+plot_mat(fin,[rho_lo,rho_hi,rho_lo,rho_hi],cmap='plasma',mode='phase')
+
+pop_rho = interpolate.CubicSpline(np.linspace(rho_lo,rho_hi,np.size(np.diag(fin))),np.abs(np.diag(fin)))
+pop_zero = interpolate.CubicSpline(E[0,:],np.abs(f_a_21[N_T//2,:])/np.sum(np.abs(f_a_21[N_T//2,:])))
+
+E_range_new = np.linspace(rho_lo,rho_hi,N_E)
+
+plt.plot(E_range_new,pop_rho(E_range_new),label='reconstructed')
+plt.plot(E_range_new,pop_zero(E_range_new + hbar*om_ref),label='zero freq')
+plt.plot(E_range_new,sp_tot(xuvs, E_range_new/hbar)**2/np.sum(sp_tot(xuvs, E_range_new/hbar)**2),label='original spec')
+plt.legend()
+plt.show()
