@@ -58,19 +58,18 @@ def modulating_function_multi(om_t,ene_Eg,pulse_params_x,probes,big_sigma):
     for probe in probes:
         tau_p,A_p,om0_p,s_p,phi_p = probe
 
-        s_p = s_p + big_sigma
-        s = np.sqrt(s_x**2 + s_p**2)
-        s_t = np.sqrt(s_x**(-2) + s_p**(-2))
+        s_pp = s_p + big_sigma
+        s = np.sqrt(s_x**2 + s_pp**2)
+        s_t = np.sqrt(s_x**(-2) + s_pp**(-2))
 
         delta_p = om0_x + om0_p - ene_Eg/hbar
         delta_E = om0_x - ene_Eg/hbar - s_x**2/s**2 * delta_p
 
-        retval += A_p*np.exp(-1/2*((delta_p/s)**2 + (s_t * (om_t + delta_E))**2))
-        A_tot += A_p
+        retval += A_p/s_p*np.exp(-1/2*((delta_p/s)**2 + (s_t * (om_t + delta_E))**2))
 
-        plot_mat(retval,[1,2,1,2],cmap='plasma',mode='abs')
+        # plot_mat(retval,[1,2,1,2],cmap='plasma',mode='abs')
 
-    return retval/A_tot
+    return retval
 
 def correcting_function_multi(om_t,ene_Eg,pulse_params_x,probes,dzeta=1e-3,big_sigma=1000):
     mod_plus = modulating_function_multi(om_t,ene_Eg,pulse_params_x,probes,0)
@@ -236,8 +235,8 @@ E_lo = 60.5
 E_hi = 63.5
 T_reach = 100
 
-N_E = 900
-N_T = 900
+N_E = 700
+N_T = 700
 
 E_range = np.linspace(E_lo,E_hi,N_E)
 T_range = np.linspace(-T_reach,T_reach,N_T)
@@ -248,29 +247,29 @@ om_xuv = 60.65/hbar
 s_xuv = 0.15/hbar
 pulse_xuv = (0*T,A_xuv,om_xuv,s_xuv,0)
 
-A_xuv2 = 0.3
-om_xuv2 = 60.75/hbar
-s_xuv2 = 0.05/hbar
-pulse_xuv2 = (0*T,A_xuv2,om_xuv2,s_xuv2,0)
+# A_xuv2 = 0.3
+# om_xuv2 = 60.75/hbar
+# s_xuv2 = 0.05/hbar
+# pulse_xuv2 = (0*T,A_xuv2,om_xuv2,s_xuv2,0)
 
-A_xuv3 = 0.1
-om_xuv3 = 60.57/hbar
-s_xuv3 = 0.03/hbar
-pulse_xuv3 = (0*T,A_xuv3,om_xuv3,s_xuv3,0)
+# A_xuv3 = 0.1
+# om_xuv3 = 60.57/hbar
+# s_xuv3 = 0.03/hbar
+# pulse_xuv3 = (0*T,A_xuv3,om_xuv3,s_xuv3,0)
 
-A_probe = 0.8
+A_probe = 1.0
 om_probe = 1.55/hbar
 s_probe = 0.15/hbar
 pulse_probe = (T,A_probe,om_probe,s_probe,0)
 
-A_probe2 = 0.02
-om_probe2 = 1.6/hbar
-s_probe2 = 0.01/hbar
+A_probe2 = 0.1
+om_probe2 = 1.40/hbar
+s_probe2 = 0.04/hbar
 pulse_probe2 = (T,A_probe2,om_probe2,s_probe2,0)
 
-A_probe3 = 0.03
-om_probe3 = 1.46/hbar
-s_probe3 = 0.02/hbar
+A_probe3 = 0.1
+om_probe3 = 1.86/hbar
+s_probe3 = 0.03/hbar
 pulse_probe3 = (T,A_probe3,om_probe3,s_probe3,0)
 
 A_ref = 1
@@ -333,36 +332,24 @@ def Amplitude(xuvs,refprobes,E):
     return amplit_tot
 
 refs = [pulse_ref]
-probes = [pulse_probe,pulse_probe2,pulse_probe3]
+probes = [pulse_probe]#,pulse_probe2,pulse_probe3]
 xuvs = [pulse_xuv]#,pulse_xuv2,pulse_xuv3]
-# extend() returns None because it mutates in-place. Use concatenation to create a new list
 refprobes = refs + probes
 
-om_xuv_range = np.linspace(om_xuv-6*s_xuv,om_xuv+6*s_xuv,N_E)
-plt.plot(om_xuv_range,sp_tot(xuvs, om_xuv_range))
-plt.show()
-om_probe_range = np.linspace(om_probe3-6*s_probe,om_probe3+6*s_probe,N_E)
-plt.plot(om_probe_range,sp_tot(probes, om_probe_range))
-plt.show()
-om_ref_range = np.linspace(om_ref-6*s_ref,om_ref+6*s_ref,N_E)
-plt.plot(om_ref_range,sp_tot(refs, om_ref_range))
-plt.show()
+# om_xuv_range = np.linspace(om_xuv-6*s_xuv,om_xuv+6*s_xuv,N_E)
+# plt.plot(om_xuv_range,sp_tot(xuvs, om_xuv_range))
+# plt.show()
+# om_probe_range = np.linspace(om_probe-6*s_probe,om_probe+6*s_probe,N_E)
+# plt.plot(om_probe_range,sp_tot(probes, om_probe_range))
+# plt.show()
+# om_ref_range = np.linspace(om_ref-6*s_ref,om_ref+6*s_ref,N_E)
+# plt.plot(om_ref_range,sp_tot(refs, om_ref_range))
+# plt.show()
 
 amplit_tot = Amplitude(xuvs,refprobes,E)
 
-# amplit21 = Amplitude_ij(pulse_probe,pulse_xuv,E)
-# amplit12 = Amplitude_ij(pulse_xuv,pulse_probe,E)
-# amplit31 = Amplitude_ij(pulse_ref,pulse_xuv,E)
-# amplit13 = Amplitude_ij(pulse_xuv,pulse_ref,E)
-
 # amplit21_num = Amplitude_ij_num(lambda om: spectrum_fun(A_probe,om_probe,s_probe,om), (om_probe-6*s_probe,om_probe+6*s_probe), 
 #                                 lambda om: spectrum_fun(A_xuv,om_xuv,s_xuv,om), (om_xuv-6*s_xuv,om_xuv+6*s_xuv), T_range, 0*T_range, E_range)
-
-# plot_mat(amplit21_num,[E_lo,E_hi,-T_reach,T_reach],cmap='plasma',mode='phase')
-
-# amplit_tot = amplit21+amplit12+amplit31+amplit13
-
-
 
 plot_mat(amplit_tot,[E_lo,E_hi,-T_reach,T_reach],cmap='plasma',mode='phase')
 
@@ -379,7 +366,7 @@ rho_lo = 59
 rho_hi = 62
 fin, small, extent_small = resample(corr,rho_hi,rho_lo,om_ref,E,OM_T,N_T)
 
-plot_mat(small,extent_small,cmap='plasma',mode='phase')
+# plot_mat(small,extent_small,cmap='plasma',mode='phase')
 
 plot_mat(fin,[rho_lo,rho_hi,rho_lo,rho_hi],cmap='plasma',mode='phase')
 
@@ -393,3 +380,14 @@ plt.plot(E_range_new,pop_zero(E_range_new + hbar*om_ref),label='zero freq')
 plt.plot(E_range_new,sp_tot(xuvs, E_range_new/hbar)**2/np.sum(sp_tot(xuvs, E_range_new/hbar)**2),label='original spec')
 plt.legend()
 plt.show()
+
+idx_rho = np.argmax(pop_rho(E_range_new))
+idx_zero = np.argmax(pop_zero(E_range_new + hbar*om_ref))
+print(f"Difference in argument of maximum: {E_range_new[idx_rho] - E_range_new[idx_zero]:.6f}")
+
+E1,E2 = np.meshgrid(E_range_new,E_range_new)
+
+mat2 = np.exp(-1/2*((E1/hbar-om_xuv)**2/s_xuv**2 + (E2/hbar-om_xuv)**2/s_xuv**2))
+mat2 = mat2/np.sum(np.diag(np.abs(mat2)))
+plot_mat(mat2,[rho_lo,rho_hi,rho_lo,rho_hi],cmap='plasma',mode='phase')
+plot_mat(mat2-fin,[rho_lo,rho_hi,rho_lo,rho_hi],cmap='plasma',mode='phase')
