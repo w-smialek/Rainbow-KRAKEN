@@ -170,14 +170,23 @@ def resample(spec_corrected,rho_hi,rho_lo,om_ref,E,OM_T,N_NEW):
     re_spline = RectBivariateSpline(omt_range*hbar, Ef_range, np.real(small_sig), kx=3, ky=3, s=0)
     im_spline = RectBivariateSpline(omt_range*hbar, Ef_range, np.imag(small_sig), kx=3, ky=3, s=0)
 
-    # N_NEW = 200
-    new_Ef_range = np.linspace(new_Ef_min,new_Ef_max,N_NEW)
-    new_Et_range = np.linspace(hbar*om_ref - rho_valrange/2,hbar*om_ref + rho_valrange/2,N_NEW)
-
-    ET, EF = np.meshgrid(new_Et_range, new_Ef_range, indexing='ij')
-
-    EPS1 = EF - ET + hbar*om_ref - (rho_hi+rho_lo)/2 # - new_Ef_min + new_Et_range[-1] + new_omt_min*hbar
-    EPS2 = EF
+    # Create grid directly in the desired (e1, e2) coordinates
+    # Both e1 and e2 should range over [rho_lo, rho_hi] in the OUTPUT
+    e1_range = np.linspace(rho_lo, rho_hi, N_NEW)
+    e2_range = np.linspace(rho_lo, rho_hi, N_NEW)
+    
+    E1, E2 = np.meshgrid(e1_range, e2_range, indexing='ij')
+    
+    # Inverse transformation to get (ℏ·ωt, Ef) for spline evaluation
+    # Desired: e1 = Ef - ℏ·ωt, e2 = Ef (in the final rotated frame)
+    # But the spline is defined on the ORIGINAL (ℏ·ωt, Ef) coordinates
+    # where Ef is shifted by hbar*om_ref relative to the rho scale
+    # 
+    # The mapping should be:
+    # Ef_spline = e2 + hbar*om_ref (shift e2 to spline's Ef domain)
+    # ℏ·ωt_spline = Ef_spline - e1 = (e2 + hbar*om_ref) - e1
+    EPS1 = E2 - E1 + hbar*om_ref  # This is ℏ·ωt (first argument to spline)
+    EPS2 = E2 + hbar*om_ref       # This is Ef (second argument to spline)
 
     Sig_cc_cubic_mesh = new_Sig_cc_interp(re_spline, im_spline, EPS1, EPS2)
 
@@ -259,18 +268,18 @@ pulse_xuv = (0*T,A_xuv,om_xuv,s_xuv,0)
 
 A_probe = 1.0
 om_probe = 1.55/hbar
-s_probe = 0.15/hbar
+s_probe = 0.20/hbar
 pulse_probe = (T,A_probe,om_probe,s_probe,0)
 
-A_probe2 = 0.1
-om_probe2 = 1.40/hbar
-s_probe2 = 0.04/hbar
-pulse_probe2 = (T,A_probe2,om_probe2,s_probe2,0)
+# A_probe2 = 0.1
+# om_probe2 = 1.40/hbar
+# s_probe2 = 0.04/hbar
+# pulse_probe2 = (T,A_probe2,om_probe2,s_probe2,0)
 
-A_probe3 = 0.1
-om_probe3 = 1.86/hbar
-s_probe3 = 0.03/hbar
-pulse_probe3 = (T,A_probe3,om_probe3,s_probe3,0)
+# A_probe3 = 0.1
+# om_probe3 = 1.86/hbar
+# s_probe3 = 0.03/hbar
+# pulse_probe3 = (T,A_probe3,om_probe3,s_probe3,0)
 
 A_ref = 1
 om_ref = 1.55/hbar
@@ -381,9 +390,17 @@ plt.plot(E_range_new,sp_tot(xuvs, E_range_new/hbar)**2/np.sum(sp_tot(xuvs, E_ran
 plt.legend()
 plt.show()
 
-idx_rho = np.argmax(pop_rho(E_range_new))
-idx_zero = np.argmax(pop_zero(E_range_new + hbar*om_ref))
-print(f"Difference in argument of maximum: {E_range_new[idx_rho] - E_range_new[idx_zero]:.6f}")
+# print energy positions of maxima for the plotted peaks
+E_rho = E_range_new[np.argmax(pop_rho(E_range_new))]
+E_zero = E_range_new[np.argmax(pop_zero(E_range_new + hbar*om_ref))]
+spec_vals = sp_tot(xuvs, E_range_new / hbar) ** 2
+spec_vals = spec_vals / np.sum(spec_vals)
+E_orig = E_range_new[np.argmax(spec_vals)]
+
+print(f"Max of reconstructed (pop_rho): {E_rho:.6f} eV")
+print(f"Max of zero-freq reference (pop_zero): {E_zero:.6f} eV")
+print(f"Max of original spectrum: {E_orig:.6f} eV")
+print(f"Differences: rec-zero = {E_rho - E_zero:.6f} eV, rec-orig = {E_rho - E_orig:.6f} eV")
 
 E1,E2 = np.meshgrid(E_range_new,E_range_new)
 
