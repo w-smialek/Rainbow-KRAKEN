@@ -6,6 +6,8 @@ import matplotlib.pyplot as plt
 from scipy.interpolate import RectBivariateSpline
 from scipy import interpolate
 from scipy import integrate
+from math import floor, ceil
+from scipy.optimize import curve_fit
 
 # Reduced Planck constant in eV*fs (approx CODATA): ħ = 6.582119569e-16 eV·s
 hbar = 6.582119569e-1
@@ -252,6 +254,62 @@ def plot_mat(mat,extent,cmap='viridis',mode='abs'):
         plt.show()
     return
 
+def normalize_rho(rho):
+    return rho/np.sum(np.diag(np.abs(rho)))
+
+# --- Fitting helpers for baseline removal ---
+def _gauss(x, A, mu, sigma):
+    return A * np.exp(-0.5 * ((x - mu) / sigma) ** 2)
+
+def _gauss3(x, A1, mu1, s1, A2, mu2, s2, A3, mu3, s3):
+    return (
+        _gauss(x, A1, mu1, s1)
+        + _gauss(x, A2, mu2, s2)
+        + _gauss(x, A3, mu3, s3)
+    )
+
+def fit_three_gaussians(x, y, center_mask_n=3):
+    """Fit sum of three Gaussians to y(x), masking center peak points.
+    Returns fitted y_fit; if fitting fails, returns zeros like y.
+    """
+    x = np.asarray(x).ravel()
+    y = np.asarray(y).ravel()
+    n = x.size
+    if n < 9:
+        return np.zeros_like(y)
+
+    # Mask center indices (Dirac-like peak)
+    c = n // 2
+    half = max(center_mask_n // 2, 1)
+    mask = np.ones(n, dtype=bool)
+    lo = max(0, c - half)
+    hi = min(n, c + half + (center_mask_n % 2))
+    mask[lo:hi] = False
+
+    x_fit = x[mask]
+    y_fit = y[mask]
+
+    # Initial guesses
+    x_min, x_max = float(x.min()), float(x.max())
+    span = max(x_max - x_min, 1e-6)
+    mu1_0 = x_min + 0.2 * span
+    mu2_0 = x_min + 0.5 * span
+    mu3_0 = x_min + 0.8 * span
+    s0 = 0.25 * span
+    A0 = max(y.max(), 1e-12) / 3.0
+    p0 = [A0, mu1_0, s0, A0, mu2_0, s0, A0, mu3_0, s0]
+
+    # Bounds: amplitudes >= 0, sigmas positive, mus within data range
+    lb = [0, x_min, 1e-6, 0, x_min, 1e-6, 0, x_min, 1e-6]
+    ub = [np.inf, x_max, span, np.inf, x_max, span, np.inf, x_max, span]
+
+    try:
+        popt, _ = curve_fit(_gauss3, x_fit, y_fit, p0=p0, bounds=(lb, ub), maxfev=20000)
+        y_model = _gauss3(x, *popt)
+    except Exception:
+        y_model = np.zeros_like(y)
+    return y_model
+
 ###
 ### Construct interpolated spectra
 ###
@@ -316,11 +374,16 @@ def sp_tot(gausses,om):
         retval += spectrum_fun(a0,om0,s0,om)
     return retval
 
-def Amplitude(xuvs,refprobes,E):
+def Amplitude(xuvs,refprobes,E,E_spinorbit=0):
     n_t, n_e = E.shape
     amplit_tot = np.zeros((n_t,n_e)).astype(complex)
 
+    xuvs_mod = []
     for xuv in xuvs:
+        tau_i,A_i,om0_i,s_i,phi_i = xuv
+        xuvs_mod.append((tau_i,A_i,om0_i-E_spinorbit/hbar,s_i,phi_i))
+
+    for xuv in xuvs_mod:
         for rp in refprobes:
             amplit_tot += Amplitude_ij(xuv,rp,E)
             amplit_tot += Amplitude_ij(rp,xuv,E)
@@ -334,8 +397,8 @@ E_lo = 60.5
 E_hi = 63.5
 T_reach = 100
 
-N_E = 700
-N_T = 700
+N_E = 1100
+N_T = 1100
 
 E_range = np.linspace(E_lo,E_hi,N_E)
 T_range = np.linspace(-T_reach,T_reach,N_T)
@@ -343,7 +406,7 @@ E, T = np.meshgrid(E_range,T_range)
 
 A_xuv = 1
 om_xuv = 60.65/hbar
-s_xuv = 0.25/hbar
+s_xuv = 0.15/hbar
 pulse_xuv = (0*T,A_xuv,om_xuv,s_xuv,0)
 
 A_probe = 1.0
@@ -377,21 +440,74 @@ plot_spectra(probes)
 ### GENERATE SIGNAL
 ###
 
-amplit_tot = Amplitude(xuvs,refprobes,E)
-amplit_tot_FT, OM_T, em_lo, em_hi = CFT(T_range,np.abs(amplit_tot)**2,use_window=False)
+E_spinorbit = 0.25
+
+amplit_tot_0 = Amplitude(xuvs,refprobes,E)
+amplit_tot_s = Amplitude(xuvs,refprobes,E,E_spinorbit)
+
+# Transition dipole element (square modulus summed over ionization OAM channels) is approximated as T_i(E) = a_i*(E-E_0)
+
+a_dipole_0 = 0.016
+a_dipole_s = -0.01
+
+signal = (2/3) * (1 + a_dipole_0*(E - om_xuv*hbar)) * np.abs(amplit_tot_0)**2 + (1/3) * (1 + a_dipole_s*(E - om_xuv*hbar + E_spinorbit)) * np.abs(amplit_tot_s)**2
+
+amplit_tot_FT, OM_T, em_lo, em_hi = CFT(T_range,signal,use_window=False)
+
+plot_mat(signal,[E_lo,E_hi,-T_reach,T_reach],cmap='plasma',mode='phase')
+plot_mat(np.minimum(np.abs(amplit_tot_FT),10),[E_lo,E_hi,em_lo,em_hi],cmap='plasma',mode='phase')
+
+###
+### 
+###
+
+mid_erange_lo = 0.47
+mid_erange_hi = 0.53
+
+# --- Fit and subtract slowly varying background in each column ---
+# Build the y-axis (energy units ħ·ω) for the selected mid band
+i0 = floor(N_T*mid_erange_lo)
+i1 = floor(N_T*mid_erange_hi)
+em_axis_full = hbar * OM_T[:, 0]
+em_axis_mid = em_axis_full[i0:i1]
+
+amplit_tot_FT_mid = amplit_tot_FT[floor(N_T*mid_erange_lo):floor(N_T*mid_erange_hi),:]
+plot_mat(amplit_tot_FT_mid,[E_lo,E_hi,em_axis_mid[0],em_axis_mid[-1]],cmap='plasma',mode='phase')
+
+# Prepare baseline and corrected arrays
+abs_mid = np.abs(amplit_tot_FT_mid)
+baseline = np.zeros_like(abs_mid)
+
+for j in range(abs_mid.shape[1]):
+    baseline[:, j] = fit_three_gaussians(em_axis_mid, abs_mid[:, j], center_mask_n=3)
+
+# Subtract baseline on magnitudes and reconstruct complex result keeping phase
+eps = 1e-12
+mag = abs_mid
+mag_corr = np.clip(mag - baseline, 0.0, None)
+scale = np.divide(mag_corr, mag + eps)
+amplit_tot_FT_mid_detrended = amplit_tot_FT_mid * scale
+
+# Plot diagnostics
+extent_mid = [E_lo, E_hi, float(em_axis_mid[0]), float(em_axis_mid[-1])]
+plot_mat(baseline, extent_mid, cmap='plasma', mode='phase')
+plot_mat(amplit_tot_FT_mid_detrended, extent_mid, cmap='plasma', mode='phase')
+
+
+
+###
+### CORRECTION ANALYTICALLY
+###
+
 correction = correcting_function_multi(OM_T,E,pulse_xuv,probes,dzeta=0.0001)
 amplit_tot_FT_corrected = correction*amplit_tot_FT
-amplit_tot_FT_corrected = correction*amplit_tot_FT
-
-# plot_mat(amplit_tot,[E_lo,E_hi,-T_reach,T_reach],cmap='plasma',mode='phase')
-# plot_mat(np.minimum(np.abs(amplit_tot_FT),10),[E_lo,E_hi,em_lo,em_hi],cmap='plasma',mode='phase')
 
 ###
 ### RESAMPLE AND ANALYZE
 ###
 
-rho_lo = 60
-rho_hi = 61.2
+rho_lo = 59.6
+rho_hi = 61.4
 rho_reconstructed, amplit_tot_FT_corrected_small, extent_small, idxs_small = resample(amplit_tot_FT_corrected,rho_hi,rho_lo,om_ref,E,OM_T,N_T)
 
 # plot_mat(amplit_tot_FT_corrected_small,extent_small,cmap='plasma',mode='phase')
@@ -434,9 +550,12 @@ E_range_new = np.linspace(rho_lo,rho_hi,N_E)
 
 E1,E2 = np.meshgrid(E_range_new,E_range_new)
 
-rho_synthetic = np.exp(-1/2*((E1/hbar-om_xuv)**2/s_xuv**2 + (E2/hbar-om_xuv)**2/s_xuv**2))
-rho_synthetic = rho_synthetic/np.sum(np.diag(np.abs(rho_synthetic)))
+rho_synthetic_0 = np.exp(-1/2*((E1/hbar-om_xuv)**2/s_xuv**2 + (E2/hbar-om_xuv)**2/s_xuv**2))
+
+rho_synthetic_s = np.exp(-1/2*((E1/hbar-om_xuv+E_spinorbit/hbar)**2/s_xuv**2 + (E2/hbar-om_xuv+E_spinorbit/hbar)**2/s_xuv**2))
+
+rho_synthetic = normalize_rho(2/3*rho_synthetic_0 + 1/3*rho_synthetic_s)
 
 plot_mat(rho_synthetic,[rho_lo,rho_hi,rho_lo,rho_hi],cmap='plasma',mode='phase')
 plot_mat(rho_reconstructed,[rho_lo,rho_hi,rho_lo,rho_hi],cmap='plasma',mode='phase')
-plot_mat(rho_synthetic-rho_reconstructed,[rho_lo,rho_hi,rho_lo,rho_hi],cmap='plasma',mode='phase')
+plot_mat(np.minimum(np.abs((rho_synthetic-rho_reconstructed)/rho_synthetic),0.1),[rho_lo,rho_hi,rho_lo,rho_hi],cmap='plasma',mode='phase')
