@@ -12,8 +12,6 @@ from scipy.optimize import curve_fit
 # Reduced Planck constant in eV*fs (approx CODATA): ħ = 6.582119569e-16 eV·s
 hbar = 6.582119569e-1
 
-T_eg = 1 # preliminary simplification that it is const, in atomic units it can be roughly 1-0.01 for 0-100eV
-
 def Amplitude_ij(pulse_params_i,pulse_params_j,ene_Eg):
     tau_i,A_i,om0_i,s_i,phi_i = pulse_params_i
     tau_j,A_j,om0_j,s_j,phi_j = pulse_params_j
@@ -27,7 +25,7 @@ def Amplitude_ij(pulse_params_i,pulse_params_j,ene_Eg):
 
     prefactor = (-pi*A_i*A_j/(4*s_i*s_j)*np.exp(-1j*phi_i*np.sign(om0_i))*np.exp(-1j*phi_j*np.sign(om0_j))*np.exp(1j*om0_i*tau)
                 * np.exp(-1/2*( delta**2/s**2 + tau**2/s_t**2 + 2j*s_i/s_j*delta/s*tau/s_t )))
-    return prefactor*T_eg*wofz(wofz_arg)
+    return prefactor*wofz(wofz_arg)
 
 def modulating_function_multi(om_t,ene_Eg,pulse_params_x,probes,big_sigma=0):
     ###
@@ -339,7 +337,7 @@ def Amplitude_ij_num(spectrum_fun_i,support_i,spectrum_fun_j,support_j,tau_range
             integrand_fun = lambda om: (numerator_fun(om,E_val,ti_val,tj_val) - regularization_val) / (om - E_val/hbar)
 
             integral_res, err = integrate.quad(integrand_fun,limit_lo,limit_hi,complex_func=True)
-            integral_ress[i_t,i_e] = -1j*T_eg*(integral_res + 
+            integral_ress[i_t,i_e] = -1j*(integral_res + 
                                         hbar*regularization_val*np.log(np.abs((limit_hi-E_val/hbar)/(E_val/hbar-limit_lo))) - 
                                         1j*pi*regularization_val)
     return integral_ress
@@ -381,7 +379,7 @@ def Amplitude(xuvs,refprobes,E,E_spinorbit=0):
     xuvs_mod = []
     for xuv in xuvs:
         tau_i,A_i,om0_i,s_i,phi_i = xuv
-        xuvs_mod.append((tau_i,A_i,om0_i-E_spinorbit/hbar,s_i,phi_i))
+        xuvs_mod.append((tau_i,A_i,om0_i+E_spinorbit/hbar,s_i,phi_i))
 
     for xuv in xuvs_mod:
         for rp in refprobes:
@@ -397,8 +395,8 @@ E_lo = 60.5
 E_hi = 63.5
 T_reach = 100
 
-N_E = 1100
-N_T = 1100
+N_E = 700
+N_T = 700
 
 E_range = np.linspace(E_lo,E_hi,N_E)
 T_range = np.linspace(-T_reach,T_reach,N_T)
@@ -440,17 +438,22 @@ plot_spectra(probes)
 ### GENERATE SIGNAL
 ###
 
-E_spinorbit = 0.25
+E_spinorbit = -0.45
+# E_spinorbit = 0.0
 
 amplit_tot_0 = Amplitude(xuvs,refprobes,E)
 amplit_tot_s = Amplitude(xuvs,refprobes,E,E_spinorbit)
 
 # Transition dipole element (square modulus summed over ionization OAM channels) is approximated as T_i(E) = a_i*(E-E_0)
 
-a_dipole_0 = 0.016
-a_dipole_s = -0.01
+a_dipole_0 = 0.04
+a_dipole_s = 0.06
 
-signal = (2/3) * (1 + a_dipole_0*(E - om_xuv*hbar)) * np.abs(amplit_tot_0)**2 + (1/3) * (1 + a_dipole_s*(E - om_xuv*hbar + E_spinorbit)) * np.abs(amplit_tot_s)**2
+# a_dipole_0 = 0.0
+# a_dipole_s = 0.0
+
+# signal = (2/3) * (1 + a_dipole_0*(E - om_xuv*hbar)) * np.abs(amplit_tot_0)**2 + (1/3) * (1 + a_dipole_s*(E - om_xuv*hbar + E_spinorbit)) * np.abs(amplit_tot_s)**2
+signal = (2/3 + a_dipole_0*(E-om_xuv*hbar)) * np.abs(amplit_tot_0)**2 + (1/3 + a_dipole_s*(E-om_xuv*hbar)) * np.abs(amplit_tot_s)**2
 
 amplit_tot_FT, OM_T, em_lo, em_hi = CFT(T_range,signal,use_window=False)
 
@@ -461,18 +464,18 @@ plot_mat(np.minimum(np.abs(amplit_tot_FT),10),[E_lo,E_hi,em_lo,em_hi],cmap='plas
 ### 
 ###
 
-mid_erange_lo = 0.47
-mid_erange_hi = 0.53
+mid_emrange_lo = 0.47
+mid_emrange_hi = 0.53
 
 # --- Fit and subtract slowly varying background in each column ---
 # Build the y-axis (energy units ħ·ω) for the selected mid band
-i0 = floor(N_T*mid_erange_lo)
-i1 = floor(N_T*mid_erange_hi)
+i0 = floor(N_T*mid_emrange_lo)
+i1 = floor(N_T*mid_emrange_hi)
 em_axis_full = hbar * OM_T[:, 0]
 em_axis_mid = em_axis_full[i0:i1]
 
-amplit_tot_FT_mid = amplit_tot_FT[floor(N_T*mid_erange_lo):floor(N_T*mid_erange_hi),:]
-plot_mat(amplit_tot_FT_mid,[E_lo,E_hi,em_axis_mid[0],em_axis_mid[-1]],cmap='plasma',mode='phase')
+amplit_tot_FT_mid = amplit_tot_FT[floor(N_T*mid_emrange_lo):floor(N_T*mid_emrange_hi),:]
+# plot_mat(amplit_tot_FT_mid,[E_lo,E_hi,em_axis_mid[0],em_axis_mid[-1]],cmap='plasma',mode='phase')
 
 # Prepare baseline and corrected arrays
 abs_mid = np.abs(amplit_tot_FT_mid)
@@ -483,9 +486,9 @@ for j in range(abs_mid.shape[1]):
 
 # Subtract baseline on magnitudes and reconstruct complex result keeping phase
 eps = 1e-12
-mag = abs_mid
-mag_corr = np.clip(mag - baseline, 0.0, None)
-scale = np.divide(mag_corr, mag + eps)
+mag_corr = np.clip(abs_mid - baseline, 0.0, None)
+scale = np.divide(mag_corr, abs_mid + eps)
+
 amplit_tot_FT_mid_detrended = amplit_tot_FT_mid * scale
 
 # Plot diagnostics
@@ -493,7 +496,55 @@ extent_mid = [E_lo, E_hi, float(em_axis_mid[0]), float(em_axis_mid[-1])]
 plot_mat(baseline, extent_mid, cmap='plasma', mode='phase')
 plot_mat(amplit_tot_FT_mid_detrended, extent_mid, cmap='plasma', mode='phase')
 
+# Find the row containing the global maximum magnitude and extract it
+abs_mid_det = np.abs(amplit_tot_FT_mid_detrended)
+max_row_idx, _ = np.unravel_index(np.argmax(abs_mid_det), abs_mid_det.shape)
+delta_ofEt = amplit_tot_FT_mid_detrended[max_row_idx, :]
 
+
+def fitdelta_so(E,dE_so,a_dipole_0,b_dipole_0,a_dipole_s,b_dipole_s):
+    return (b_dipole_0 + a_dipole_0*(E-om_xuv*hbar))*np.abs(sp_tot(xuvs,E/hbar-om_ref))**2 + (b_dipole_s + a_dipole_s*(E-om_xuv*hbar))*np.abs(sp_tot(xuvs,E/hbar - om_ref - dE_so/hbar))**2
+
+# plt.plot(E_range,np.abs(delta_ofEt)/np.sum(np.abs(delta_ofEt)))
+# plt.plot(E_range,np.abs(fitdelta_so(E_range,-0.35,a_dipole_0,2/3,a_dipole_s,1/3))/np.sum(np.abs(fitdelta_so(E_range,-0.35,a_dipole_0,2/3,a_dipole_s,1/3))))
+# plt.show()
+
+# Fit |delta_ofEt| to fitdelta_so(E, dE_so, a0, b0, aS, bS)
+xdata = E_range
+
+sc = np.sum(np.abs(delta_ofEt))
+ydata = np.abs(delta_ofEt)/sc
+
+# Initial guesses and bounds
+p0 = [-0.45, 0.0, 0.7, 0.0, 0.3]  # [dE_so, a_dipole_0, b_dipole_0, a_dipole_s, b_dipole_s]
+
+popt, pcov = curve_fit(
+    fitdelta_so,
+    xdata,
+    ydata,
+    p0=p0,
+)
+perr = np.sqrt(np.diag(pcov))
+
+# Fitted curve
+yfit = fitdelta_so(xdata, *popt)
+
+print("Fitted parameters:")
+print(f"dE_so = {popt[0]:.6f} ± {perr[0]:.6f} eV")
+print(f"a_dipole_0 = {sc*popt[1]:.6f} ± {sc*perr[1]:.6f}")
+print(f"b_dipole_0 = {sc*popt[2]:.6f} ± {sc*perr[2]:.6f}")
+print(f"a_dipole_s = {sc*popt[3]:.6f} ± {sc*perr[3]:.6f}")
+print(f"b_dipole_s = {sc*popt[4]:.6f} ± {sc*perr[4]:.6f}")
+
+# Plot data vs fit
+plt.figure()
+plt.plot(xdata, np.abs(delta_ofEt), label='|delta_ofEt|', alpha=0.7)
+plt.plot(xdata, sc*yfit, label='fit', lw=2)
+plt.xlabel('E (eV)')
+plt.ylabel('Amplitude (arb.)')
+plt.legend()
+plt.tight_layout()
+plt.show()
 
 ###
 ### CORRECTION ANALYTICALLY
@@ -552,7 +603,7 @@ E1,E2 = np.meshgrid(E_range_new,E_range_new)
 
 rho_synthetic_0 = np.exp(-1/2*((E1/hbar-om_xuv)**2/s_xuv**2 + (E2/hbar-om_xuv)**2/s_xuv**2))
 
-rho_synthetic_s = np.exp(-1/2*((E1/hbar-om_xuv+E_spinorbit/hbar)**2/s_xuv**2 + (E2/hbar-om_xuv+E_spinorbit/hbar)**2/s_xuv**2))
+rho_synthetic_s = np.exp(-1/2*((E1/hbar-om_xuv-E_spinorbit/hbar)**2/s_xuv**2 + (E2/hbar-om_xuv-E_spinorbit/hbar)**2/s_xuv**2))
 
 rho_synthetic = normalize_rho(2/3*rho_synthetic_0 + 1/3*rho_synthetic_s)
 
