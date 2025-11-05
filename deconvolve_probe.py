@@ -92,30 +92,31 @@ def new_Sig_cc_interp(re_spline, im_spline, om_t_vals, Ef_vals, grid=None):
     im = im_spline.ev(om_b.ravel(), ef_b.ravel()).reshape(om_b.shape)
     return re + 1j * im
 
-def CFT(T_range, signal, use_window=True):
+def CFT(T_range, signal, use_window=True, inverse=False, zero_pad=0):
     """
     Continuous-time Fourier transform convention per column (fixed energy E):
-        S(ω, E) = ∫ s(t, E) · e^{-i ω t} dt
+        Forward: S(ω, E) = ∫ s(t, E) · e^{-i ω t} dt
 
     Discrete implementation with FFT for samples t_n = t0 + n·dt:
         S(ω_k, E) ≈ dt · e^{-i ω_k t0} · FFT_n{ s(t_n, E) }[k]
 
-    If use_window is True, a Hann window is applied along time to reduce spectral leakage
-    and we divide by its coherent gain so line amplitudes are preserved. If False, a
-    rectangular window (no windowing) is used.
+    Options:
+      - use_window: apply Hann window (coherent-gain normalized) along time (rows).
+      - inverse: when True, perform the inverse operation to reconstruct s(t, E)
+                 from S(ω, E). The input "signal" must be the shifted spectrum
+                 (as returned by the forward path). Windowing is not undone.
+      - zero_pad: integer number of zeros to pad on BOTH sides along time before
+                  transform (forward) or to account for when inverting. Default 0.
 
-    Returns:
-      - spec_shift: FFT along time (rows), shifted so ω runs from negative to positive
-      - OM_T: 2D array of angular frequency (ω) matching spec_shift shape along rows
-      - E_min, E_max: energy-axis bounds (ħ·ω) corresponding to the first/last row of spec_shift
+    Returns (forward, inverse respectively):
+      - forward: spec_shift, OM_T, E_min, E_max
+      - inverse: sig_time (trimmed to len(T_range) along rows), None, t_min, t_max
     """
     # Validate input and infer sizes locally (avoid globals)
     t = np.asarray(T_range)
     if t.ndim != 1:
         raise ValueError("T_range must be a 1D array of time samples")
     NT_local = t.size
-    if signal.shape[0] != NT_local:
-        raise ValueError("signal shape[0] must match len(T_range)")
     NE_local = signal.shape[1]
 
     # Ensure uniform sampling
@@ -125,26 +126,68 @@ def CFT(T_range, signal, use_window=True):
     if not np.allclose(np.diff(t), dt, rtol=1e-6, atol=0.0):
         raise ValueError("T_range must be uniformly spaced")
 
-    # Windowing
+    # Inverse path: reconstruct time-domain from shifted spectrum
+    if inverse:
+        # Infer padded length from provided spectrum along rows
+        S_shift = np.asarray(signal)
+        if S_shift.ndim != 2:
+            raise ValueError("For inverse, 'signal' must be a 2D array with rows as ω bins")
+        N_eff = S_shift.shape[0]
+
+        # Frequency grid associated with the padded length
+        freqs = np.fft.fftfreq(N_eff, d=dt)
+        omega = 2 * np.pi * freqs
+
+        # Undo shift and the forward phase factor (use padded start time)
+        t0_eff = t[0] - int(zero_pad) * dt
+        S_unshift = np.fft.ifftshift(S_shift, axes=0)
+        phase_inv = np.exp(1j * omega[:, None] * t0_eff)
+        S_unphased = S_unshift * phase_inv
+
+        # Inverse scaling: x ≈ (1/dt) · IFFT{ S }
+        sig_time_full = np.fft.ifft(S_unphased, axis=0) / dt
+
+        # Trim padding back to original time length
+        zp = int(zero_pad)
+        if zp > 0:
+            lo = zp
+            hi = zp + NT_local
+            sig_time = sig_time_full[lo:hi, :]
+        else:
+            sig_time = sig_time_full
+
+        # Return time-domain signal and simple time metadata
+        return sig_time, None, float(t[0]), float(t[-1])
+
+    # Forward path
+    if signal.shape[0] != NT_local:
+        raise ValueError("signal shape[0] must match len(T_range)")
+
+    # Windowing (apply on original length), then symmetric zero padding
     if use_window:
-        window = np.hanning(NT_local)[:, None]  # column vector
-        coherent_gain = window.mean()           # for Hann, exactly 0.5
+        window = np.hanning(NT_local)[:, None]
+        coherent_gain = window.mean()  # Hann coherent gain = 0.5
     else:
         window = np.ones((NT_local, 1))
         coherent_gain = 1.0
 
     windowed = (signal * window) / coherent_gain
 
-    # Frequencies (unshifted) and corresponding angular frequencies
-    freqs = np.fft.fftfreq(NT_local, d=dt)   # cycles per unit time
-    omega = 2 * np.pi * freqs                # rad / unit time
+    zp = int(zero_pad)
+    if zp > 0:
+        windowed = np.pad(windowed, ((zp, zp), (0, 0)), mode='constant', constant_values=0)
+    N_eff = windowed.shape[0]
+
+    # Frequencies (unshifted) and corresponding angular frequencies for padded length
+    freqs = np.fft.fftfreq(N_eff, d=dt)   # cycles per unit time
+    omega = 2 * np.pi * freqs             # rad / unit time
 
     # FFT along time axis with dt scaling to approximate the continuous integral
     spec = np.fft.fft(windowed, axis=0) * dt
 
-    # Phase correction for non-zero time origin t0 = T_range[0]
-    t0 = t[0]
-    phase = np.exp(-1j * omega[:, None] * t0)
+    # Phase correction for start time including leading padding
+    t0_eff = t[0] - zp * dt
+    phase = np.exp(-1j * omega[:, None] * t0_eff)
     spec *= phase
 
     # Shift spectrum and build energy axis (ħ·ω)
@@ -210,7 +253,7 @@ def resample(spec_corrected,rho_hi,rho_lo,om_ref,E,OM_T,N_NEW):
 
     return Sig_cc_cubic_mesh, small_sig, extent, [idy_min,idy_max,idx_min,idx_max]
 
-def plot_mat(mat,extent,cmap='viridis',mode='abs'):
+def plot_mat(mat,extent=[0,1,0,1],cmap='plasma',mode='abs'):
 
     if mode == 'abs':
         plt.figure()
@@ -257,6 +300,9 @@ def plot_mat(mat,extent,cmap='viridis',mode='abs'):
 def normalize_rho(rho):
     return rho/np.sum(np.diag(np.abs(rho)))
 
+def normalize_abs(arr):
+    return arr/np.sum(np.abs(arr))
+
 def _sum3_gauss1d(y, A1, mu1, s1, A2, mu2, s2, A3, mu3, s3):
     """Sum of three 1D Gaussians."""
     g1 = A1 * np.exp(-0.5 * ((y - mu1) / s1) ** 2)
@@ -264,7 +310,7 @@ def _sum3_gauss1d(y, A1, mu1, s1, A2, mu2, s2, A3, mu3, s3):
     g3 = A3 * np.exp(-0.5 * ((y - mu3) / s3) ** 2)
     return g1 + g2 + g3
 
-def fit_three_gaussians_1d(y_vals, z_vals, n_center_rows=3, center_bounds_frac=0.25, width_bounds=(0.05, 2.0), center_index=None):
+def fit_three_gaussians_1d(y_vals, z_vals, n_center_rows=3, center_bounds_frac=0.25, width_bounds=(0.01, 2.0), center_index=None):
     """Fit a sum of three 1D Gaussians to a single column z(y).
 
     - Fit is performed excluding n_center_rows around the central y-index (masking the spike region).
@@ -336,7 +382,7 @@ def _gauss1d_centered(y, A, s):
     """Single Gaussian centered at 0: A * exp(-0.5 * (y/s)^2)."""
     return A * np.exp(-0.5 * (y / s) ** 2)
 
-def fit_single_gaussian_centered_1d(y_vals, z_vals, n_center_rows=3, width_bounds=(0.05, 2.0), center_index=None):
+def fit_single_gaussian_centered_1d(y_vals, z_vals, n_spike_buffer=1, n_fitting_buffer=3, width_bounds=(0.00, 2.0), center_index=None):
     """Fit a single Gaussian per column, centered at the middle row (fixed center).
 
     - Recenter y to zero so the Gaussian center is at 0 by construction.
@@ -345,53 +391,63 @@ def fit_single_gaussian_centered_1d(y_vals, z_vals, n_center_rows=3, width_bound
 
     Returns the fitted curve evaluated on the full y grid.
     """
-    y_vals = np.asarray(y_vals).ravel()
-    z_vals = np.asarray(z_vals).ravel()
+
     ny = y_vals.size
-    if z_vals.size != ny:
-        raise ValueError("z_vals must have same length as y_vals")
 
     # Recenter y so 0 is exactly at the Dirac-spike row
-    c_row = ny // 2 if center_index is None else int(center_index)
-    c_row = max(0, min(ny - 1, c_row))
-    y0 = y_vals[c_row]
+    y0 = y_vals[center_index]
     yc = y_vals - y0
-    span_y = max(np.ptp(yc), 1e-9)
+    span_y = np.ptp(yc)
 
-    # Mask out the central rows during fitting
-    m = max(1, int(n_center_rows))
-    if m % 2 == 0:
-        m += 1
-    half = m // 2
-    c_row = ny // 2 if center_index is None else int(center_index)
-    c_row = max(0, min(ny - 1, c_row))
-    lo = max(0, c_row - half)
-    hi = min(ny, c_row + half + 1)
-    mask = np.ones(ny, dtype=bool)
-    mask[lo:hi] = False
+    # Leave only two bands around center for fitting
+    nlo = center_index - n_spike_buffer - n_fitting_buffer
+    nlo1 = center_index - n_spike_buffer
+    nhi = center_index + n_spike_buffer + 1
+    nhi1 = center_index + n_spike_buffer + n_fitting_buffer + 1
+
+    mask = np.zeros(ny, dtype=bool)
+    mask[nlo:nlo1] = True
+    mask[nhi:nhi1] = True
 
     y_fit = yc[mask]
     z_fit = z_vals[mask]
+
+    # # Further threshold-mask low values in z_fit
+    # # Compute max on finite values
+    # z_max = np.max(z_fit)
+    # thr = 0.6 * z_max
+    # keep_high = z_fit >= thr
+    # frac_kept = float(np.count_nonzero(keep_high)) / float(z_fit.size)
+    # # If more than 50% remain after thresholding, return original data
+    # if frac_kept > 0.5:
+    #     return z_vals
+    # # Apply masking; if too few points remain, return original data
+    # y_fit = y_fit[keep_high]
+    # z_fit = z_fit[keep_high]
+    # if z_fit.size < 3:
+    #     return z_vals
 
     # Initial guesses and bounds
     min_s = float(width_bounds[0]) * span_y
     max_s = float(width_bounds[1]) * span_y
     A0 = float(np.median(np.abs(z_fit)))
-    A0 = max(A0, 1e-12)
-    s0 = 0.6 * span_y
+    s0 = 0.1 * span_y
 
-    try:
-        popt, _ = curve_fit(
-            _gauss1d_centered,
-            y_fit,
-            z_fit,
-            p0=[A0, s0],
-            bounds=([0.0, min_s], [np.inf, max_s]),
-            maxfev=20000,
-        )
-        fit_full = _gauss1d_centered(yc, *popt)
-    except Exception:
-        fit_full = np.zeros_like(z_vals)
+    popt, _ = curve_fit(
+        _gauss1d_centered,
+        y_fit,
+        z_fit,
+        p0=[A0, s0],
+        bounds=([0.0, min_s], [np.inf, max_s]),
+        maxfev=20000,
+    )
+    fit_full = _gauss1d_centered(yc, *popt)
+
+    # if j%100 == 0:
+    #     plt.plot(y_fit,z_fit+0.1)
+    #     plt.plot(yc,z_vals)
+    #     plt.plot(yc,fit_full)
+    #     plt.show()
 
     return fit_full
 
@@ -479,12 +535,12 @@ def Amplitude(xuvs,refprobes,E,E_spinorbit=0):
 ### FIELD PARAMETERS
 ###
 
-E_lo = 60.5
+E_lo = 60.0
 E_hi = 63.5
 T_reach = 100
 
-N_E = 1700
-N_T = 1700
+N_E = 1000
+N_T = 1000
 
 E_range = np.linspace(E_lo,E_hi,N_E)
 T_range = np.linspace(-T_reach,T_reach,N_T)
@@ -532,7 +588,7 @@ amplit_tot_0 = Amplitude(xuvs,refprobes,E)
 
 a_dipole_0 = 0.00
 
-SNR = 30
+SNR = None
 
 signal_clean = (1 + a_dipole_0*(E-om_xuv*hbar)) * np.abs(amplit_tot_0)**2
 
@@ -546,7 +602,7 @@ else:
 
 amplit_tot_FT, OM_T, em_lo, em_hi = CFT(T_range,signal,use_window=False)
 
-plot_mat(signal,[E_lo,E_hi,-T_reach,T_reach],cmap='plasma',mode='phase')
+# plot_mat(signal,[E_lo,E_hi,-T_reach,T_reach],cmap='plasma',mode='phase')
 # plot_mat(np.minimum(np.abs(amplit_tot_FT),10),[E_lo,E_hi,em_lo,em_hi],cmap='plasma',mode='phase')
 
 ###
@@ -574,47 +630,36 @@ x_axis = E[0, :]
 y_axis = em_axis_mid
 
 # Omit n central rows when fitting (Dirac-like spike)
-n_central_rows = 3
+n_spike_buffer = 0
+n_fitting_buffer = 4
 ny, nx = abs_mid.shape
 
-# Detect the spike row on the entire (un-sliced) spectrum and map into the mid-band slice
-abs_full = np.abs(amplit_tot_FT)
-spike_row_full = int(np.argmax(np.sum(abs_full, axis=1)))
-spike_row_mid = spike_row_full - i0
-if spike_row_mid < 0 or spike_row_mid >= ny:
-    spike_row_mid = ny // 2  # fallback if spike outside selected band
+# Detect the spike row
+spike_row_mid = int(np.argmax(np.sum(abs_mid, axis=1)))
 
 # Fit per column outside the central rows and evaluate on full grid
 fit_cols = np.zeros_like(abs_mid)
 for j in range(nx):
-    fit_cols[:, j] = fit_single_gaussian_centered_1d(y_axis, abs_mid[:, j], n_center_rows=n_central_rows, center_index=spike_row_mid)
+    fit_cols[:, j] = fit_single_gaussian_centered_1d(y_axis, abs_mid[:, j], n_spike_buffer=n_spike_buffer, n_fitting_buffer=n_fitting_buffer, center_index=spike_row_mid)
 
 # Compute spike as residual but restrict it to central rows only
-m = max(1, int(n_central_rows))
-if m % 2 == 0:
-    m += 1
-half = m // 2
-c_row = spike_row_mid
-lo = max(0, c_row - half)
-hi = min(ny, c_row + half + 1)
 spike_mask = np.zeros_like(abs_mid, dtype=bool)
-spike_mask[lo:hi, :] = True
+spike_mask[spike_row_mid-n_spike_buffer:spike_row_mid+n_spike_buffer+1, :] = True
 
 residual = abs_mid - fit_cols
 residual_pos = np.maximum(residual, 0.0)
 
-# # Build threshold from the row with the maximum average residual and apply globally
-# threshold_frac = 0.1  # fraction of strongest-row average to keep
-# if ny > 0:
-#     row_avgs = np.mean(residual_pos, axis=1)
-#     base_mean = float(row_avgs[np.argmax(row_avgs)])
-# else:
-#     base_mean = 0.0
-# thr = threshold_frac * base_mean
-# above_thr_mask = residual_pos >= thr
+# Build threshold from the row with the maximum average residual and apply globally
+threshold_frac = 0.02  # fraction of strongest-row average to keep
+if ny > 0:
+    row_avgs = np.mean(residual_pos, axis=1)
+    base_mean = float(row_avgs[np.argmax(row_avgs)])
+else:
+    base_mean = 0.0
+thr = threshold_frac * base_mean
+above_thr_mask = residual_pos >= thr
 
-apply_mask = spike_mask# & above_thr_mask
-
+apply_mask = spike_mask #& above_thr_mask
 
 # Spike-only map for diagnostics: positive residuals within central rows and above threshold
 spike_only = np.where(apply_mask, residual_pos, 0.0)
@@ -628,46 +673,71 @@ eps = 1e-12
 scale = np.divide(np.clip(baseline_mag, 0.0, None), abs_mid + eps)
 amplit_tot_FT_mid_detrended = amplit_tot_FT_mid * scale
 
-
-
 # Plot diagnostics
 extent_mid = [E_lo, E_hi, float(em_axis_mid[0]), float(em_axis_mid[-1])]
 
+plot_mat(amplit_tot_FT_mid_detrended,extent_mid)
+plot_mat(spike_only,extent_mid)
+
+
+# Zero-pad the detrended mid-band to the full (ω, E) grid
+amplit_tot_FT_detrended_full = np.zeros_like(amplit_tot_FT, dtype=complex)
+amplit_tot_FT_detrended_full[i0:i1, :] = amplit_tot_FT_mid_detrended
+
+timm,_,_,_ = CFT(T_range,amplit_tot_FT_detrended_full,use_window=False,inverse=True)
+
+plot_mat(timm)
+
+# sigg = np.abs(Amplitude(xuvs,probes,E))**2
+# plot_mat(sigg)
+# amplit_tot_FT, OM_T, em_lo, em_hi = CFT(T_range,sigg,use_window=False)
+# amplit_tot_FT_mid = amplit_tot_FT[i0:i1,:]
+# mid_probe = np.abs(amplit_tot_FT_mid)
+# plot_mat(mid_probe)
+# plot_mat((normalize_abs(mid_probe) - normalize_abs(amplit_tot_FT_mid_detrended)) / np.max(mid_probe))
 
 ###
 ### EXTRACT PROBE SPECTRUM
 ###
 
-true_pramp = Amplitude(xuvs,probes,E)
-true_prsig = np.abs(true_pramp)**2
-
-true_prsigft, OM_T, em_lo, em_hi = CFT(T_range,true_prsig,use_window=False)
-true_prsigftmid = true_prsigft[i0:i1]
-
-plot_mat(fit_cols, extent_mid, cmap='plasma', mode='phase')
-plot_mat(true_prsigftmid, extent_mid, cmap='plasma', mode='phase')
-plot_mat(fit_cols-true_prsigftmid, extent_mid, cmap='plasma', mode='phase')
-
-
-
-plot_mat(baseline_mag, extent_mid, cmap='plasma', mode='phase')
-plot_mat(amplit_tot_FT_mid_detrended, extent_mid, cmap='plasma', mode='phase')
-plot_mat(spike_only, extent_mid, cmap='plasma', mode='phase')
-
 # Find the row containing the global maximum magnitude and extract it
 abs_mid_det = np.abs(amplit_tot_FT_mid_detrended)
-max_row_idx, _ = np.unravel_index(np.argmax(abs_mid_det), abs_mid_det.shape)
-delta_ofEt = amplit_tot_FT_mid_detrended[max_row_idx, :]
+spike_probe = abs_mid_det[spike_row_mid, :]
+spike_xuv = spike_only[spike_row_mid,:]
 
-plt.plot(delta_ofEt)
+
+plt.plot(spike_xuv)
 plt.show()
 
+plt.plot(spike_probe)
+plt.show()
+
+# Prepare deconvolution signal
+sigg = np.pad(np.sqrt(spike_probe), 3 * spike_probe.size)
+divv = np.pad(np.sqrt(spike_xuv), 3 * spike_probe.size)
+
+
+
+spxuv = sp_tot(xuvs,E_range/hbar)
+spprobe = sp_tot(probes,E_range/hbar - om_xuv + 1)
+
+plt.plot(normalize_abs(np.sqrt(spike_xuv)))
+plt.plot(normalize_abs(spxuv))
+plt.show()
+
+convv = np.convolve(spxuv,spprobe/(E_range/hbar - om_xuv + 1))
+
+plt.plot(normalize_abs(spxuv/(E_range/hbar)))
+plt.plot(normalize_abs(spprobe))
+plt.show()
+
+plt.plot(normalize_abs(convv))
+plt.plot(normalize_abs(np.sqrt(np.abs(timm[N_T//2,:]))))
+plt.show()
 
 ###
 ### CORRECTION ANALYTICALLY
 ###
-
-
 
 correction = correcting_function_multi(OM_T,E,pulse_xuv,probes,dzeta=0.02)
 amplit_tot_FT_corrected = correction*amplit_tot_FT
