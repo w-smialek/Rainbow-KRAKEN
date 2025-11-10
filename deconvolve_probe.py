@@ -662,41 +662,6 @@ def detrend_spike(sig_mid,row_axis,n_spike_buffer,n_fitting_buffer,above_thresh_
 
     return amplit_tot_FT_mid_detrended, spike_only, spike_row_mid
 
-def wiener_deconvolve(y, h, reg=1e-6, pad_factor=1):
-        """Wiener-style deconvolution with zero-padding.
-
-        y ≈ h * x  (linear convolution). We estimate x:
-                X(ω) = Y(ω) H*(ω) / (|H(ω)|^2 + reg)
-
-        Args:
-            y: 1D observed signal
-            h: 1D kernel (impulse response)
-            reg: Tikhonov/Wiener regularization term added to |H|^2 in denominator
-            pad_factor: zero-pad length multiplier to reduce circular convolution wrap
-
-        Returns:
-            x_est: real part of inverse FFT truncated to original signal length.
-        """
-        y = np.asarray(y, float)
-        h = np.asarray(h, float)
-        n = y.size
-        # Effective length for linear convolution result
-        lin_len = 2*n - 1
-        # Next power-of-two or scaled length for efficient FFT
-        # N_fft = int(2 ** np.ceil(np.log2(lin_len * pad_factor)))
-        N_fft = pad_factor*n
-        # FFTs with padding
-        Y = np.fft.fft(y, N_fft)
-        H = np.fft.fft(h, N_fft)
-        H_conj = np.conj(H)
-        denom = np.abs(H) ** 2 + reg
-        X = Y * H_conj / denom
-        x_full = np.fft.ifft(X)
-        # Truncate to plausible length of original underlying x (choose n)
-        x_full = np.fft.fftshift(x_full)[N_fft//2-n//2:N_fft//2+n//2]
-
-        return np.real(x_full)
-
 def rl_deconvolve_nonneg(y, h, n_iter=200, pad_factor=2.0, eps=1e-12, smooth_sigma=0.0):
     """Richardson–Lucy deconvolution enforcing non-negativity.
 
@@ -751,7 +716,6 @@ def nfit_params_to_probes(params):
     for k in range(len(params)//3):
         probes.append((T,params[3*k],params[3*k+1],params[3*k+2],0))
     return tuple(probes)
-
 
 def _denoise_1d(a, win_frac=0.07, poly=3, thresh_sigma=3.5):
     a = np.asarray(a, float)
@@ -860,7 +824,7 @@ amplit_tot_0 = Amplitude(xuvs,refprobes,E)
 
 a_dipole_0 = 0.00
 
-SNR = 30
+SNR = 50
 
 signal_clean = (1 + a_dipole_0*(E-om_xuv*hbar)) * np.abs(amplit_tot_0)**2
 
@@ -946,7 +910,7 @@ plt.plot(obs_Erange,k_enhance*obs)
 plt.show()
 
 # Deconvolve (Wiener + RL for comparison). Use RL result downstream.
-spike_deconv_rl = rl_deconvolve_nonneg(obs, kernel, n_iter=10000, pad_factor=5.0, smooth_sigma=1.5)
+spike_deconv_rl = rl_deconvolve_nonneg(obs, kernel, n_iter=20000, pad_factor=5.0, smooth_sigma=2.0)
 
 # from skimage import restoration
 # spike_deconv_rl = restoration.richardson_lucy(obs,kernel,num_iter=50,clip=False,filter_epsilon=0.1)
@@ -995,10 +959,10 @@ plt.tight_layout()
 plt.show()
 
 
-correction = correcting_function_multi(OM_T,E,pulse_xuv,probes,dzeta=0.04)
+correction = correcting_function_multi(OM_T,E,pulse_xuv,probes,dzeta=0.1)
 amplit_tot_FT_corrected = correction*amplit_tot_FT
 
-correction_rec = correcting_function_multi(OM_T,E,pulse_xuv,probes_reconstructed,dzeta=0.07)
+correction_rec = correcting_function_multi(OM_T,E,pulse_xuv,probes_reconstructed,dzeta=0.1)
 amplit_tot_FT_corrected_rec = correction_rec*amplit_tot_FT
 
 ###
@@ -1072,8 +1036,8 @@ def density_fidelity(rho, sigma):
     F = float(tr_sqrt**2)
     return float(np.clip(F, 0.0, 1.0))
 
-F_syn_rec = density_fidelity(rho_synthetic, rho_reconstructed)
-F_syn_rec_rec = density_fidelity(rho_synthetic, rho_reconstructed_rec)
+F_syn_rec = density_fidelity(normalize_rho(rho_synthetic), normalize_rho(rho_reconstructed))
+F_syn_rec_rec = density_fidelity(normalize_rho(rho_synthetic), normalize_rho(rho_reconstructed_rec))
 
 print(f"Fidelity(rho_synthetic, rho_reconstructed)      = {F_syn_rec:.6f}")
 print(f"Fidelity(rho_synthetic, rho_reconstructed_rec) = {F_syn_rec_rec:.6f}")
