@@ -12,6 +12,7 @@ from scipy.signal import deconvolve
 from scipy.ndimage import gaussian_filter, laplace
 from scipy.signal import savgol_filter
 from scipy.signal import fftconvolve
+from matplotlib import patheffects as pe
 
 # Reduced Planck constant in eV*fs (approx CODATA): ħ = 6.582119569e-16 eV·s
 hbar = 6.582119569e-1
@@ -255,48 +256,119 @@ def resample(spec_corrected,rho_hi,rho_lo,om_ref,E,OM_T,N_NEW):
 
     return Sig_cc_cubic_mesh, small_sig, extent, [idy_min,idy_max,idx_min,idx_max]
 
-def plot_mat(mat,extent=[0,1,0,1],cmap='plasma',mode='abs'):
+# def plot_mat(mat,extent=[0,1,0,1],cmap='plasma',mode='abs'):
+
+#     if mode == 'abs':
+#         plt.figure()
+#         im = plt.imshow(np.abs(mat), extent=extent, origin='lower', aspect='auto', cmap=cmap)
+#         plt.xlabel('x')
+#         plt.ylabel('y')
+#         plt.title('|M|')
+#         plt.colorbar(im)
+#         plt.show()
+
+#     elif mode == 'phase':
+#         fig, axes = plt.subplots(1, 2, figsize=(10, 4), sharex=True, sharey=True)
+#         im0 = axes[0].imshow(np.abs(mat), extent=extent, origin='lower', aspect='auto', cmap=cmap)
+#         axes[0].set_title('|M|')
+#         axes[0].set_xlabel('x')
+#         axes[0].set_ylabel('y')
+#         fig.colorbar(im0, ax=axes[0])
+
+#         im1 = axes[1].imshow(np.angle(mat), extent=extent, origin='lower', aspect='auto', cmap='hsv', vmin=-np.pi, vmax=np.pi)
+#         axes[1].set_title('arg(M)')
+#         axes[1].set_xlabel('x')
+#         fig.colorbar(im1, ax=axes[1])
+
+#         plt.tight_layout()
+#         plt.show()
+
+#     elif mode == 'reim':
+#         fig, axes = plt.subplots(1, 2, figsize=(10, 4), sharex=True, sharey=True)
+#         im0 = axes[0].imshow(np.real(mat), extent=extent, origin='lower', aspect='auto', cmap=cmap)
+#         axes[0].set_title('Re{M}')
+#         axes[0].set_xlabel('x')
+#         axes[0].set_ylabel('y')
+#         fig.colorbar(im0, ax=axes[0])
+
+#         im1 = axes[1].imshow(np.imag(mat), extent=extent, origin='lower', aspect='auto', cmap=cmap)
+#         axes[1].set_title('Im{M}')
+#         axes[1].set_xlabel('x')
+#         fig.colorbar(im1, ax=axes[1])
+
+#         plt.tight_layout()
+#         plt.show()
+#     return
+
+def plot_mat(mat,extent=[0,1,0,1],cmap='viridis',mode='abs',show=True,saveloc=None,caption=None,xlabel='x',ylabel='y',title=None):
 
     if mode == 'abs':
         plt.figure()
         im = plt.imshow(np.abs(mat), extent=extent, origin='lower', aspect='auto', cmap=cmap)
-        plt.xlabel('x')
-        plt.ylabel('y')
-        plt.title('|M|')
+        plt.xlabel(xlabel)
+        plt.ylabel(ylabel)
+        if title:
+            plt.title(title)
+        else:
+            plt.title('|M|')
         plt.colorbar(im)
-        plt.show()
+        if caption is not None:
+            plt.text(0.02, 0.98, caption, transform=plt.gca().transAxes, 
+                    fontsize=10, verticalalignment='top', horizontalalignment='left',
+                    color='white', weight='bold',
+                    path_effects=[pe.withStroke(linewidth=2, foreground='black')])
 
     elif mode == 'phase':
         fig, axes = plt.subplots(1, 2, figsize=(10, 4), sharex=True, sharey=True)
         im0 = axes[0].imshow(np.abs(mat), extent=extent, origin='lower', aspect='auto', cmap=cmap)
         axes[0].set_title('|M|')
-        axes[0].set_xlabel('x')
-        axes[0].set_ylabel('y')
+        axes[0].set_xlabel(xlabel)
+        axes[0].set_ylabel(ylabel)
         fig.colorbar(im0, ax=axes[0])
+        if caption is not None:
+            axes[0].text(0.02, 0.98, caption, transform=axes[0].transAxes, 
+                        fontsize=10, verticalalignment='top', horizontalalignment='left',
+                        color='white', weight='bold',
+                        path_effects=[pe.withStroke(linewidth=2, foreground='black')])
 
         im1 = axes[1].imshow(np.angle(mat), extent=extent, origin='lower', aspect='auto', cmap='hsv', vmin=-np.pi, vmax=np.pi)
         axes[1].set_title('arg(M)')
-        axes[1].set_xlabel('x')
+        axes[1].set_xlabel(xlabel)
         fig.colorbar(im1, ax=axes[1])
 
+        if title:
+            fig.suptitle(title)
+
         plt.tight_layout()
-        plt.show()
 
     elif mode == 'reim':
         fig, axes = plt.subplots(1, 2, figsize=(10, 4), sharex=True, sharey=True)
         im0 = axes[0].imshow(np.real(mat), extent=extent, origin='lower', aspect='auto', cmap=cmap)
         axes[0].set_title('Re{M}')
-        axes[0].set_xlabel('x')
-        axes[0].set_ylabel('y')
+        axes[0].set_xlabel(xlabel)
+        axes[0].set_ylabel(ylabel)
         fig.colorbar(im0, ax=axes[0])
+        if caption is not None:
+            axes[0].text(0.02, 0.98, caption, transform=axes[0].transAxes, 
+                        fontsize=10, verticalalignment='top', horizontalalignment='left',
+                        color='white', weight='bold',
+                        path_effects=[pe.withStroke(linewidth=2, foreground='black')])
 
         im1 = axes[1].imshow(np.imag(mat), extent=extent, origin='lower', aspect='auto', cmap=cmap)
         axes[1].set_title('Im{M}')
-        axes[1].set_xlabel('x')
+        axes[1].set_xlabel(xlabel)
         fig.colorbar(im1, ax=axes[1])
 
+        if title:
+            fig.suptitle(title)
+
         plt.tight_layout()
+
+    if saveloc:
+        plt.savefig(saveloc,dpi=400)
+    if show:
         plt.show()
+    plt.close()
     return
 
 def normalize_rho(rho):
@@ -554,7 +626,7 @@ def Amplitude_ij_num(spectrum_fun_i,support_i,spectrum_fun_j,support_j,tau_range
                                         1j*pi*regularization_val)
     return integral_ress
 
-def plot_spectra(gausses, n_points=1000, sigma_span=6.0):
+def plot_spectra(gausses, n_points=1000, sigma_span=6.0, title='Spectrum'):
     om_los, om_his = [], []
     for _, A, om0, s, _ in gausses:
         if s is None or s <= 0:
@@ -569,8 +641,9 @@ def plot_spectra(gausses, n_points=1000, sigma_span=6.0):
     y = sp_tot(gausses, om)
 
     plt.plot(om*hbar, y)
-    plt.xlabel('E')
-    plt.ylabel('Amplitude')
+    plt.xlabel('Energy [eV]')
+    plt.ylabel(r'$A(\omega)$')
+    plt.title(title)
     plt.tight_layout()
     plt.show()
 
@@ -800,9 +873,9 @@ om_probe = 1.55/hbar
 s_probe = 0.15/hbar
 pulse_probe = (T,A_probe,om_probe,s_probe,0)
 
-A_probe2 = 0.1
-om_probe2 = 1.25/hbar
-s_probe2 = 0.05/hbar
+A_probe2 = 0.2
+om_probe2 = 1.20/hbar
+s_probe2 = 0.02/hbar
 pulse_probe2 = (T,A_probe2,om_probe2,s_probe2,0)
 
 A_probe3 = 0.2
@@ -825,7 +898,7 @@ probes = (pulse_probe,pulse_probe2,pulse_probe3,pulse_probe4)
 xuvs = (pulse_xuv,)#,pulse_xuv2,pulse_xuv3]
 refprobes = tuple(list(refs) + list(probes))
 
-plot_spectra(probes)
+plot_spectra(probes,title='Probe spectrum')
 
 ###
 ### GENERATE SIGNAL
@@ -912,10 +985,10 @@ x_conv = x_full[start:stop]
 
 conv = (conv2 + conv1)*(E_span)/(N_E-1)
 
-plot_mat(np.abs(conv)**2,extent=[x_conv[0]*hbar,x_conv[-1]*hbar,-T_reach,T_reach],mode='phase')
-plot_mat(sigg,extent=[x_conv[0]*hbar,x_conv[-1]*hbar,-T_reach,T_reach],mode='phase')
+# plot_mat(np.abs(conv)**2,extent=[x_conv[0]*hbar,x_conv[-1]*hbar,-T_reach,T_reach],mode='phase')
+# plot_mat(sigg,extent=[x_conv[0]*hbar,x_conv[-1]*hbar,-T_reach,T_reach],mode='phase')
 
-plot_mat(np.abs(conv)**2 - sigg)
+# plot_mat(np.abs(conv)**2 - sigg)
 
 ###
 ### EXTRACT PROBE SPECTRUM
@@ -1015,7 +1088,11 @@ rho_lo = 59.6
 rho_hi = 61.4
 rho_reconstructed_rec, amplit_tot_FT_corrected_small_rec, extent_small, idxs_small = resample(amplit_tot_FT_corrected_rec,rho_hi,rho_lo,om_ref,E,OM_T,N_T)
 
-# plot_mat(amplit_tot_FT_corrected_small,extent_small,cmap='plasma',mode='phase')
+rho_reconstructed_uncor, amplit_tot_FT_corrected_small_uncor, extent_small, idxs_small = resample(amplit_tot_FT,rho_hi,rho_lo,om_ref,E,OM_T,N_T)
+
+plot_mat(rho_reconstructed_uncor,extent=[rho_lo,rho_hi,rho_lo,rho_hi],cmap='plasma',
+         mode='phase',saveloc='newims/uncorr.png',xlabel='Energy [eV]',ylabel='Energy [eV]',
+         title='Rho uncorrected for the probe spectrum')
 
 ###
 ### PLOT AND COMPARE TO THEORY
