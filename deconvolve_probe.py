@@ -11,6 +11,7 @@ from scipy.optimize import curve_fit
 from scipy.signal import deconvolve
 from scipy.ndimage import gaussian_filter, laplace
 from scipy.signal import savgol_filter
+from scipy.signal import fftconvolve
 
 # Reduced Planck constant in eV*fs (approx CODATA): ħ = 6.582119569e-16 eV·s
 hbar = 6.582119569e-1
@@ -584,6 +585,17 @@ def sp_tot(gausses,om):
         retval += spectrum_fun(a0,om0,s0,om)
     return retval
 
+def spectrum_fun_2d(A,om0,s,OM,TAU):
+    retval = A/(2*s)*np.exp(-(OM-om0)**2/(2*s**2))*np.exp(1j*OM*TAU)
+    return retval  # Positive-freq part
+
+def sp_tot_2d(gausses,OM):
+    retval = np.zeros_like(OM).astype(complex)
+    for gauss in gausses:
+        TAU,a0,om0,s0,_ = gauss
+        retval += spectrum_fun_2d(a0,om0,s0,OM,TAU)
+    return retval
+
 def Amplitude(xuvs,refprobes,E,E_spinorbit=0):
     n_t, n_e = E.shape
     amplit_tot = np.zeros((n_t,n_e)).astype(complex)
@@ -769,6 +781,7 @@ def regularization_pos(sig,range,denoise=True,gaussianize=True,rollmax=False,n_g
 E_lo = 60.0
 E_hi = 63.5
 T_reach = 100
+E_span = E_hi-E_lo
 
 N_E = 700
 N_T = 700
@@ -879,6 +892,31 @@ sigg = np.abs(Amplitude(xuvs,probes,E))**2
 # plot_mat(mid_probe)
 # plot_mat((normalize_abs(mid_probe) - normalize_abs(amplit_tot_FT_mid_detrended)) / np.max(mid_probe))
 
+
+OM_probe = E/hbar - E_lo/hbar + 0.1 + E_span/hbar/N_E/2 * ((N_E-1) % 2)
+f1 = sp_tot_2d(probes,OM_probe)/(OM_probe)
+OM_xuv = E/hbar - E_span/hbar/2 - 0.1
+f2 = sp_tot_2d(xuvs,OM_xuv)
+
+conv1 = fftconvolve(f1,f2,mode='same',axes=1)
+
+f3 = sp_tot_2d(probes,OM_probe)*np.exp(-1j*OM_probe*T)
+f4 = sp_tot_2d(xuvs,OM_xuv)/(OM_xuv)*np.exp(-1j*OM_xuv*T)
+
+conv2 = fftconvolve(f3,f4,mode='same',axes=1)
+
+x_full = np.linspace(OM_probe[0,0]+OM_xuv[0,0],OM_probe[0,-1]+OM_xuv[0,-1],2*N_E-1)
+start = (N_E - 1) // 2
+stop = start + N_E
+x_conv = x_full[start:stop]
+
+conv = (conv2 + conv1)*(E_span)/(N_E-1)
+
+plot_mat(np.abs(conv)**2,extent=[x_conv[0]*hbar,x_conv[-1]*hbar,-T_reach,T_reach],mode='phase')
+plot_mat(sigg,extent=[x_conv[0]*hbar,x_conv[-1]*hbar,-T_reach,T_reach],mode='phase')
+
+plot_mat(np.abs(conv)**2 - sigg)
+
 ###
 ### EXTRACT PROBE SPECTRUM
 ###
@@ -910,7 +948,7 @@ plt.plot(obs_Erange,k_enhance*obs)
 plt.show()
 
 # Deconvolve (Wiener + RL for comparison). Use RL result downstream.
-spike_deconv_rl = rl_deconvolve_nonneg(obs, kernel, n_iter=20000, pad_factor=5.0, smooth_sigma=2.0)
+spike_deconv_rl = rl_deconvolve_nonneg(obs, kernel, n_iter=10000, pad_factor=5.0, smooth_sigma=1.0)
 
 # from skimage import restoration
 # spike_deconv_rl = restoration.richardson_lucy(obs,kernel,num_iter=50,clip=False,filter_epsilon=0.1)
@@ -959,10 +997,10 @@ plt.tight_layout()
 plt.show()
 
 
-correction = correcting_function_multi(OM_T,E,pulse_xuv,probes,dzeta=0.1)
+correction = correcting_function_multi(OM_T,E,pulse_xuv,probes,dzeta=0.01)
 amplit_tot_FT_corrected = correction*amplit_tot_FT
 
-correction_rec = correcting_function_multi(OM_T,E,pulse_xuv,probes_reconstructed,dzeta=0.1)
+correction_rec = correcting_function_multi(OM_T,E,pulse_xuv,probes_reconstructed,dzeta=0.01)
 amplit_tot_FT_corrected_rec = correction_rec*amplit_tot_FT
 
 ###
