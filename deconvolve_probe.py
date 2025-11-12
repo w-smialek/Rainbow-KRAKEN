@@ -256,51 +256,7 @@ def resample(spec_corrected,rho_hi,rho_lo,om_ref,E,OM_T,N_NEW):
 
     return Sig_cc_cubic_mesh, small_sig, extent, [idy_min,idy_max,idx_min,idx_max]
 
-# def plot_mat(mat,extent=[0,1,0,1],cmap='plasma',mode='abs'):
-
-#     if mode == 'abs':
-#         plt.figure()
-#         im = plt.imshow(np.abs(mat), extent=extent, origin='lower', aspect='auto', cmap=cmap)
-#         plt.xlabel('x')
-#         plt.ylabel('y')
-#         plt.title('|M|')
-#         plt.colorbar(im)
-#         plt.show()
-
-#     elif mode == 'phase':
-#         fig, axes = plt.subplots(1, 2, figsize=(10, 4), sharex=True, sharey=True)
-#         im0 = axes[0].imshow(np.abs(mat), extent=extent, origin='lower', aspect='auto', cmap=cmap)
-#         axes[0].set_title('|M|')
-#         axes[0].set_xlabel('x')
-#         axes[0].set_ylabel('y')
-#         fig.colorbar(im0, ax=axes[0])
-
-#         im1 = axes[1].imshow(np.angle(mat), extent=extent, origin='lower', aspect='auto', cmap='hsv', vmin=-np.pi, vmax=np.pi)
-#         axes[1].set_title('arg(M)')
-#         axes[1].set_xlabel('x')
-#         fig.colorbar(im1, ax=axes[1])
-
-#         plt.tight_layout()
-#         plt.show()
-
-#     elif mode == 'reim':
-#         fig, axes = plt.subplots(1, 2, figsize=(10, 4), sharex=True, sharey=True)
-#         im0 = axes[0].imshow(np.real(mat), extent=extent, origin='lower', aspect='auto', cmap=cmap)
-#         axes[0].set_title('Re{M}')
-#         axes[0].set_xlabel('x')
-#         axes[0].set_ylabel('y')
-#         fig.colorbar(im0, ax=axes[0])
-
-#         im1 = axes[1].imshow(np.imag(mat), extent=extent, origin='lower', aspect='auto', cmap=cmap)
-#         axes[1].set_title('Im{M}')
-#         axes[1].set_xlabel('x')
-#         fig.colorbar(im1, ax=axes[1])
-
-#         plt.tight_layout()
-#         plt.show()
-#     return
-
-def plot_mat(mat,extent=[0,1,0,1],cmap='viridis',mode='abs',show=True,saveloc=None,caption=None,xlabel='x',ylabel='y',title=None):
+def plot_mat(mat,extent=[0,1,0,1],cmap='plasma',mode='abs',show=True,saveloc=None,caption=None,xlabel='x',ylabel='y',title=None):
 
     if mode == 'abs':
         plt.figure()
@@ -542,7 +498,7 @@ def fit_single_gaussian_centered_1d(y_vals, z_vals, n_spike_buffer=1, n_fitting_
 
     # Leave only two bands around center for fitting
     nlo = center_index - n_spike_buffer - n_fitting_buffer
-    nlo1 = center_index - n_spike_buffer
+    nlo1 = center_index - n_spike_buffer - 1
     nhi = center_index + n_spike_buffer + 1
     nhi1 = center_index + n_spike_buffer + n_fitting_buffer + 1
 
@@ -626,7 +582,7 @@ def Amplitude_ij_num(spectrum_fun_i,support_i,spectrum_fun_j,support_j,tau_range
                                         1j*pi*regularization_val)
     return integral_ress
 
-def plot_spectra(gausses, n_points=1000, sigma_span=6.0, title='Spectrum'):
+def plot_spectra(gausses, n_points=1000, sigma_span=6.0, title='Spectrum', saveloc=None):
     om_los, om_his = [], []
     for _, A, om0, s, _ in gausses:
         if s is None or s <= 0:
@@ -645,6 +601,8 @@ def plot_spectra(gausses, n_points=1000, sigma_span=6.0, title='Spectrum'):
     plt.ylabel(r'$A(\omega)$')
     plt.title(title)
     plt.tight_layout()
+    if saveloc is not None:
+        plt.savefig(saveloc)
     plt.show()
 
 def spectrum_fun(A,om0,s,om):
@@ -729,6 +687,26 @@ def detrend_spike(sig_mid,row_axis,n_spike_buffer,n_fitting_buffer,above_thresh_
     else:
         apply_mask = spike_mask
 
+    i_cross = floor(N_E*7/10)
+    plt.plot(em_axis_mid,abs_mid[:,i_cross],linewidth=2.5,label='Spectrum section')
+    plt.plot(em_axis_mid,fit_cols[:,i_cross],label='Fitted baseline')
+    # Mark the four fitting-region edges with vertical dotted lines
+    c_idx = spike_row_mid
+    nlo = c_idx - n_spike_buffer - n_fitting_buffer - 1
+    nlo1 = c_idx - n_spike_buffer - 1
+    nhi = c_idx + n_spike_buffer + 1
+    nhi1 = c_idx + n_spike_buffer + n_fitting_buffer + 1
+
+    plt.axvline(x=em_axis_mid[nlo], color='k', linestyle=':', linewidth=1.2, alpha=0.9, label='Fit data boundaries')
+    for idx in (nlo1, nhi, nhi1):
+        plt.axvline(x=em_axis_mid[idx], color='k', linestyle=':', linewidth=1.2, alpha=0.9)
+    plt.title('Section through signal spectrum')
+    plt.xlabel('Indirect energy [eV]')
+    plt.ylabel('Amplitude [arb. u.]')
+    plt.legend()
+    plt.savefig('newims/section.png')
+    plt.show()
+    
     
     # Spike-only map: positive residuals within central rows and above threshold
     # spike_only = np.where(apply_mask, residual_pos, 0.0)
@@ -875,7 +853,7 @@ pulse_probe = (T,A_probe,om_probe,s_probe,0)
 
 A_probe2 = 0.2
 om_probe2 = 1.20/hbar
-s_probe2 = 0.02/hbar
+s_probe2 = 0.04/hbar
 pulse_probe2 = (T,A_probe2,om_probe2,s_probe2,0)
 
 A_probe3 = 0.2
@@ -898,7 +876,7 @@ probes = (pulse_probe,pulse_probe2,pulse_probe3,pulse_probe4)
 xuvs = (pulse_xuv,)#,pulse_xuv2,pulse_xuv3]
 refprobes = tuple(list(refs) + list(probes))
 
-plot_spectra(probes,title='Probe spectrum')
+plot_spectra(probes,title='Probe spectrum',saveloc='newims/spectrum.png')
 
 ###
 ### GENERATE SIGNAL
@@ -910,7 +888,7 @@ amplit_tot_0 = Amplitude(xuvs,refprobes,E)
 
 a_dipole_0 = 0.00
 
-SNR = 50
+SNR = 70
 
 signal_clean = (1 + a_dipole_0*(E-om_xuv*hbar)) * np.abs(amplit_tot_0)**2
 
@@ -939,23 +917,28 @@ slice_fracts = (0.47,0.53)
 
 amplit_tot_FT_mid, em_axis_mid, i0, i1 = extract_midslice(amplit_tot_FT, slice_fracts, hbar*OM_T[:,0])
 
-# plot_mat(np.clip(np.abs(amplit_tot_FT_mid),0,10),[E_lo,E_hi,em_axis_mid[0],em_axis_mid[-1]],cmap='plasma',mode='phase')
+plot_mat(np.clip(np.abs(amplit_tot_FT),0,10),[E_lo,E_hi,em_lo,em_hi],cmap='plasma',mode='abs',
+         saveloc='newims/full_comp.png',xlabel='Direct energy [eV]',ylabel='Indirect energy [eV]',title='Full signal spectrum')
+
+plot_mat(np.clip(np.abs(amplit_tot_FT_mid),0,10),[E_lo,E_hi,em_axis_mid[0],em_axis_mid[-1]],cmap='plasma',mode='abs',
+         saveloc='newims/zero_comp.png',xlabel='Direct energy [eV]',ylabel='Indirect energy [eV]',title='Zero-frequency area of spectrum')
 
 amplit_tot_FT_mid_detrended, spike_only, spike_row_mid = detrend_spike(amplit_tot_FT_mid,em_axis_mid,0,4)
 
 extent_mid = [E_lo, E_hi, float(em_axis_mid[0]), float(em_axis_mid[-1])]
 
-# plot_mat(amplit_tot_FT_mid_detrended,extent_mid,mode='phase')
-# plot_mat(spike_only,extent_mid,mode='phase')
-
+plot_mat(amplit_tot_FT_mid_detrended,extent_mid,mode='abs',saveloc='newims/probepeak_only.png',
+         xlabel='Direct energy [eV]',ylabel='Indirect energy [eV]',title='XUV-PROBE peak only')
+plot_mat(spike_only,extent_mid,mode='abs',saveloc='newims/refpeak_only.png',
+         xlabel='Direct energy [eV]',ylabel='Indirect energy [eV]',title='XUV-REF peak only')
 # Zero-pad the detrended mid-band to the full (ω, E) grid
 amplit_tot_FT_detrended_full = np.zeros_like(amplit_tot_FT, dtype=complex)
 amplit_tot_FT_detrended_full[i0:i1, :] = amplit_tot_FT_mid_detrended
 
 sig_probe_reconstructed,_,_,_ = CFT(T_range,amplit_tot_FT_detrended_full,use_window=False,inverse=True)
 
-# plot_mat(sig_probe_reconstructed,[E_lo,E_hi,-T_reach,T_reach],cmap='plasma',mode='phase')
-
+plot_mat(sig_probe_reconstructed,[E_lo,E_hi,-T_reach,T_reach],mode='abs',saveloc='newims/probe_tausig.png',
+         xlabel='Direct energy [eV]',ylabel='Time delay [fs]',title='FT of XUV-PROBE peak (delay-convolution signal)')
 ## Check true fidelity of the detrending
 sigg = np.abs(Amplitude(xuvs,probes,E))**2
 # plot_mat(sigg)
@@ -1012,16 +995,26 @@ obs = normalize_abs(spike_probe)
 
 spcent = _roll_center_max(sp_tot(xuvs,obs_Erange/hbar))
 
-plt.plot(obs_Erange,normalize_abs(kernel))
-plt.plot(obs_Erange,normalize_abs(spcent))
+plt.plot(obs_Erange,normalize_abs(kernel),label='Retrieved xuv spectrum')
+plt.plot(obs_Erange,normalize_abs(spcent),label='True xuv spectrum')
+plt.title('XUV+REF zero-frequency peak')
+plt.xlabel('Energy [eV]')
+plt.ylabel('Amplitude [arb. u.]')
+plt.legend()
+plt.savefig('newims/ref_peak.png')
 plt.show()
 
-plt.plot(E_range,normalize_abs(np.sqrt(np.abs(sigg[N_T//2, :]))))
-plt.plot(obs_Erange,k_enhance*obs)
+plt.plot(E_range,normalize_abs(np.sqrt(np.abs(sigg[N_T//2, :]))),label=r'$A_{xuv} * A_{probe}$ exact')
+plt.plot(obs_Erange,k_enhance*obs,label=r'$A_{xuv} * A_{probe}$ retrieved')
+plt.title('XUV+PROBE zero-frequency peak')
+plt.xlabel('Energy [eV]')
+plt.ylabel('Amplitude [arb. u.]')
+plt.legend()
+plt.savefig('newims/probe_peak.png')
 plt.show()
 
 # Deconvolve (Wiener + RL for comparison). Use RL result downstream.
-spike_deconv_rl = rl_deconvolve_nonneg(obs, kernel, n_iter=10000, pad_factor=5.0, smooth_sigma=1.0)
+spike_deconv_rl = rl_deconvolve_nonneg(obs, kernel, n_iter=20000, pad_factor=5.0, smooth_sigma=1.2)
 
 # from skimage import restoration
 # spike_deconv_rl = restoration.richardson_lucy(obs,kernel,num_iter=50,clip=False,filter_epsilon=0.1)
@@ -1030,9 +1023,13 @@ sp_reconstructed_rl = spike_deconv_rl*(obs_Erange/hbar - om_xuv)
 
 spprobe = sp_tot(probes,obs_Erange/hbar - om_xuv)
 
-plt.plot(normalize_abs(sp_reconstructed_rl), label='RL reconstructed')
+plt.plot(normalize_abs(sp_reconstructed_rl), label='RL deconvolution reconstructed')
 plt.plot(normalize_abs(spprobe), label='True spectrum')
+plt.title('Deconvolved PROBE spectrum')
+plt.xlabel('Energy [eV]')
+plt.ylabel('Amplitude [arb. u.]')
 plt.legend()
+plt.savefig('newims/probe_reconstruction.png')
 plt.show()
 
 ###
@@ -1070,10 +1067,10 @@ plt.tight_layout()
 plt.show()
 
 
-correction = correcting_function_multi(OM_T,E,pulse_xuv,probes,dzeta=0.01)
+correction = correcting_function_multi(OM_T,E,pulse_xuv,probes,dzeta=0.05)
 amplit_tot_FT_corrected = correction*amplit_tot_FT
 
-correction_rec = correcting_function_multi(OM_T,E,pulse_xuv,probes_reconstructed,dzeta=0.01)
+correction_rec = correcting_function_multi(OM_T,E,pulse_xuv,probes_reconstructed,dzeta=0.1)
 amplit_tot_FT_corrected_rec = correction_rec*amplit_tot_FT
 
 ###
@@ -1091,7 +1088,7 @@ rho_reconstructed_rec, amplit_tot_FT_corrected_small_rec, extent_small, idxs_sma
 rho_reconstructed_uncor, amplit_tot_FT_corrected_small_uncor, extent_small, idxs_small = resample(amplit_tot_FT,rho_hi,rho_lo,om_ref,E,OM_T,N_T)
 
 plot_mat(rho_reconstructed_uncor,extent=[rho_lo,rho_hi,rho_lo,rho_hi],cmap='plasma',
-         mode='phase',saveloc='newims/uncorr.png',xlabel='Energy [eV]',ylabel='Energy [eV]',
+         mode='abs',saveloc='newims/uncorr.png',xlabel='Energy [eV]',ylabel='Energy [eV]',
          title='Rho uncorrected for the probe spectrum')
 
 ###
@@ -1104,6 +1101,16 @@ E1,E2 = np.meshgrid(E_range_new,E_range_new)
 
 rho_synthetic_0 = np.exp(-1/2*((E1/hbar-om_xuv)**2/s_xuv**2 + (E2/hbar-om_xuv)**2/s_xuv**2))
 rho_synthetic = normalize_rho(rho_synthetic_0)
+
+
+plot_mat(rho_reconstructed,extent=[rho_lo,rho_hi,rho_lo,rho_hi],cmap='plasma',
+         mode='abs',saveloc='newims/corr_known.png',xlabel='Energy [eV]',ylabel='Energy [eV]',
+         title='Rho corrected (exact probe spectrum)')
+
+plot_mat(rho_reconstructed_rec,extent=[rho_lo,rho_hi,rho_lo,rho_hi],cmap='plasma',
+         mode='abs',saveloc='newims/corr_unknown.png',xlabel='Energy [eV]',ylabel='Energy [eV]',
+         title='Rho corrected (retrieved probe spectrum)')
+
 
 plot_mat(rho_reconstructed,[rho_lo,rho_hi,rho_lo,rho_hi],cmap='plasma',mode='phase')
 plot_mat(rho_synthetic,[rho_lo,rho_hi,rho_lo,rho_hi],cmap='plasma',mode='phase')
