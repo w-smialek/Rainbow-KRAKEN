@@ -620,10 +620,10 @@ def spectrum_fun_2d(A,om0,s,OM,TAU):
     retval = A/(2*s)*np.exp(-(OM-om0)**2/(2*s**2))*np.exp(1j*OM*TAU)
     return retval  # Positive-freq part
 
-def sp_tot_2d(gausses,OM):
+def sp_tot_2d(gausses,OM,TAU):
     retval = np.zeros_like(OM).astype(complex)
     for gauss in gausses:
-        TAU,a0,om0,s0,_ = gauss
+        _,a0,om0,s0,_ = gauss
         retval += spectrum_fun_2d(a0,om0,s0,OM,TAU)
     return retval
 
@@ -825,6 +825,23 @@ def regularization_pos(sig,range,denoise=True,gaussianize=True,rollmax=False,n_g
 
     return retsig, range_out
 
+def synth_baseline(sp1,sp2,OM1,OM2):
+
+    f1 = sp1/OM1
+    f2 = sp2
+    conv1 = fftconvolve(f1,f2,mode='same',axes=1)
+
+    f1 = sp1*np.exp(-1j*OM1*T)
+    f2 = sp2/OM2*np.exp(-1j*OM2*T)
+    conv2 = fftconvolve(f1,f2,mode='same',axes=1)
+
+    # x_full = np.linspace(OM_probe[0,0]+OM_xuv[0,0],OM_probe[0,-1]+OM_xuv[0,-1],2*N_E-1)
+    # start = (N_E - 1) // 2
+    # stop = start + N_E
+    # x_conv = x_full[start:stop]
+
+    return conv1 + conv2
+
 ###
 ### FIELD PARAMETERS
 ###
@@ -917,61 +934,31 @@ slice_fracts = (0.47,0.53)
 
 amplit_tot_FT_mid, em_axis_mid, i0, i1 = extract_midslice(amplit_tot_FT, slice_fracts, hbar*OM_T[:,0])
 
-plot_mat(np.clip(np.abs(amplit_tot_FT),0,10),[E_lo,E_hi,em_lo,em_hi],cmap='plasma',mode='abs',
-         saveloc='newims/full_comp.png',xlabel='Direct energy [eV]',ylabel='Indirect energy [eV]',title='Full signal spectrum')
+# plot_mat(np.clip(np.abs(amplit_tot_FT),0,10),[E_lo,E_hi,em_lo,em_hi],cmap='plasma',mode='abs',
+#          saveloc='newims/full_comp.png',xlabel='Direct energy [eV]',ylabel='Indirect energy [eV]',title='Full signal spectrum')
 
-plot_mat(np.clip(np.abs(amplit_tot_FT_mid),0,10),[E_lo,E_hi,em_axis_mid[0],em_axis_mid[-1]],cmap='plasma',mode='abs',
-         saveloc='newims/zero_comp.png',xlabel='Direct energy [eV]',ylabel='Indirect energy [eV]',title='Zero-frequency area of spectrum')
+# plot_mat(np.clip(np.abs(amplit_tot_FT_mid),0,10),[E_lo,E_hi,em_axis_mid[0],em_axis_mid[-1]],cmap='plasma',mode='abs',
+#          saveloc='newims/zero_comp.png',xlabel='Direct energy [eV]',ylabel='Indirect energy [eV]',title='Zero-frequency area of spectrum')
 
 amplit_tot_FT_mid_detrended, spike_only, spike_row_mid = detrend_spike(amplit_tot_FT_mid,em_axis_mid,0,4)
 
 extent_mid = [E_lo, E_hi, float(em_axis_mid[0]), float(em_axis_mid[-1])]
 
-plot_mat(amplit_tot_FT_mid_detrended,extent_mid,mode='abs',saveloc='newims/probepeak_only.png',
-         xlabel='Direct energy [eV]',ylabel='Indirect energy [eV]',title='XUV-PROBE peak only')
-plot_mat(spike_only,extent_mid,mode='abs',saveloc='newims/refpeak_only.png',
-         xlabel='Direct energy [eV]',ylabel='Indirect energy [eV]',title='XUV-REF peak only')
+# plot_mat(amplit_tot_FT_mid_detrended,extent_mid,mode='abs',saveloc='newims/probepeak_only.png',
+#          xlabel='Direct energy [eV]',ylabel='Indirect energy [eV]',title='XUV-PROBE peak only')
+# plot_mat(spike_only,extent_mid,mode='abs',saveloc='newims/refpeak_only.png',
+#          xlabel='Direct energy [eV]',ylabel='Indirect energy [eV]',title='XUV-REF peak only')
+
 # Zero-pad the detrended mid-band to the full (ω, E) grid
 amplit_tot_FT_detrended_full = np.zeros_like(amplit_tot_FT, dtype=complex)
 amplit_tot_FT_detrended_full[i0:i1, :] = amplit_tot_FT_mid_detrended
 
 sig_probe_reconstructed,_,_,_ = CFT(T_range,amplit_tot_FT_detrended_full,use_window=False,inverse=True)
 
-plot_mat(sig_probe_reconstructed,[E_lo,E_hi,-T_reach,T_reach],mode='abs',saveloc='newims/probe_tausig.png',
-         xlabel='Direct energy [eV]',ylabel='Time delay [fs]',title='FT of XUV-PROBE peak (delay-convolution signal)')
-## Check true fidelity of the detrending
+# plot_mat(sig_probe_reconstructed,[E_lo,E_hi,-T_reach,T_reach],mode='abs',saveloc='newims/probe_tausig.png',
+#          xlabel='Direct energy [eV]',ylabel='Time delay [fs]',title='FT of XUV-PROBE peak (delay-convolution signal)')
+
 sigg = np.abs(Amplitude(xuvs,probes,E))**2
-# plot_mat(sigg)
-# amplit_tot_FT, OM_T, em_lo, em_hi = CFT(T_range,sigg,use_window=False)
-# amplit_tot_FT_mid = amplit_tot_FT[i0:i1,:]
-# mid_probe = np.abs(amplit_tot_FT_mid)
-# plot_mat(mid_probe)
-# plot_mat((normalize_abs(mid_probe) - normalize_abs(amplit_tot_FT_mid_detrended)) / np.max(mid_probe))
-
-
-OM_probe = E/hbar - E_lo/hbar + 0.1 + E_span/hbar/N_E/2 * ((N_E-1) % 2)
-f1 = sp_tot_2d(probes,OM_probe)/(OM_probe)
-OM_xuv = E/hbar - E_span/hbar/2 - 0.1
-f2 = sp_tot_2d(xuvs,OM_xuv)
-
-conv1 = fftconvolve(f1,f2,mode='same',axes=1)
-
-f3 = sp_tot_2d(probes,OM_probe)*np.exp(-1j*OM_probe*T)
-f4 = sp_tot_2d(xuvs,OM_xuv)/(OM_xuv)*np.exp(-1j*OM_xuv*T)
-
-conv2 = fftconvolve(f3,f4,mode='same',axes=1)
-
-x_full = np.linspace(OM_probe[0,0]+OM_xuv[0,0],OM_probe[0,-1]+OM_xuv[0,-1],2*N_E-1)
-start = (N_E - 1) // 2
-stop = start + N_E
-x_conv = x_full[start:stop]
-
-conv = (conv2 + conv1)*(E_span)/(N_E-1)
-
-# plot_mat(np.abs(conv)**2,extent=[x_conv[0]*hbar,x_conv[-1]*hbar,-T_reach,T_reach],mode='phase')
-# plot_mat(sigg,extent=[x_conv[0]*hbar,x_conv[-1]*hbar,-T_reach,T_reach],mode='phase')
-
-# plot_mat(np.abs(conv)**2 - sigg)
 
 ###
 ### EXTRACT PROBE SPECTRUM
@@ -1016,9 +1003,6 @@ plt.show()
 # Deconvolve (Wiener + RL for comparison). Use RL result downstream.
 spike_deconv_rl = rl_deconvolve_nonneg(obs, kernel, n_iter=20000, pad_factor=5.0, smooth_sigma=1.2)
 
-# from skimage import restoration
-# spike_deconv_rl = restoration.richardson_lucy(obs,kernel,num_iter=50,clip=False,filter_epsilon=0.1)
-
 sp_reconstructed_rl = spike_deconv_rl*(obs_Erange/hbar - om_xuv)
 
 spprobe = sp_tot(probes,obs_Erange/hbar - om_xuv)
@@ -1031,6 +1015,29 @@ plt.ylabel('Amplitude [arb. u.]')
 plt.legend()
 plt.savefig('newims/probe_reconstruction.png')
 plt.show()
+
+###
+### 2D RETRIEVAL
+###
+
+
+
+OM1 = E/hbar - E_lo/hbar + 0.1 + E_span/hbar/N_E/2 * ((N_E-1) % 2)
+sp1 = sp_tot_2d(probes,OM1,T)
+
+OM2 = E/hbar - E_span/hbar/2 - 0.1
+sp2 = sp_tot_2d(xuvs,OM2,0*T)
+
+sb = synth_baseline(sp1,sp2,OM1,OM2)
+
+# Align kernel so its max coincides with max of sp2[0, :]
+idx_sp2 = int(np.argmax(np.abs(sp2[0, :])))
+idx_k = int(np.argmax(np.abs(kernel)))
+shift = idx_sp2 - idx_k
+kernel_aligned = np.roll(kernel, shift)
+xuvss = np.tile(kernel_aligned, (N_T, 1))
+
+sb2 = synth_baseline(sp1,xuvss,OM1,OM2)
 
 ###
 ### CORRECTION ANALYTICALLY
