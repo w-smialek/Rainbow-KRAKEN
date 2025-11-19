@@ -940,10 +940,19 @@ amplit_tot_FT, OM_T, em_lo, em_hi = CFT(T_range,signal,use_window=False)
 # --- Fit and subtract slowly varying background in each column ---
 # Build the y-axis (energy units ħ·ω) for the selected mid band
 
-em_axis_mid_reach = 0.9
+em_axis_mid_reach = 1.00
 slice_fracts = (0.5*(1 - em_axis_mid_reach/em_hi), 0.5*(1 + em_axis_mid_reach/em_hi))
 
 amplit_tot_FT_mid, em_axis_mid, i0, i1 = extract_midslice(amplit_tot_FT, slice_fracts, hbar*OM_T[:,0])
+
+mask_em = 0.86
+mask_frac = 0.69
+
+N_em = np.size(em_axis_mid)
+i_mask_em = floor(0.5*(1-(mask_em/em_axis_mid_reach))*N_em)
+
+amplit_tot_FT_mid[0:i_mask_em,0:floor(mask_frac*N_E)] = 0
+amplit_tot_FT_mid[N_em-i_mask_em+1:N_em,0:floor(mask_frac*N_E)] = 0
 
 # plot_mat(np.clip(np.abs(amplit_tot_FT),0,10),[E_lo,E_hi,em_lo,em_hi],cmap='plasma',mode='abs',
 #          saveloc='newims/full_comp.png',xlabel='Direct energy [eV]',ylabel='Indirect energy [eV]',title='Full signal spectrum')
@@ -976,9 +985,9 @@ analytic_bsln_FT,_,_,_ = CFT(T_range,analytic_bsln,use_window=False)
 
 plot_mat(analytic_bsln_FT - amplit_tot_FT_detrended_full)
 
-plt.plot(analytic_bsln_FT[:,floor(0.53*N_E)])
-plt.plot(amplit_tot_FT_detrended_full[:,floor(0.53*N_E)])
-plt.show()
+# plt.plot(analytic_bsln_FT[:,floor(0.53*N_E)])
+# plt.plot(amplit_tot_FT_detrended_full[:,floor(0.53*N_E)])
+# plt.show()
 
 ###
 ### EXTRACT PROBE SPECTRUM
@@ -1063,6 +1072,48 @@ def synth_baseline(sp1,sp2,om1,om2,T):
 
     return conv
 
+def synth_baseline_transpose(d,bi,omd,ombi,T):
+
+    phase0 = np.exp(1j*0*T)
+    phase1 = np.exp(1j*om1*T)
+    phase2 = np.exp(-1j*om2*T)
+
+    conv1 = fftconvolve(d*phase0,(bi*phase0)[:,::-1],mode='same',axes=1)
+    conv1 = (-phase1/omd)*conv1
+
+    bi_mod = bi*(-phase2/ombi)
+    conv2 = fftconvolve(d*phase0,bi_mod[:,::-1],mode='same',axes=1)
+
+    return conv1 + conv2
+
+def synth_baseline_tau(sp1,sp2,om1,om2,tau):
+
+    phase1 = np.exp(1j*om1*tau)
+    phase2 = np.exp(-1j*om2*tau)
+
+    f1 = -sp1/om1 * phase1
+    f2 = sp2
+    conv = fftconvolve(f1,f2,mode='same')
+
+    f1 = sp1
+    f2 = -sp2/om2 * phase2
+    conv += fftconvolve(f1,f2,mode='same')
+
+    return conv
+
+def synth_baseline_transpose_tau(d,bi,omd,ombi,tau):
+
+    phased = np.exp(1j*omd*tau)
+    phasebi = np.exp(-1j*ombi*tau)
+
+    conv1 = fftconvolve(d,bi[::-1],mode='same')
+    conv1 = (-phased/omd)*conv1
+
+    bi_mod = bi*(-phasebi/ombi)
+    conv2 = fftconvolve(d,bi_mod[::-1],mode='same')
+
+    return conv1 + conv2
+
 meas_baseline = np.sqrt(np.abs(sig_probe_reconstructed))
 
 om1 = (E/hbar - E_lo/hbar + 0.1 + E_span/hbar/N_E/2 * ((N_E-1) % 2))[0,:]
@@ -1086,7 +1137,43 @@ synth_bsln = synth_bsln/np.max(np.abs(synth_bsln))*np.max(np.abs(meas_baseline))
 plot_mat(synth_bsln)
 plot_mat(meas_baseline)
 
-plot_mat( synth_bsln - meas_baseline)
+plot_mat(synth_bsln - meas_baseline)
+
+meas_baseline = meas_baseline.astype(complex)
+
+retrieved_data = np.ones_like(meas_baseline[N_T//2,:]).astype(complex)*np.average(meas_baseline[N_T//2,:])
+
+n_iterations = 300
+eps = 1e-10
+ones = np.ones_like(retrieved_data).astype(complex)
+
+s = 35
+weights = np.exp(-(T_range)**2/(s**2))
+weights = weights/np.sum(weights)
+plt.plot(weights)
+plt.show()
+
+for i in range(n_iterations):
+    Numr = np.zeros_like(retrieved_data).astype(complex)
+    Denom = np.zeros_like(retrieved_data).astype(complex)
+    for i_t, tau in enumerate(T_range):
+        Pred_image = synth_baseline_tau(retrieved_data,sp2,om1,om2,tau)
+        # Pred_image = np.maximum(np.abs(Pred_image),eps)
+        Pred_image = np.maximum(np.abs(Pred_image),eps)*np.exp(1j*np.angle(Pred_image))
+        Ratio = meas_baseline[i_t,:]/Pred_image
+        Numr_i = np.conj(synth_baseline_transpose_tau(Ratio,sp2,om1,om2,tau))
+        Numr += Numr_i
+        Denom += np.conj(synth_baseline_transpose_tau(ones,sp2,om1,om2,tau))
+    # Denom = np.maximum(np.abs(Denom),eps)
+    Denom = np.maximum(np.abs(Denom),eps)*np.exp(1j*np.angle(Denom))
+    factor = Numr/Denom
+
+    retrieved_data = retrieved_data * factor
+
+    if i%20==0:
+        plt.plot(om1,normalize_abs(np.real(retrieved_data)))
+        plt.plot(om1,normalize_abs(sp1))
+        plt.show()
 
 # ###
 # ### CORRECTION ANALYTICALLY
