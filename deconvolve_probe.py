@@ -627,7 +627,7 @@ def sp_tot_2d(gausses,OM,TAU):
         retval += spectrum_fun_2d(a0,om0,s0,OM,TAU)
     return retval
 
-def Amplitude(xuvs,refprobes,E,E_spinorbit=0):
+def Amplitude(xuvs,refprobes,E,E_spinorbit=0,t_order=None):
     n_t, n_e = E.shape
     amplit_tot = np.zeros((n_t,n_e)).astype(complex)
 
@@ -636,10 +636,20 @@ def Amplitude(xuvs,refprobes,E,E_spinorbit=0):
         tau_i,A_i,om0_i,s_i,phi_i = xuv
         xuvs_mod.append((tau_i,A_i,om0_i-E_spinorbit/hbar,s_i,phi_i))
 
-    for xuv in xuvs_mod:
-        for rp in refprobes:
-            amplit_tot += Amplitude_ij(xuv,rp,E)
-            amplit_tot += Amplitude_ij(rp,xuv,E)
+    if t_order == None:
+        for xuv in xuvs_mod:
+            for rp in refprobes:
+                amplit_tot += Amplitude_ij(xuv,rp,E)
+                amplit_tot += Amplitude_ij(rp,xuv,E)
+    elif t_order == 1:
+        for xuv in xuvs_mod:
+            for rp in refprobes:
+                amplit_tot += Amplitude_ij(xuv,rp,E)
+    else:
+        for xuv in xuvs_mod:
+            for rp in refprobes:
+                amplit_tot += Amplitude_ij(rp,xuv,E)
+
     return amplit_tot
 
 def extract_midslice(sig_full,slice_fracts,sliced_range):
@@ -726,14 +736,14 @@ def detrend_spike(sig_mid,row_axis,n_spike_buffer,n_fitting_buffer,above_thresh_
     return amplit_tot_FT_mid_detrended, spike_only, spike_row_mid
 
 def rl_deconvolve_nonneg(y, h, n_iter=200, pad_factor=2.0, eps=1e-12, smooth_sigma=0.0):
-    """Richardson–Lucy deconvolution enforcing non-negativity.
+    """Richardson-Lucy deconvolution enforcing non-negativity.
 
     Model: y ≈ h * x (linear convolution), with x ≥ 0.
 
     Args:
         y: observed 1D signal (real, preferably non-negative)
         h: kernel (impulse response); must have sum(h) > 0
-        n_iter: RL iterations (typical 50–300)
+        n_iter: RL iterations (typical 50-300)
         pad_factor: multiplier for linear conv length before next pow2 (reduces wrap-around)
         eps: small constant to avoid divide-by-zero
         smooth_sigma: optional Gaussian smoothing each iteration (in samples) to stabilize
@@ -842,6 +852,10 @@ def synth_baseline(sp1,sp2,OM1,OM2):
 
     return conv1 + conv2
 
+def plotdiff(mat1,mat2):
+    plot_mat((normalize_abs(mat1)-normalize_abs(mat2))/np.max(np.abs(normalize_abs(mat1))))
+    return
+
 ###
 ### FIELD PARAMETERS
 ###
@@ -893,7 +907,7 @@ probes = (pulse_probe,pulse_probe2,pulse_probe3,pulse_probe4)
 xuvs = (pulse_xuv,)#,pulse_xuv2,pulse_xuv3]
 refprobes = tuple(list(refs) + list(probes))
 
-plot_spectra(probes,title='Probe spectrum',saveloc='newims/spectrum.png')
+# plot_spectra(probes,title='Probe spectrum',saveloc='newims/spectrum.png')
 
 ###
 ### GENERATE SIGNAL
@@ -901,11 +915,18 @@ plot_spectra(probes,title='Probe spectrum',saveloc='newims/spectrum.png')
 
 amplit_tot_0 = Amplitude(xuvs,refprobes,E)
 
+# a_x_pr = Amplitude(xuvs,probes,E,t_order=1)
+# a_pr_x = Amplitude(xuvs,probes,E,t_order=2)
+# a_x_ref = Amplitude(xuvs,refs,E,t_order=1)
+# a_ref_x = Amplitude(xuvs,refs,E,t_order=2)
+# amplit_tot_0 = np.conjugate(a_x_pr)*a_ref_x + np.conjugate(a_ref_x)*a_x_pr
+# amplit_tot_0 = np.conjugate(a_pr_x)*a_x_ref + np.conjugate(a_x_ref)*a_pr_x
+
 # Transition dipole element (square modulus summed over ionization OAM channels) is approximated as T_i(E) = a_i*(E-E_0)
 
 a_dipole_0 = 0.00
 
-SNR = 70
+SNR = 200
 
 signal_clean = (1 + a_dipole_0*(E-om_xuv*hbar)) * np.abs(amplit_tot_0)**2
 
@@ -917,10 +938,11 @@ else:
     noise = noise_rms * np.random.normal(size=signal_clean.shape)
     signal = signal_clean + noise
 
+### TODO: We might know more about the noise, i.e. perhaps it's Poissonian? Then it's fully defined by the signal
+
 amplit_tot_FT, OM_T, em_lo, em_hi = CFT(T_range,signal,use_window=False)
 
-# plot_mat(signal,[E_lo,E_hi,-T_reach,T_reach],cmap='plasma',mode='phase')
-# plot_mat(np.minimum(np.abs(amplit_tot_FT),10),[E_lo,E_hi,em_lo,em_hi],cmap='plasma',mode='phase')
+plot_mat(np.clip(np.real(amplit_tot_FT),-12,12),mode='phase')
 
 ###
 ### DETRENDING - SEPARATING PROBE AND REF ZERO FREQ COMPONENT 
@@ -1020,8 +1042,6 @@ plt.show()
 ### 2D RETRIEVAL
 ###
 
-
-
 OM1 = E/hbar - E_lo/hbar + 0.1 + E_span/hbar/N_E/2 * ((N_E-1) % 2)
 sp1 = sp_tot_2d(probes,OM1,T)
 
@@ -1038,6 +1058,18 @@ kernel_aligned = np.roll(kernel, shift)
 xuvss = np.tile(kernel_aligned, (N_T, 1))
 
 sb2 = synth_baseline(sp1,xuvss,OM1,OM2)
+
+
+# plot_mat(normalize_abs(np.abs(sigg)),mode='phase')
+# plot_mat(normalize_abs(np.abs(sig_probe_reconstructed)),mode='phase')
+
+plotdiff(sigg,sig_probe_reconstructed)
+
+# Measured baseline:
+
+estimate = np.abs(sig_probe_reconstructed[N_T//2,:])
+plt.plot(estimate)
+plt.show()
 
 ###
 ### CORRECTION ANALYTICALLY
