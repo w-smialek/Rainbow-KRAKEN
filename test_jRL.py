@@ -490,35 +490,52 @@ def _roll_center_max(a):
     center_idx = a.size // 2
     return np.roll(a, center_idx - max_idx)
 
-def synth_baseline(sp1,sp2,om1,om2,T):
+def synth_baseline(sp_pr,sp_x,om_pr,om_x,T):
 
     phase0 = np.exp(1j*0*T)
-    phase1 = np.exp(1j*om1*T)
-    phase2 = np.exp(-1j*om2*T)
+    phase1 = np.exp(1j*om_pr*T)
+    phase2 = np.exp(-1j*om_x*T)
 
-    f1 = -sp1/om1 * phase1
-    f2 = sp2 * phase0
-    conv = fftconvolve(f1,f2,mode='same',axes=1)
+    f1 = sp_pr * phase0
+    f2 = -sp_x/om_x * phase2
+    conv1 = fftconvolve(f1,f2,mode='same',axes=1)
 
-    f1 = sp1 * phase0
-    f2 = -sp2/om2 * phase2
-    conv += fftconvolve(f1,f2,mode='same',axes=1)
-
-    return conv
-
-def synth_baseline_transpose(d,bi,omd,ombi,T):
-
-    phase0 = np.exp(1j*0*T)
-    phase1 = np.exp(1j*om1*T)
-    phase2 = np.exp(-1j*om2*T)
-
-    conv1 = fftconvolve(d*phase0,(bi*phase0)[:,::-1],mode='same',axes=1)
-    conv1 = (-phase1/omd)*conv1
-
-    bi_mod = bi*(-phase2/ombi)
-    conv2 = fftconvolve(d*phase0,bi_mod[:,::-1],mode='same',axes=1)
+    f1 = -sp_pr/om_pr * phase1
+    f2 = sp_x * phase0
+    conv2 = fftconvolve(f1,f2,mode='same',axes=1)
 
     return conv1 + conv2
+
+def synth_baseline_hermit(input,sp_x,om_pr,om_x,T):
+
+    phase0 = np.exp(1j*0*T)
+    phase1 = np.exp(1j*om_pr*T)
+    phase2 = np.exp(-1j*om_x*T)
+
+    f1 = input
+    f2 = -sp_x/om_x * np.conjugate(phase2)
+    conv1 = fftconvolve(f1,f2[:,::-1],mode='same',axes=1)
+
+    f1 = input
+    f2 = sp_x * phase0
+    conv2 = fftconvolve(f1,f2[:,::-1],mode='same',axes=1)
+    conv2 = -conv2/om_pr * np.conjugate(phase1)
+
+    return np.sum(conv1 + conv2, axis=0)
+
+# def synth_baseline_hermit(d,bi,omd,ombi,T):
+
+#     phase0 = np.exp(1j*0*T)
+#     phase1 = np.exp(1j*om1*T)
+#     phase2 = np.exp(-1j*om2*T)
+
+#     conv1 = fftconvolve(d*phase0,(bi*phase0)[:,::-1],mode='same',axes=1)
+#     conv1 = (-phase1/omd)*conv1
+
+#     bi_mod = bi*(-phase2/ombi)
+#     conv2 = fftconvolve(d*phase0,bi_mod[:,::-1],mode='same',axes=1)
+
+#     return conv1 + conv2
 
 def synth_baseline_tau(sp1,sp2,om1,om2,tau):
 
@@ -620,6 +637,85 @@ else:
     signal = signal_clean + noise
 
 amplit_tot_FT, OM_T, em_lo, em_hi = CFT(T_range,signal,use_window=False)
+
+###
+### CONTROL SAMPLE - DECONVOLUTION USING EXACT DATA
+###
+
+# Synthetic baseline with known spectra
+om_probe = (E/hbar - E_lo/hbar + 0.1 + E_span/hbar/N_E/2 * ((N_E-1) % 2))[0,:]
+sp_probe = sp_tot(probes,om_probe)
+sp_ref = sp_tot(refs,om_probe)
+
+
+om_xuv = (E/hbar - E_span/hbar/2 - 0.1)[0,:]
+sp_xuv = sp_tot(xuvs,om_xuv)
+
+# synth_bsln = np.abs(synth_baseline(sp_probe,sp_xuv,om_probe,om_xuv,T) + synth_baseline(sp_ref,sp_xuv,om_probe,om_xuv,T*0))**2
+synth_bsln = np.abs(synth_baseline(sp_probe,sp_xuv,om_probe,om_xuv,T))**2
+synth_bsln_FT, _, _, _ = CFT(T_range,synth_bsln,use_window=False)
+# CHECKED - PRODUCES SAME AS 'AMPLITUDE'
+
+w = np.ones_like(sp_probe).astype(complex) / np.sqrt(np.size(sp_probe))
+
+n_power_iter = 10
+m = np.size(synth_bsln)
+
+for i_iter in range(n_power_iter):
+
+    w = 1/m * synth_baseline_hermit(synth_bsln * synth_baseline(w,sp_xuv,om_probe,om_xuv,T),sp_xuv,om_probe,om_xuv,T)
+    w = w / np.sqrt(np.sum(np.abs(w)**2))
+
+lambda_bsln = synth_baseline(w,sp_xuv,om_probe,om_xuv,T)
+alpha = np.sum( np.sqrt(synth_bsln) * np.abs(lambda_bsln) ) / np.sum( np.abs(lambda_bsln)**2 )
+
+w = alpha*w
+
+plt.plot(np.real(w))
+plt.plot(np.imag(w))
+plt.plot(sp_probe)
+plt.show()
+
+n_main_iter = 1000
+
+mu_step_max = 0.05
+I_warmup = 200
+
+normsq_z0 = np.sum( np.abs(w)**2 )
+
+z = w
+
+ers = []
+
+for i_iter in range(n_main_iter):
+
+    mu_step = mu_step_max*(1-np.exp(-i_iter/I_warmup))
+
+    ers.append( np.sum(np.abs( z - sp_probe )**2)/np.sum(np.abs(sp_probe)**2) )
+
+    sbforward = synth_baseline(z,sp_xuv,om_probe,om_xuv,T)
+    sbhermit_arg = (np.abs(sbforward)**2 - synth_bsln) * sbforward
+    z = z - mu_step/normsq_z0*1/m * synth_baseline_hermit(sbhermit_arg,sp_xuv,om_probe,om_xuv,T)
+
+    print(i_iter)
+
+    if i_iter%100==0:
+        fig, axes = plt.subplots(2, 1, figsize=(8, 6))
+        axes[0].plot(np.real(z), label='Re(z)')
+        axes[0].plot(np.imag(z), label='Im(z)')
+        axes[0].plot(sp_probe, label='sp_probe')
+        axes[0].set_title('Current spectrum estimate')
+        axes[0].legend()
+
+        axes[1].plot(ers, label='Relative MSE')
+        axes[1].set_yscale('log')
+        axes[1].set_title('Error history (log scale)')
+        axes[1].set_xlabel('Recorded iteration (every 50)')
+        axes[1].legend()
+
+        plt.tight_layout()
+        plt.show()
+
 
 ###
 ### DETRENDING - SEPARATING PROBE AND REF ZERO FREQ COMPONENT 
