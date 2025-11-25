@@ -542,30 +542,34 @@ def synth_baseline_tau(sp1,sp2,om1,om2,tau):
     phase1 = np.exp(1j*om1*tau)
     phase2 = np.exp(-1j*om2*tau)
 
-    f1 = -sp1/om1 * phase1
+    f1 = -(phase1/om1) * sp1
     f2 = sp2
     conv = fftconvolve(f1,f2,mode='same')
 
-    f1 = sp1
-    f2 = -sp2/om2 * phase2
-    conv += fftconvolve(f1,f2,mode='same')
+    # f1 = sp1
+    # f2 = -sp2/om2 * phase2
+    # conv += fftconvolve(f1,f2,mode='same')
 
     return conv
 
-def synth_baseline_transpose_tau(d,bi,omd,ombi,tau):
+def synth_baseline_transpose_tau(sp1,sp2,om1,om2,tau):
 
-    # phased = np.exp(1j*omd*tau)
-    # phasebi = np.exp(-1j*ombi*tau)
-    phased = np.exp(-1j*omd*tau)
-    phasebi = np.exp(1j*ombi*tau)
+    phase1 = np.exp(-1j*om1*tau)
+    phase2 = np.exp(1j*om2*tau)
 
-    conv1 = fftconvolve(d,bi[::-1],mode='same')
-    conv1 = (-phased/omd)*conv1
+    conv = fftconvolve(sp1,sp2[::-1],mode='same')
+    conv = (-phase1/om1) * conv
 
-    bi_mod = bi*(-phasebi/ombi)
-    conv2 = fftconvolve(d,bi_mod[::-1],mode='same')
+    # sp2_mod = sp2*(-phase2/om2)
+    # conv += fftconvolve(sp1,sp2_mod[::-1],mode='same')
 
-    return conv1 + conv2
+    return conv
+
+def plotc(ar):
+    plt.plot(np.abs(ar))
+    plt.plot(np.real(ar),linewidth=0.8)
+    plt.plot(np.imag(ar),linewidth=0.8)
+    plt.show()
 
 ###
 ### FIELD PARAMETERS
@@ -750,15 +754,13 @@ meas_baseline = np.sqrt(np.abs(sig_probe_reconstructed))
 analytic_bsln = np.abs(Amplitude(xuvs,probes,E))**2
 analytic_bsln_FT,_,_,_ = CFT(T_range,analytic_bsln,use_window=False)
 
-plot_mat(analytic_bsln_FT - amplit_tot_FT_detrended_full)
+# plot_mat(analytic_bsln_FT - amplit_tot_FT_detrended_full)
 
 ###
 ### RETRIEVE PROBE SPECTRUM
 ###
 
 ### Prepare
-
-meas_baseline = np.sqrt(np.abs(sig_probe_reconstructed))
 
 # Synthetic baseline with known spectra
 om1 = (E/hbar - E_lo/hbar + 0.1 + E_span/hbar/N_E/2 * ((N_E-1) % 2))[0,:]
@@ -767,26 +769,26 @@ sp1 = sp_tot(probes,om1)
 om2 = (E/hbar - E_span/hbar/2 - 0.1)[0,:]
 sp2 = sp_tot(xuvs,om2)
 
-synth_bsln = np.abs(synth_baseline(sp1,sp2,om1,om2,T))
+synth_bsln = synth_baseline(sp1,sp2,om1,om2,T)
 synth_bsln = synth_bsln/np.max(np.abs(synth_bsln))*np.max(np.abs(meas_baseline))
 
-plot_mat(synth_bsln - meas_baseline)
-
+plot_mat(np.abs(synth_bsln) - meas_baseline)
 
 retrieved_data = np.ones_like(meas_baseline[N_T//2,:]).astype(complex)*np.average(meas_baseline[N_T//2,:])
-
 n_iterations = 10000
 eps = 1e-5
 ones = np.ones_like(retrieved_data).astype(complex)
 
 
-i_tau = 10
+i_tau = 75
 tau_val = T_range[N_T//2+i_tau]
-print(tau_val)
 
-meas_strip = np.abs(synth_bsln[N_T//2+i_tau,:])
-
+# meas_strip = np.abs(synth_bsln[N_T//2+i_tau,:])
 meas_strip = synth_bsln[N_T//2+i_tau,:]
+
+plotc(meas_strip)
+
+plotc(normalize_abs(meas_strip) - normalize_abs(synth_baseline_tau(sp1,sp2,om1,om2,tau_val)))
 
 errs = []
 
@@ -794,6 +796,7 @@ errs = []
 for i in range(n_iterations):
     pred_image = synth_baseline_tau(retrieved_data,sp2,om1,om2,tau_val)
     pred_image = np.maximum(np.abs(pred_image),eps)*np.exp(1j*np.angle(pred_image))
+
     ratio = meas_strip/pred_image
 
     numerator = synth_baseline_transpose_tau(ratio,sp2,om1,om2,tau_val)
@@ -812,6 +815,11 @@ for i in range(n_iterations):
         err = np.sum( (normalize_abs(np.abs(retrieved_data)) - normalize_abs(sp1))**2 )
         errs.append(err)
         print(err)
+
+        plotc(meas_strip)
+        plotc(pred_image)
+
+
 
 plt.plot(np.log(errs))
 plt.show()
