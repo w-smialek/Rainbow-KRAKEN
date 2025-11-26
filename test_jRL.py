@@ -298,6 +298,150 @@ def fit_single_gaussian_centered_1d(y_vals, z_vals, n_spike_buffer=1, n_fitting_
 ### Construct interpolated spectra
 ###
 
+
+def _sum_n_gauss1d(y, *theta):
+    """Sum of n 1D Gaussians.
+
+    Parameters are packed as [A1, mu1, s1, A2, mu2, s2, ..., An, mun, sn].
+    Returns A1*exp(-0.5*((y-mu1)/s1)^2) + ...
+    """
+    y = np.asarray(y)
+    theta = np.asarray(theta, float)
+    if theta.size % 3 != 0:
+        raise ValueError("theta length must be a multiple of 3: [A1, mu1, s1, ..., An, mun, sn]")
+    n = theta.size // 3
+    out = np.zeros_like(y, dtype=float)
+    for k in range(n):
+        A = theta[3*k + 0]
+        mu = theta[3*k + 1]
+        s = theta[3*k + 2]
+        if s <= 0:
+            continue
+        out += A * np.exp(-0.5 * ((y - mu) / s) ** 2)
+    return out
+
+def fit_n_gaussians_1d(
+    y_vals,
+    z_vals,
+    n,
+    mask=None,
+    center_bounds=None,
+    width_bounds_frac=(1e-3, 3.0),
+    amp_bounds=(0.0, np.inf),
+    use_weights=True,
+    return_params=False,
+    return_components=False,
+    resample_y=None
+):
+    """Fit a non-negative 1D signal as a sum of n Gaussians.
+
+    Args:
+        y_vals: 1D coordinate array (monotonic preferred)
+        z_vals: 1D data array (ideally non-negative)
+        n: number of Gaussian components
+        mask: optional boolean mask selecting samples to use in the fit
+        center_bounds: tuple (y_min, y_max) for all centers; default is (min(y), max(y))
+        width_bounds_frac: (min_frac, max_frac) of span(y) for s bounds
+        amp_bounds: (A_min, A_max) bounds for amplitudes (default non-negative)
+        use_weights: if True and z_vals >= 0, weight by 1/sqrt(z + eps)
+        return_params: if True, also return fitted parameter vector (3n,)
+        return_components: if True, also return individual Gaussian components as (n, len(y))
+
+    Returns:
+        fit_full: fitted signal on full y grid
+        [params]: optional, flat parameter vector [A1, mu1, s1, ..., An, mun, sn]
+        [components]: optional, array of shape (n, len(y)) with each Gaussian
+    """
+    y = np.asarray(y_vals).ravel()
+    z = np.asarray(z_vals).ravel()
+    if y.size != z.size:
+        raise ValueError("y_vals and z_vals must have the same length")
+    N = y.size
+    if N == 0 or int(n) <= 0:
+        return (np.zeros_like(z),) if not return_params and not return_components else (np.zeros_like(z), np.array([]))
+
+    # Select samples
+    if mask is not None:
+        mask = np.asarray(mask, bool)
+        if mask.size != N:
+            raise ValueError("mask must have the same length as y_vals")
+        y_fit = y[mask]
+        z_fit = z[mask]
+    else:
+        y_fit = y
+        z_fit = z
+
+    # Bounds
+    y_min = float(np.min(y))
+    y_max = float(np.max(y))
+    span_y = max(y_max - y_min, 1e-12)
+    if center_bounds is None:
+        center_bounds = (y_min, y_max)
+    min_s = max(float(width_bounds_frac[0]) * span_y, 1e-12)
+    max_s = max(float(width_bounds_frac[1]) * span_y, min_s)
+
+    # Initial guesses: centers evenly spaced, amps from local sampling, widths as span fraction
+    mu0s = np.linspace(y_min, y_max, int(n) + 2)[1:-1]
+    # Sample z at nearest indices for initial amplitudes
+    if y_max > y_min:
+        A0s = []
+        for mu0 in mu0s:
+            idx = int(np.clip(np.searchsorted(y, mu0), 0, N-1))
+            A0s.append(max(z[idx], 1e-12))
+        A0s = np.asarray(A0s)
+    else:
+        A0s = np.full(int(n), max(np.median(np.abs(z_fit)), 1e-12))
+    s0 = 0.1 * span_y if span_y > 0 else 1.0
+    theta0 = []
+    lb = []
+    ub = []
+    for k in range(int(n)):
+        theta0.extend([float(A0s[k]), float(mu0s[k]), float(s0)])
+        lb.extend([float(amp_bounds[0]), float(center_bounds[0]), float(min_s)])
+        ub.extend([float(amp_bounds[1]), float(center_bounds[1]), float(max_s)])
+    theta0 = np.asarray(theta0)
+    lb = np.asarray(lb)
+    ub = np.asarray(ub)
+
+    # Weights (optional): Poisson-like -> sigma ~ sqrt(z + eps)
+    sigma = None
+    if use_weights and np.all(z_fit >= 0):
+        eps = 1e-12
+        sigma = np.sqrt(z_fit + eps)
+        # Avoid zero sigma
+        sigma[sigma < 1e-12] = 1e-12
+
+    popt, _ = curve_fit(
+        _sum_n_gauss1d,
+        y_fit,
+        z_fit,
+        p0=theta0,
+        bounds=(lb, ub),
+        sigma=sigma,
+        absolute_sigma=False,
+        maxfev=200000,
+    )
+
+    # Evaluate on full grid
+    if resample_y is not None:
+        fit_full = _sum_n_gauss1d(resample_y, *popt)
+    else:
+        fit_full = _sum_n_gauss1d(y, *popt)
+    if not return_components and not return_params:
+        return fit_full
+
+    out = [fit_full]
+    if return_params:
+        out.append(popt)
+    if return_components:
+        comps = np.zeros((int(n), y.size))
+        for k in range(int(n)):
+            A, mu, s = popt[3*k:3*k+3]
+            comps[k] = A * np.exp(-0.5 * ((y - mu) / s) ** 2)
+        out.append(comps)
+    return tuple(out)
+
+
 def spectrum_fun(A,om0,s,om):
     retval = A/(2*s)*np.exp(-(om-om0)**2/(2*s**2))
     return retval  # Positive-freq part
@@ -412,7 +556,7 @@ def detrend_spike(sig_mid,row_axis,n_spike_buffer,n_fitting_buffer,above_thresh_
             plt.xlabel('Indirect energy [eV]')
             plt.ylabel('Amplitude [arb. u.]')
             plt.legend()
-            plt.savefig('newims/section.png')
+            plt.savefig('section.png')
             plt.show()
     
     
@@ -571,6 +715,88 @@ def plotc(ar):
     plt.plot(np.imag(ar),linewidth=0.8)
     plt.show()
 
+def reconstruct_WirtFlow(sig_measrd,sp_probe,sp_xuv,om_probe,om_xuv,T,
+                         n_power_iter=50,n_main_iter=10000,mu_step_max=0.06,I_warmup=1000,ifplot=50):
+
+    n_e, n_t = sig_measrd.shape
+
+    w = np.ones((n_e,)).astype(complex) / np.sqrt(n_e)
+
+    m = np.size(sig_measrd)
+
+    for i_iter in range(n_power_iter):
+
+        w = 1/m * synth_baseline_hermit(sig_measrd * synth_baseline(w,sp_xuv,om_probe,om_xuv,T),sp_xuv,om_probe,om_xuv,T)
+        w = w / np.sqrt(np.sum(np.abs(w)**2))
+
+    lambda_bsln = synth_baseline(w,sp_xuv,om_probe,om_xuv,T)
+    alpha = np.sum( np.sqrt(sig_measrd) * np.abs(lambda_bsln) ) / np.sum( np.abs(lambda_bsln)**2 )
+
+    w = alpha*w
+
+    plt.plot(np.real(w),linewidth=0.7)
+    plt.plot(np.imag(w),linewidth=0.7)
+    plt.plot(np.abs(sp_probe))
+    plt.savefig('initial_spectrum_estimate.png')
+    plt.close()
+
+    normsq_z0 = np.sum( np.abs(w)**2 )
+    z = np.copy(w)
+
+    ers = []
+
+    for i_iter in range(n_main_iter):
+
+        mu_step = mu_step_max*(1-np.exp(-(i_iter+1)/I_warmup))
+
+        ers.append( np.sum(np.abs( np.abs(z) - np.abs(sp_probe) )**2)/np.sum(np.abs(sp_probe)**2) )
+
+        sbforward = synth_baseline(z,sp_xuv,om_probe,om_xuv,T)
+        sbhermit_arg = (np.abs(sbforward)**2 - sig_measrd) * sbforward
+        z = z - mu_step/normsq_z0*1/m * synth_baseline_hermit(sbhermit_arg,sp_xuv,om_probe,om_xuv,T)
+
+        print(i_iter)
+
+        if i_iter%int(ifplot)==0 and bool(ifplot):
+            fig, axes = plt.subplots(2, 1, figsize=(8, 6))
+            # axes[0].plot(np.real(z), label='Re(z)')
+            # axes[0].plot(np.imag(z), label='Im(z)')
+            # axes[0].plot(np.real(sp_probe), label='Re(sp_probe)')
+            # axes[0].plot(np.imag(sp_probe), label='Im(sp_probe)')
+
+            axes[0].plot(np.abs(z), label='Abs(z)')
+            axes[0].plot(np.abs(sp_probe), label='Abs(sp_probe)')
+            # axes[0].plot(np.angle(z), label='Abs(z)')
+            # axes[0].plot(np.angle(sp_probe), label='Abs(sp_probe)')
+
+            axes[0].set_title('Current spectrum estimate')
+            axes[0].legend()
+
+            axes[1].plot(ers, label='Relative MSE')
+            axes[1].set_yscale('log')
+            axes[1].set_title('Error history')
+            axes[1].set_xlabel('Recorded iteration')
+            axes[1].legend()
+            if ers:
+                last_val = ers[-1]
+                axes[1].text(
+                    0.02, 0.1,
+                    f'Iter {i_iter}: {last_val:.5f}',
+                    transform=axes[1].transAxes,
+                    fontsize=10,
+                    color='white',
+                    weight='bold',
+                    ha='left',
+                    va='top',
+                    path_effects=[pe.withStroke(linewidth=1, foreground='black')]
+                )
+
+            plt.tight_layout()
+            plt.savefig('spectrum_convergence_iter.png')
+            plt.close()
+
+    return z
+
 ###
 ### FIELD PARAMETERS
 ###
@@ -630,15 +856,24 @@ amplit_tot_0 = Amplitude(xuvs,refprobes,E)
 
 signal_clean = np.abs(amplit_tot_0)**2
 
-SNR = None
+ifnoise = True
 
-if SNR is None or SNR <= 0:
+SNR = 20
+
+if SNR is None or SNR <= 0 or not ifnoise:
     signal = signal_clean.copy()
 else:
     sig_rms = np.sqrt(np.mean(signal_clean**2))
     noise_rms = sig_rms / float(SNR)
     noise = noise_rms * np.random.normal(size=signal_clean.shape)
     signal = signal_clean + noise
+
+# if not ifnoise:
+#     signal = signal_clean.copy()
+# else:
+#     # Apply Poisson noise assuming signal_clean contains expected values (means)
+#     rng = np.random.default_rng()
+#     signal = rng.poisson(signal_clean).astype(float)
 
 amplit_tot_FT, OM_T, em_lo, em_hi = CFT(T_range,signal,use_window=False)
 
@@ -660,74 +895,7 @@ synth_bsln = np.abs(synth_baseline(sp_probe,sp_xuv,om_probe,om_xuv,T))**2
 synth_bsln_FT, _, _, _ = CFT(T_range,synth_bsln,use_window=False)
 # CHECKED - PRODUCES SAME AS 'AMPLITUDE'
 
-w = np.ones_like(sp_probe).astype(complex) / np.sqrt(np.size(sp_probe))
-
-n_power_iter = 10
-m = np.size(synth_bsln)
-
-for i_iter in range(n_power_iter):
-
-    w = 1/m * synth_baseline_hermit(synth_bsln * synth_baseline(w,sp_xuv,om_probe,om_xuv,T),sp_xuv,om_probe,om_xuv,T)
-    w = w / np.sqrt(np.sum(np.abs(w)**2))
-
-lambda_bsln = synth_baseline(w,sp_xuv,om_probe,om_xuv,T)
-alpha = np.sum( np.sqrt(synth_bsln) * np.abs(lambda_bsln) ) / np.sum( np.abs(lambda_bsln)**2 )
-
-w = alpha*w
-
-# plt.plot(np.real(w))
-# plt.plot(np.imag(w))
-# plt.plot(sp_probe)
-# plt.show()
-
-n_main_iter = 1000
-
-mu_step_max = 0.1
-I_warmup = 400
-
-normsq_z0 = np.sum( np.abs(w)**2 )
-
-z = w
-
-ers = []
-
-for i_iter in range(n_main_iter):
-
-    mu_step = mu_step_max*(1-np.exp(-i_iter/I_warmup))
-
-    ers.append( np.sum(np.abs( np.abs(z) - np.abs(sp_probe) )**2)/np.sum(np.abs(sp_probe)**2) )
-
-    sbforward = synth_baseline(z,sp_xuv,om_probe,om_xuv,T)
-    sbhermit_arg = (np.abs(sbforward)**2 - synth_bsln) * sbforward
-    z = z - mu_step/normsq_z0*1/m * synth_baseline_hermit(sbhermit_arg,sp_xuv,om_probe,om_xuv,T)
-
-    print(i_iter)
-
-    if i_iter%20==0:
-        fig, axes = plt.subplots(2, 1, figsize=(8, 6))
-        # axes[0].plot(np.real(z), label='Re(z)')
-        # axes[0].plot(np.imag(z), label='Im(z)')
-        # axes[0].plot(np.real(sp_probe), label='Re(sp_probe)')
-        # axes[0].plot(np.imag(sp_probe), label='Im(sp_probe)')
-
-        axes[0].plot(np.abs(z), label='Abs(z)')
-        axes[0].plot(np.abs(sp_probe), label='Abs(sp_probe)')
-        # axes[0].plot(np.angle(z), label='Abs(z)')
-        # axes[0].plot(np.angle(sp_probe), label='Abs(sp_probe)')
-
-        axes[0].set_title('Current spectrum estimate')
-        axes[0].legend()
-
-        axes[1].plot(ers, label='Relative MSE')
-        axes[1].set_yscale('log')
-        axes[1].set_title('Error history (log scale)')
-        axes[1].set_xlabel('Recorded iteration (every 50)')
-        axes[1].legend()
-
-        plt.tight_layout()
-        plt.savefig('spectrum_convergence_iter.png')
-        plt.close()
-
+# sp_rec = reconstruct_WirtFlow(synth_bsln,sp_probe,sp_xuv,om_probe,om_xuv,T)
 
 ###
 ### DETRENDING - SEPARATING PROBE AND REF ZERO FREQ COMPONENT 
@@ -764,77 +932,50 @@ analytic_bsln_FT,_,_,_ = CFT(T_range,analytic_bsln,use_window=False)
 
 # plot_mat(analytic_bsln_FT - amplit_tot_FT_detrended_full)
 
+spike_only = spike_only[spike_row_mid,:]
+
+spike_only = np.sqrt(np.abs(spike_only))
+
+# Align spike_only's maximum (along energy) with sp_xuv's maximum
+idx_xuv = int(np.argmax(sp_xuv))
+idx_spk = int(np.argmax(spike_only))
+shift_cols = idx_xuv - idx_spk
+spike_only = np.roll(spike_only, shift_cols)
+
+spike_only = spike_only*np.max(sp_xuv)/np.max(spike_only)
+
+# --- Decompose RL reconstruction as a sum of n Gaussians and plot ---
+n_comp = 4
+# Use non-negative target for Gaussian fit
+
+fit_gauss, fit_params = fit_n_gaussians_1d(
+    y_vals=om_xuv,
+    z_vals=spike_only,
+    n=n_comp,
+    return_params=True,
+    return_components=False,
+    use_weights=False,
+)
+
+plt.plot(sp_xuv)
+plt.plot(spike_only,linewidth=0.7)
+plt.plot(fit_gauss,linewidth=0.7)
+plt.show()
+
+
 ###
 ### RETRIEVE PROBE SPECTRUM
 ###
 
 ### Prepare
 
-# Synthetic baseline with known spectra
-om1 = (E/hbar - E_lo/hbar + 0.1 + E_span/hbar/N_E/2 * ((N_E-1) % 2))[0,:]
-sp1 = sp_tot(probes,om1)
+meas_baseline = meas_baseline**2
+meas_baseline = meas_baseline*np.max(synth_bsln)/np.max(meas_baseline)
 
-om2 = (E/hbar - E_span/hbar/2 - 0.1)[0,:]
-sp2 = sp_tot(xuvs,om2)
-
-synth_bsln = synth_baseline(sp1,sp2,om1,om2,T)
-synth_bsln = synth_bsln/np.max(np.abs(synth_bsln))*np.max(np.abs(meas_baseline))
-
-plot_mat(np.abs(synth_bsln) - meas_baseline)
-
-retrieved_data = np.ones_like(meas_baseline[N_T//2,:]).astype(complex)*np.average(meas_baseline[N_T//2,:])
-n_iterations = 10000
-eps = 1e-5
-ones = np.ones_like(retrieved_data).astype(complex)
+plot_mat(meas_baseline)
+plot_mat(synth_bsln)
 
 
-i_tau = 75
-tau_val = T_range[N_T//2+i_tau]
+plot_mat((meas_baseline - synth_bsln)/np.max(meas_baseline))
 
-# meas_strip = np.abs(synth_bsln[N_T//2+i_tau,:])
-meas_strip = synth_bsln[N_T//2+i_tau,:]
-
-plotc(meas_strip)
-
-plotc(normalize_abs(meas_strip) - normalize_abs(synth_baseline_tau(sp1,sp2,om1,om2,tau_val)))
-
-errs = []
-
-
-for i in range(n_iterations):
-    pred_image = synth_baseline_tau(retrieved_data,sp2,om1,om2,tau_val)
-    pred_image = np.maximum(np.abs(pred_image),eps)*np.exp(1j*np.angle(pred_image))
-
-    ratio = meas_strip/pred_image
-
-    numerator = synth_baseline_transpose_tau(ratio,sp2,om1,om2,tau_val)
-
-    denominator = synth_baseline_transpose_tau(ones,sp2,om1,om2,tau_val)
-    denominator = np.maximum(np.abs(denominator),eps)*np.exp(1j*np.angle(denominator))
-
-    retrieved_data = retrieved_data * numerator/denominator
-
-    if i%200==0:
-        # plt.plot(np.real(normalize_abs(retrieved_data)),linewidth=0.8,linestyle='dotted')
-        # plt.plot(np.imag(normalize_abs(retrieved_data)),linewidth=0.8,linestyle='dotted')
-        # plt.plot(normalize_abs(np.abs(retrieved_data)))
-        # plt.plot(normalize_abs(sp1))
-        # plt.show()
-        err = np.sum( (normalize_abs(np.abs(retrieved_data)) - normalize_abs(sp1))**2 )
-        errs.append(err)
-        print(err)
-
-        plotc(meas_strip)
-        plotc(pred_image)
-
-
-
-plt.plot(np.log(errs))
-plt.show()
-
-plt.plot(np.real(normalize_abs(retrieved_data)),linewidth=0.8,linestyle='dotted')
-plt.plot(np.imag(normalize_abs(retrieved_data)),linewidth=0.8,linestyle='dotted')
-# plt.plot(np.angle(normalize_abs(retrieved_data))/np.pi*np.max(normalize_abs(np.abs(retrieved_data))),linewidth=0.8,linestyle='dotted')
-plt.plot(normalize_abs(np.abs(retrieved_data)))
-plt.plot(normalize_abs(sp1))
-plt.show()
+sp_rec = reconstruct_WirtFlow(meas_baseline,sp_probe,spike_only,om_probe,om_xuv,T,n_power_iter=150,n_main_iter=10000,mu_step_max=0.01,I_warmup=300,ifplot=50)
