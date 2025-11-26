@@ -185,8 +185,8 @@ E_hi = 63.5
 T_reach = 100.0
 E_span = E_hi - E_lo
 
-N_E = 1500
-N_T = 1500
+N_E = 900
+N_T = 900
 
 E_range = range(E_lo, E_hi, length=N_E)
 T_range = range(-T_reach, T_reach, length=N_T)
@@ -251,7 +251,7 @@ n_power_iter = 10
 m = length(synth_bsln)
 
 for i_iter in 1:n_power_iter
-    w = (1 / m) .* synth_baseline_hermit(synth_bsln .* synth_baseline(w, sp_xuv, om_probe_vals, om_xuv_vals, T), sp_xuv, om_probe_vals, om_xuv_vals, T)
+    global w = (1 / m) .* synth_baseline_hermit(synth_bsln .* synth_baseline(w, sp_xuv, om_probe_vals, om_xuv_vals, T), sp_xuv, om_probe_vals, om_xuv_vals, T)
     w ./= sqrt(sum(abs.(w).^2))
 end
 
@@ -260,14 +260,16 @@ alpha = sum(sqrt.(synth_bsln) .* abs.(lambda_bsln)) / sum(abs.(lambda_bsln).^2)
 
 w = alpha .* w
 
-plot(real.(w), label="Re(w)")
-plot!(imag.(w), label="Im(w)")
-plot!(sp_probe, label="sp_probe")
-display(current())
+p_initial = plot(real.(w), label="Re(w)")
+plot!(p_initial, imag.(w), label="Im(w)")
+plot!(p_initial, sp_probe, label="sp_probe")
+title!(p_initial, "Initial spectrum estimate")
+savefig(p_initial, "initial_spectrum_estimate.png")
+println("Saved initial spectrum estimate to initial_spectrum_estimate.png")
 
 n_main_iter = 1000
 
-mu_step_max = 0.15
+mu_step_max = 0.005
 I_warmup = 200
 
 normsq_z0 = sum(abs.(w).^2)
@@ -287,17 +289,19 @@ for i_iter in 1:n_main_iter
 
     println(i_iter)
 
-    if i_iter % 100 == 0
+    if i_iter % 30 == 0
         p1 = plot(real.(z), label="Re(z)")
         plot!(p1, imag.(z), label="Im(z)")
         plot!(p1, sp_probe, label="sp_probe")
         title!(p1, "Current spectrum estimate")
 
-        p2 = plot(ers, label="Relative MSE", yscale=:log10)
-        title!(p2, "Error history (log scale)")
+        p2 = plot(log.(ers), label="Relative MSE")
+        title!(p2, "log Error history")
         xlabel!(p2, "Iteration")
 
-        plot(p1, p2, layout=(2, 1), size=(800, 600))
-        display(current())
+        combined_plot = plot(p1, p2, layout=(2, 1), size=(800, 600))
+        filename = "spectrum_convergence_iter.png"
+        savefig(combined_plot, filename)
+        println("Saved convergence plot")
     end
 end

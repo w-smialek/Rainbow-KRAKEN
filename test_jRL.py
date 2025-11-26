@@ -580,8 +580,8 @@ E_hi = 63.5
 T_reach = 100
 E_span = E_hi-E_lo
 
-N_E = 1500
-N_T = 1500
+N_E = 1000
+N_T = 1000
 
 E_range = np.linspace(E_lo,E_hi,N_E)
 T_range = np.linspace(-T_reach,T_reach,N_T)
@@ -675,15 +675,15 @@ alpha = np.sum( np.sqrt(synth_bsln) * np.abs(lambda_bsln) ) / np.sum( np.abs(lam
 
 w = alpha*w
 
-plt.plot(np.real(w))
-plt.plot(np.imag(w))
-plt.plot(sp_probe)
-plt.show()
+# plt.plot(np.real(w))
+# plt.plot(np.imag(w))
+# plt.plot(sp_probe)
+# plt.show()
 
 n_main_iter = 1000
 
-mu_step_max = 0.05
-I_warmup = 200
+mu_step_max = 0.1
+I_warmup = 400
 
 normsq_z0 = np.sum( np.abs(w)**2 )
 
@@ -695,7 +695,7 @@ for i_iter in range(n_main_iter):
 
     mu_step = mu_step_max*(1-np.exp(-i_iter/I_warmup))
 
-    ers.append( np.sum(np.abs( z - sp_probe )**2)/np.sum(np.abs(sp_probe)**2) )
+    ers.append( np.sum(np.abs( np.abs(z) - np.abs(sp_probe) )**2)/np.sum(np.abs(sp_probe)**2) )
 
     sbforward = synth_baseline(z,sp_xuv,om_probe,om_xuv,T)
     sbhermit_arg = (np.abs(sbforward)**2 - synth_bsln) * sbforward
@@ -703,11 +703,18 @@ for i_iter in range(n_main_iter):
 
     print(i_iter)
 
-    if i_iter%100==0:
+    if i_iter%20==0:
         fig, axes = plt.subplots(2, 1, figsize=(8, 6))
-        axes[0].plot(np.real(z), label='Re(z)')
-        axes[0].plot(np.imag(z), label='Im(z)')
-        axes[0].plot(sp_probe, label='sp_probe')
+        # axes[0].plot(np.real(z), label='Re(z)')
+        # axes[0].plot(np.imag(z), label='Im(z)')
+        # axes[0].plot(np.real(sp_probe), label='Re(sp_probe)')
+        # axes[0].plot(np.imag(sp_probe), label='Im(sp_probe)')
+
+        axes[0].plot(np.abs(z), label='Abs(z)')
+        axes[0].plot(np.abs(sp_probe), label='Abs(sp_probe)')
+        # axes[0].plot(np.angle(z), label='Abs(z)')
+        # axes[0].plot(np.angle(sp_probe), label='Abs(sp_probe)')
+
         axes[0].set_title('Current spectrum estimate')
         axes[0].legend()
 
@@ -718,7 +725,8 @@ for i_iter in range(n_main_iter):
         axes[1].legend()
 
         plt.tight_layout()
-        plt.show()
+        plt.savefig('spectrum_convergence_iter.png')
+        plt.close()
 
 
 ###
