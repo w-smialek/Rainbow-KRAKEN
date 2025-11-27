@@ -858,24 +858,50 @@ signal_clean = np.abs(amplit_tot_0)**2
 
 ifnoise = True
 
-SNR = 20
-
-if SNR is None or SNR <= 0 or not ifnoise:
-    signal = signal_clean.copy()
-else:
-    sig_rms = np.sqrt(np.mean(signal_clean**2))
-    noise_rms = sig_rms / float(SNR)
-    noise = noise_rms * np.random.normal(size=signal_clean.shape)
-    signal = signal_clean + noise
-
-# if not ifnoise:
+# SNR = 20
+# if SNR is None or SNR <= 0 or not ifnoise:
 #     signal = signal_clean.copy()
 # else:
-#     # Apply Poisson noise assuming signal_clean contains expected values (means)
-#     rng = np.random.default_rng()
-#     signal = rng.poisson(signal_clean).astype(float)
+#     sig_rms = np.sqrt(np.mean(signal_clean**2))
+#     noise_rms = sig_rms / float(SNR)
+#     noise = noise_rms * np.random.normal(size=signal_clean.shape)
+#     signal = signal_clean + noise
+
+alpha = 30
+b = 1
+
+signal_clean *= alpha/np.max(signal_clean)
+signal_clean += b
+
+if not ifnoise:
+    signal = signal_clean.copy()
+else:
+    # Apply Poisson noise assuming signal_clean contains expected values (means)
+    rng = np.random.default_rng()
+    signal = rng.poisson(signal_clean).astype(float)
+
+###
+### PROCESSING STARTS HERE
+###
+
+noise_area_Elo, noise_area_Ehi = 0.0,0.3
+
+counts_rician = np.sum(signal,axis=0)
+
+b_est = np.mean(signal[:,floor(noise_area_Elo*N_E):floor(noise_area_Ehi*N_E)])
+
+print(b_est)
+
+signal -= b_est
 
 amplit_tot_FT, OM_T, em_lo, em_hi = CFT(T_range,signal,use_window=False)
+
+SPD = np.abs(amplit_tot_FT)**2
+phase = np.angle(amplit_tot_FT)
+
+AMPL_est = np.sqrt(np.maximum(0,SPD - counts_rician))
+
+amplit_tot_FT = AMPL_est*np.exp(1j*phase)
 
 ###
 ### CONTROL SAMPLE - DECONVOLUTION USING EXACT DATA
