@@ -13,6 +13,7 @@ from scipy.ndimage import gaussian_filter, laplace
 from scipy.signal import savgol_filter
 from scipy.signal import fftconvolve
 from matplotlib import patheffects as pe
+from skimage.restoration import denoise_tv_bregman
 
 # Reduced Planck constant in eV*fs (approx CODATA): ħ = 6.582119569e-16 eV·s
 hbar = 6.582119569e-1
@@ -275,22 +276,19 @@ def fit_single_gaussian_centered_1d(y_vals, z_vals, n_spike_buffer=1, n_fitting_
     A0 = float(np.median(np.abs(z_fit)))
     s0 = 0.1 * span_y
 
-    popt, _ = curve_fit(
-        _gauss1d_centered,
-        y_fit,
-        z_fit,
-        p0=[A0, s0]#,
-        # bounds=([0.0, min_s], [np.inf, max_s]),
-        # bounds=([0.0, 0.0], [np.inf, np.inf]),
-        # maxfev=20000,
-    )
-    fit_full = _gauss1d_centered(yc, *popt)
-
-    # if j%100 == 0:
-    #     plt.plot(y_fit,z_fit+0.1)
-    #     plt.plot(yc,z_vals)
-    #     plt.plot(yc,fit_full)
-    #     plt.show()
+    try:
+        popt, _ = curve_fit(
+            _gauss1d_centered,
+            y_fit,
+            z_fit,
+            p0=[A0, s0]#,
+            # bounds=([0.0, min_s], [np.inf, max_s]),
+            # bounds=([0.0, 0.0], [np.inf, np.inf]),
+            # maxfev=20000,
+        )
+        fit_full = _gauss1d_centered(yc, *popt)
+    except:
+        fit_full = np.zeros_like(yc)
 
     return fit_full
 
@@ -537,7 +535,7 @@ def detrend_spike(sig_mid,row_axis,n_spike_buffer,n_fitting_buffer,above_thresh_
     if plot:
         i_cross = floor(N_E*0.53)
 
-        for v in [0.2,0.35,0.45,0.50,0.55,0.60,0.85]:
+        for v in np.linspace(0,0.99,20):
             i_cross = floor(N_E*v)
 
             plt.plot(em_axis_mid,abs_mid[:,i_cross],linewidth=2.5,label='Spectrum section')
@@ -867,7 +865,7 @@ ifnoise = True
 #     noise = noise_rms * np.random.normal(size=signal_clean.shape)
 #     signal = signal_clean + noise
 
-alpha = 30
+alpha = 500
 b = 1
 
 signal_clean *= alpha/np.max(signal_clean)
@@ -880,28 +878,70 @@ else:
     rng = np.random.default_rng()
     signal = rng.poisson(signal_clean).astype(float)
 
+# plot_mat(signal)
+
 ###
 ### PROCESSING STARTS HERE
 ###
 
 noise_area_Elo, noise_area_Ehi = 0.0,0.3
 
-counts_rician = np.sum(signal,axis=0)
+counts_rician = np.sum(signal,axis=0)/(2.0*pi)
 
 b_est = np.mean(signal[:,floor(noise_area_Elo*N_E):floor(noise_area_Ehi*N_E)])
 
-print(b_est)
-
 signal -= b_est
+
+# import sgolay2
+# sg2 = sgolay2.SGolayFilter2(window_size=13,poly_order=3)
+# signal = sg2(signal)
+
+# plot_mat(signal)
 
 amplit_tot_FT, OM_T, em_lo, em_hi = CFT(T_range,signal,use_window=False)
 
-SPD = np.abs(amplit_tot_FT)**2
-phase = np.angle(amplit_tot_FT)
+###
+### RICIAN BIAS REMOVAL
+###
 
-AMPL_est = np.sqrt(np.maximum(0,SPD - counts_rician))
+# nu = np.abs(amplit_tot_FT)
+# r = np.abs(amplit_tot_FT)
 
-amplit_tot_FT = AMPL_est*np.exp(1j*phase)
+# # from scipy.special import i0,i1
+
+# # for j in range(N_E):
+# #     for _ in range(10):
+# #         nu[:,j] = r[:,j] * i1(2*r[:,j]*nu[:,j]/counts_rician[j]) / i0(2*r[:,j]*nu[:,j]/counts_rician[j])
+
+# #     if j%100==0:
+# #         print(j)
+
+# # nu[N_T//2,:] = np.sqrt(np.maximum(0,(r[N_T//2,:])**2-counts_rician))
+
+# # plot_mat(nu)
+
+# SPD = np.abs(amplit_tot_FT)**2
+# phase = np.angle(amplit_tot_FT)
+
+# AMPL_est = np.sqrt(np.maximum(1e-20,SPD - counts_rician))
+# amplit_tot_FT = AMPL_est*np.exp(1j*phase)
+
+# # plt.plot(SPD[0,:])
+# # plt.plot(counts_rician)
+# # plt.show()
+
+# plot_mat(np.clip(amplit_tot_FT,0,500))
+
+# amp = np.abs(amplit_tot_FT)
+# phase = np.angle(amplit_tot_FT)
+
+
+# # amp2 = denoise_tv_bregman(amp,weight=0.1)
+# # amplit_tot_FT = amp2 * np.exp(1j*phase)
+
+# plot_mat(np.clip(amplit_tot_FT,0,500))
+
+# plot_mat(amplit_tot_FT2 - amplit_tot_FT)
 
 ###
 ### CONTROL SAMPLE - DECONVOLUTION USING EXACT DATA
@@ -938,17 +978,30 @@ mask_frac = 0.69
 N_em = np.size(em_axis_mid)
 i_mask_em = floor(0.5*(1-(mask_em/em_axis_mid_reach))*N_em)
 
-amplit_tot_FT_mid[0:i_mask_em,0:floor(mask_frac*N_E)] = 0
-amplit_tot_FT_mid[N_em-i_mask_em+1:N_em,0:floor(mask_frac*N_E)] = 0
+# amplit_tot_FT_mid[0:i_mask_em,0:floor(mask_frac*N_E)] = 0
+# amplit_tot_FT_mid[N_em-i_mask_em+1:N_em,0:floor(mask_frac*N_E)] = 0
 
 amplit_tot_FT_mid_detrended, spike_only, spike_row_mid = detrend_spike(amplit_tot_FT_mid,em_axis_mid,0,2,plot=False)
 
+plot_mat(np.clip(np.abs(amplit_tot_FT_mid),0,30))
+
+plot_mat(amplit_tot_FT_mid_detrended)
+
 # Zero-pad the detrended mid-band to the full (ω, E) grid
-amplit_tot_FT_detrended_full = np.zeros_like(amplit_tot_FT, dtype=complex)
+amplit_tot_FT_detrended_full = np.copy(amplit_tot_FT)
 amplit_tot_FT_detrended_full[i0:i1, :] = amplit_tot_FT_mid_detrended
+
+sideband_lo, sideband_hi = floor(0.37*N_T), floor(0.63*N_T)
+amplit_tot_FT_detrended_full[sideband_lo:i0,:] = amplit_tot_FT[0:i0-sideband_lo,:]
+amplit_tot_FT_detrended_full[i1:sideband_hi,:] = amplit_tot_FT[N_T-sideband_hi+i1:,:]
+
+plot_mat(amplit_tot_FT_detrended_full)
+
+plot_mat(np.clip(np.abs(amplit_tot_FT),0,30))
 
 sig_probe_reconstructed,_,_,_ = CFT(T_range,amplit_tot_FT_detrended_full,use_window=False,inverse=True)
 
+plot_mat(sig_probe_reconstructed)
 
 ### Check quality of detrending
 
@@ -971,7 +1024,7 @@ spike_only = np.roll(spike_only, shift_cols)
 spike_only = spike_only*np.max(sp_xuv)/np.max(spike_only)
 
 # --- Decompose RL reconstruction as a sum of n Gaussians and plot ---
-n_comp = 4
+n_comp = 1
 # Use non-negative target for Gaussian fit
 
 fit_gauss, fit_params = fit_n_gaussians_1d(
@@ -1004,4 +1057,4 @@ plot_mat(synth_bsln)
 
 plot_mat((meas_baseline - synth_bsln)/np.max(meas_baseline))
 
-sp_rec = reconstruct_WirtFlow(meas_baseline,sp_probe,spike_only,om_probe,om_xuv,T,n_power_iter=150,n_main_iter=10000,mu_step_max=0.01,I_warmup=300,ifplot=50)
+sp_rec = reconstruct_WirtFlow(meas_baseline,sp_probe,spike_only,om_probe,om_xuv,T,n_power_iter=50,n_main_iter=10000,mu_step_max=0.01,I_warmup=300,ifplot=50)
