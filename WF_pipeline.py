@@ -1,16 +1,9 @@
 import numpy as np
 from numpy import pi
-from scipy.special import erf
 from scipy.special import wofz
 import matplotlib.pyplot as plt
-from scipy.interpolate import RectBivariateSpline
-from scipy import interpolate
-from scipy import integrate
-from math import floor, ceil
+from math import floor
 from scipy.optimize import curve_fit
-from scipy.signal import deconvolve
-from scipy.ndimage import gaussian_filter, laplace
-from scipy.signal import savgol_filter
 from scipy.signal import fftconvolve
 from matplotlib import patheffects as pe
 from skimage.restoration import denoise_tv_bregman
@@ -841,7 +834,7 @@ om_probe4 = 1.85/hbar
 s_probe4 = 0.17/hbar
 pulse_probe4 = (T,A_probe4,om_probe4,s_probe4,0)
 
-A_ref = 1
+A_ref = 0.3
 om_ref = 1.55/hbar
 s_ref = 0.005/hbar
 pulse_ref = (0*T,A_ref,om_ref,s_ref,0)
@@ -855,14 +848,26 @@ refprobes = tuple(list(refs) + list(probes))
 ### GENERATE SIGNAL
 ###
 
-amplit_tot_0 = Amplitude(xuvs,refprobes,E)
+ifnoise = True
+rng = np.random.default_rng()
+alpha = 0.1e-2
+b = 1
 
+# Synthetic baseline with known spectra
+om_probe = (E/hbar - E_lo/hbar + 0.1 + E_span/hbar/N_E/2 * ((N_E-1) % 2))[0,:]
+sp_probe = sp_tot(probes,om_probe)
+sp_ref = sp_tot(refs,om_probe)
+om_xuv = (E/hbar - E_span/hbar/2 - 0.1)[0,:]
+sp_xuv = sp_tot(xuvs,om_xuv)
+
+synth_bsln = np.abs(synth_baseline(sp_probe,sp_xuv,om_probe,om_xuv,T))**2
+synth_bsln = rng.poisson(alpha*(synth_bsln+b)).astype(float) - b
+synth_bsln_FT, _, _, _ = CFT(T_range,synth_bsln,use_window=False)
+# CHECKED - PRODUCES SAME AS 'AMPLITUDE'
+
+amplit_tot_0 = np.abs(synth_baseline(sp_probe,sp_xuv,om_probe,om_xuv,T) + synth_baseline(sp_ref,sp_xuv,om_probe,om_xuv,T*0))
 signal_clean = np.abs(amplit_tot_0)**2
 
-ifnoise = True
-
-alpha = 800
-b = 1
 
 signal_clean *= alpha
 signal_clean += b
@@ -871,13 +876,7 @@ if not ifnoise:
     signal = signal_clean.copy()
 else:
     # Apply Poisson noise assuming signal_clean contains expected values (means)
-    rng = np.random.default_rng()
     signal = rng.poisson(signal_clean).astype(float)
-
-# plot_mat(signal)
-
-# plt.plot(np.linspace(0,100,300),np.percentile(np.sqrt(signal),np.linspace(0,100,300)))
-# plt.show()
 
 ### Define SNR as 98th percentile of sqrt(signal). Semi-arbitrary definition and may not work if signal form changes
 
@@ -893,11 +892,9 @@ print("N Total = %.2e"%np.sum(signal))
 
 noise_area_Elo, noise_area_Ehi = 0.0,0.3
 
-counts_rician = np.sum(signal,axis=0)/(2.0*pi)
-
 b_est = np.mean(signal[:,floor(noise_area_Elo*N_E):floor(noise_area_Ehi*N_E)])
 
-signal -= b_est
+signal -= b
 
 # import sgolay2
 # sg2 = sgolay2.SGolayFilter2(window_size=13,poly_order=3)
@@ -908,69 +905,6 @@ plot_mat(signal)
 amplit_tot_FT, OM_T, em_lo, em_hi = CFT(T_range,signal,use_window=False)
 
 ###
-### RICIAN BIAS REMOVAL
-###
-
-# nu = np.abs(amplit_tot_FT)
-# r = np.abs(amplit_tot_FT)
-
-# # from scipy.special import i0,i1
-
-# # for j in range(N_E):
-# #     for _ in range(10):
-# #         nu[:,j] = r[:,j] * i1(2*r[:,j]*nu[:,j]/counts_rician[j]) / i0(2*r[:,j]*nu[:,j]/counts_rician[j])
-
-# #     if j%100==0:
-# #         print(j)
-
-# # nu[N_T//2,:] = np.sqrt(np.maximum(0,(r[N_T//2,:])**2-counts_rician))
-
-# # plot_mat(nu)
-
-# SPD = np.abs(amplit_tot_FT)**2
-# phase = np.angle(amplit_tot_FT)
-
-# AMPL_est = np.sqrt(np.maximum(1e-20,SPD - counts_rician))
-# amplit_tot_FT = AMPL_est*np.exp(1j*phase)
-
-# # plt.plot(SPD[0,:])
-# # plt.plot(counts_rician)
-# # plt.show()
-
-# plot_mat(np.clip(amplit_tot_FT,0,500))
-
-# amp = np.abs(amplit_tot_FT)
-# phase = np.angle(amplit_tot_FT)
-
-
-# # amp2 = denoise_tv_bregman(amp,weight=0.1)
-# # amplit_tot_FT = amp2 * np.exp(1j*phase)
-
-# plot_mat(np.clip(amplit_tot_FT,0,500))
-
-# plot_mat(amplit_tot_FT2 - amplit_tot_FT)
-
-###
-### CONTROL SAMPLE - DECONVOLUTION USING EXACT DATA
-###
-
-# Synthetic baseline with known spectra
-om_probe = (E/hbar - E_lo/hbar + 0.1 + E_span/hbar/N_E/2 * ((N_E-1) % 2))[0,:]
-sp_probe = sp_tot(probes,om_probe)
-sp_ref = sp_tot(refs,om_probe)
-
-
-om_xuv = (E/hbar - E_span/hbar/2 - 0.1)[0,:]
-sp_xuv = sp_tot(xuvs,om_xuv)
-
-# synth_bsln = np.abs(synth_baseline(sp_probe,sp_xuv,om_probe,om_xuv,T) + synth_baseline(sp_ref,sp_xuv,om_probe,om_xuv,T*0))**2
-synth_bsln = np.abs(synth_baseline(sp_probe,sp_xuv,om_probe,om_xuv,T))**2
-synth_bsln_FT, _, _, _ = CFT(T_range,synth_bsln,use_window=False)
-# CHECKED - PRODUCES SAME AS 'AMPLITUDE'
-
-# sp_rec = reconstruct_WirtFlow(synth_bsln,sp_probe,sp_xuv,om_probe,om_xuv,T)
-
-###
 ### DETRENDING - SEPARATING PROBE AND REF ZERO FREQ COMPONENT 
 ###
 
@@ -979,118 +913,18 @@ slice_fracts = (0.5*(1 - em_axis_mid_reach/em_hi), 0.5*(1 + em_axis_mid_reach/em
 
 amplit_tot_FT_mid, em_axis_mid, i0, i1 = extract_midslice(amplit_tot_FT, slice_fracts, hbar*OM_T[:,0])
 
-### Control
-signal_probe = np.abs(Amplitude(xuvs,probes,E))**2
-
-signal_probe *= alpha
-signal_probe += b
-signal_probe = rng.poisson(signal_probe).astype(float)
-signal_probe -= b_est
-
-signal_probe_FT, OM_T, em_lo, em_hi = CFT(T_range,signal_probe,use_window=False)
-signal_probe_FT_mid, em_axis_mid, i0, i1 = extract_midslice(signal_probe_FT, slice_fracts, hbar*OM_T[:,0])
-
-sig_probe_reconstructed_0,_,_,_ = CFT(T_range,signal_probe_FT,use_window=False,inverse=True)
-###
-
-plot_mat(signal_probe_FT)
-
-ilo = floor(0.65*N_T)
-rice_bias = np.mean(np.abs(signal_probe_FT[ilo:,:])**2,axis=0)
-s_rice_bias = np.sum(signal_probe + b_est,axis=0)
-
-plt.plot(rice_bias)
-plt.plot(s_rice_bias)
-plt.show()
-
-print(np.mean(s_rice_bias/rice_bias),np.sqrt(np.var(s_rice_bias/rice_bias)))
-
-###
-signal_probe = np.abs(Amplitude(xuvs,refs,E))**2
-
-signal_probe *= alpha
-signal_probe += b
-signal_probe = rng.poisson(signal_probe).astype(float)
-signal_probe -= b_est
-
-signal_probe_FT, OM_T, em_lo, em_hi = CFT(T_range,signal_probe,use_window=False)
-signal_probe_FT_mid, em_axis_mid, i0, i1 = extract_midslice(signal_probe_FT, slice_fracts, hbar*OM_T[:,0])
-
-sig_probe_reconstructed_0,_,_,_ = CFT(T_range,signal_probe_FT,use_window=False,inverse=True)
-# ###
-
-# plot_mat(signal_probe_FT)
-
-# ilo = floor(0.65*N_T)
-# rice_bias2 = np.mean(np.abs(signal_probe_FT[ilo:,:])**2,axis=0)
-# s_rice_bias2 = np.sum(signal_probe + b_est,axis=0)
-
-# plt.plot(rice_bias)
-# plt.plot(s_rice_bias2)
-# plt.show()
-
-# print(np.mean(s_rice_bias2/rice_bias),np.sqrt(np.var(s_rice_bias2/rice_bias)))
-
-# ###
-# signal_probe = np.abs(Amplitude(xuvs,refprobes,E))**2
-
-# signal_probe *= alpha
-# signal_probe += b
-# signal_probe = rng.poisson(signal_probe).astype(float)
-# signal_probe -= b_est
-
-# signal_probe_FT, OM_T, em_lo, em_hi = CFT(T_range,signal_probe,use_window=False)
-# signal_probe_FT_mid, em_axis_mid, i0, i1 = extract_midslice(signal_probe_FT, slice_fracts, hbar*OM_T[:,0])
-
-# sig_probe_reconstructed_0,_,_,_ = CFT(T_range,signal_probe_FT,use_window=False,inverse=True)
-# ###
-
-# plot_mat(signal_probe_FT)
-
-# ilo = floor(0.65*N_T)
-# rice_bias3 = np.mean(np.abs(signal_probe_FT[ilo:,:])**2,axis=0)
-# s_rice_bias3 = np.sum(signal_probe + b_est,axis=0)
-
-# plt.plot(rice_bias)
-# plt.plot(s_rice_bias3)
-# plt.show()
-
-# print(np.mean(s_rice_bias3/rice_bias),np.sqrt(np.var(s_rice_bias3/rice_bias)))
-
-# plt.plot(rice_bias,label="probe")
-# plt.plot(rice_bias2,label="ref")
-# plt.plot(rice_bias3,label="refprobe")
-# plt.plot(rice_bias3-rice_bias2,label="tot - ref")
-# plt.legend()
-# plt.show()
-
-# plt.plot(s_rice_bias,label="probe")
-# plt.plot(s_rice_bias2,label="ref")
-# plt.plot(s_rice_bias3,label="refprobe")
-# plt.plot(s_rice_bias3-s_rice_bias2+N_T,label="tot - ref")
-# plt.legend()
-# plt.show()
-
-
-mask_em = 0.86
-mask_frac = 0.69
-
-N_em = np.size(em_axis_mid)
-i_mask_em = floor(0.5*(1-(mask_em/em_axis_mid_reach))*N_em)
-
-# amplit_tot_FT_mid[0:i_mask_em,0:floor(mask_frac*N_E)] = 0
-# amplit_tot_FT_mid[N_em-i_mask_em+1:N_em,0:floor(mask_frac*N_E)] = 0
-
 amplit_tot_FT_mid_detrended, spike_only, spike_row_mid = detrend_spike(amplit_tot_FT_mid,em_axis_mid,0,2,plot=False)
 
 # Zero-pad the detrended mid-band to the full (ω, E) grid
 amplit_tot_FT_detrended_full = np.copy(amplit_tot_FT)
 amplit_tot_FT_detrended_full[i0:i1, :] = amplit_tot_FT_mid_detrended
 
-sideband_lo, sideband_hi = floor(0.37*N_T), floor(0.63*N_T)
+# Extent the poissonian noise with rician bias
+sideband_lo, sideband_hi = floor(0.30*N_T), floor(0.7*N_T)
 amplit_tot_FT_detrended_full[sideband_lo:i0,:] = amplit_tot_FT[0:i0-sideband_lo,:]
 amplit_tot_FT_detrended_full[i1:sideband_hi,:] = amplit_tot_FT[N_T-sideband_hi+i1:,:]
 
+# Remove rician bias
 avg_lim1 = floor(0.28*N_T)
 avg_lim2 = floor(0.72*N_T)
 
@@ -1103,24 +937,14 @@ amplit_tot_FT_detrended_full = amp * np.exp(1j*phase)
 
 sig_probe_reconstructed,_,_,_ = CFT(T_range,amplit_tot_FT_detrended_full,use_window=False,inverse=True)
 
-plot_mat(amplit_tot_FT_detrended_full)
-plot_mat(signal_probe_FT)
-
-plot_mat(sig_probe_reconstructed_0)
 plot_mat(sig_probe_reconstructed)
+plot_mat(synth_bsln)
 
-plt.plot(np.mean(np.abs(amplit_tot_FT_detrended_full[0:100,:]),axis=0))
-plt.plot(np.mean(np.abs(signal_probe_FT[0:100,:]),axis=0))
-plt.plot(tot_rician/100)
-plt.show()
+plot_mat((sig_probe_reconstructed - synth_bsln)/np.max(sig_probe_reconstructed))
 
-### Check quality of detrending
-
-meas_baseline = np.sqrt(np.abs(sig_probe_reconstructed))
-analytic_bsln = np.abs(Amplitude(xuvs,probes,E))**2
-analytic_bsln_FT,_,_,_ = CFT(T_range,analytic_bsln,use_window=False)
-
-# plot_mat(analytic_bsln_FT - amplit_tot_FT_detrended_full)
+###
+### XUV PEAK
+###
 
 spike_only = spike_only[spike_row_mid,:]
 
@@ -1159,15 +983,6 @@ plt.show()
 
 ### Prepare
 
-meas_baseline = meas_baseline**2
-meas_baseline = meas_baseline*np.max(synth_bsln)/np.max(meas_baseline)
-
-# meas_baseline = sig_probe_reconstructed_0 * np.max(synth_bsln)/np.max(sig_probe_reconstructed_0)
-
-plot_mat(meas_baseline)
-plot_mat(synth_bsln)
 
 
-plot_mat((meas_baseline - synth_bsln)/np.max(meas_baseline))
-
-sp_rec = reconstruct_WirtFlow(meas_baseline,sp_probe,spike_only,om_probe,om_xuv,T,n_power_iter=50,n_main_iter=10000,mu_step_max=0.01,I_warmup=300,ifplot=50)
+sp_rec = reconstruct_WirtFlow(sig_probe_reconstructed,sp_probe,spike_only,om_probe,om_xuv,T,n_power_iter=50,n_main_iter=10000,mu_step_max=0.01,I_warmup=300,ifplot=50)
