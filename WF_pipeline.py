@@ -1,6 +1,5 @@
 import numpy as np
 from numpy import pi
-from scipy.special import wofz
 import matplotlib.pyplot as plt
 from math import floor
 from scipy.optimize import curve_fit
@@ -10,21 +9,6 @@ from skimage.restoration import denoise_tv_bregman
 
 # Reduced Planck constant in eV*fs (approx CODATA): ħ = 6.582119569e-16 eV·s
 hbar = 6.582119569e-1
-
-def Amplitude_ij(pulse_params_i,pulse_params_j,ene_Eg):
-    tau_i,A_i,om0_i,s_i,phi_i = pulse_params_i
-    tau_j,A_j,om0_j,s_j,phi_j = pulse_params_j
-
-    tau = tau_i - tau_j
-
-    s = np.sqrt(s_i**2+s_j**2)
-    s_t = np.sqrt(s_i**(-2)+s_j**(-2))
-    delta = om0_i + om0_j - ene_Eg/hbar
-    wofz_arg = s_t/np.sqrt(2)*((om0_j-s_j**2/s**2*delta-1j*tau/s_t**2) - ene_Eg/hbar)
-
-    prefactor = (-pi*A_i*A_j/(4*s_i*s_j)*np.exp(-1j*phi_i*np.sign(om0_i))*np.exp(-1j*phi_j*np.sign(om0_j))*np.exp(1j*om0_i*tau)
-                * np.exp(-1/2*( delta**2/s**2 + tau**2/s_t**2 + 2j*s_i/s_j*delta/s*tau/s_t )))
-    return prefactor*wofz(wofz_arg)
 
 def CFT(T_range, signal, use_window=True, inverse=False, zero_pad=0):
     """
@@ -444,42 +428,6 @@ def sp_tot(gausses,om):
         retval += spectrum_fun(a0,om0,s0,om)
     return retval
 
-def spectrum_fun_2d(A,om0,s,OM,TAU):
-    retval = A/(2*s)*np.exp(-(OM-om0)**2/(2*s**2))*np.exp(1j*OM*TAU)
-    return retval  # Positive-freq part
-
-def sp_tot_2d(gausses,OM,TAU):
-    retval = np.zeros_like(OM).astype(complex)
-    for gauss in gausses:
-        _,a0,om0,s0,_ = gauss
-        retval += spectrum_fun_2d(a0,om0,s0,OM,TAU)
-    return retval
-
-def Amplitude(xuvs,refprobes,E,E_spinorbit=0,order=None):
-    n_t, n_e = E.shape
-    amplit_tot = np.zeros((n_t,n_e)).astype(complex)
-
-    xuvs_mod = []
-    for xuv in xuvs:
-        tau_i,A_i,om0_i,s_i,phi_i = xuv
-        xuvs_mod.append((tau_i,A_i,om0_i-E_spinorbit/hbar,s_i,phi_i))
-
-    if order == None:
-        for xuv in xuvs_mod:
-            for rp in refprobes:
-                amplit_tot += Amplitude_ij(xuv,rp,E)
-                amplit_tot += Amplitude_ij(rp,xuv,E)
-    elif order == 1:
-        for xuv in xuvs_mod:
-            for rp in refprobes:
-                amplit_tot += Amplitude_ij(xuv,rp,E)
-    else:
-        for xuv in xuvs_mod:
-            for rp in refprobes:
-                amplit_tot += Amplitude_ij(rp,xuv,E)
-
-    return amplit_tot
-
 def extract_midslice(sig_full,slice_fracts,sliced_range):
     n_t, n_e = sig_full.shape
     mid_emrange_lo, mid_emrange_hi = slice_fracts
@@ -568,63 +516,6 @@ def detrend_spike(sig_mid,row_axis,n_spike_buffer,n_fitting_buffer,above_thresh_
 
     return amplit_tot_FT_mid_detrended, spike_only, spike_row_mid
 
-def rl_deconvolve_nonneg(y, h, n_iter=200, pad_factor=2.0, eps=1e-12, smooth_sigma=0.0):
-    """Richardson–Lucy deconvolution enforcing non-negativity.
-
-    Model: y ≈ h * x (linear convolution), with x ≥ 0.
-
-    Args:
-        y: observed 1D signal (real, preferably non-negative)
-        h: kernel (impulse response); must have sum(h) > 0
-        n_iter: RL iterations (typical 50–300)
-        pad_factor: multiplier for linear conv length before next pow2 (reduces wrap-around)
-        eps: small constant to avoid divide-by-zero
-        smooth_sigma: optional Gaussian smoothing each iteration (in samples) to stabilize
-        center_output: roll so max is centered then crop back to len(y)
-
-    Returns:
-        x_est: non-negative deconvolved estimate of length len(y)
-    """
-    y = np.asarray(y, float)
-    h = np.asarray(h, float)
-    n = y.size
-    m = h.size
-    if n == 0 or m == 0:
-        return np.array([])
-    h_sum = np.sum(h)
-    if h_sum <= 0:
-        raise ValueError("Kernel must have positive sum for RL deconvolution")
-    h = h / h_sum  # flux preservation
-    lin_len = n + m - 1
-    N_fft = int(2 ** np.ceil(np.log2(lin_len * pad_factor)))
-    y_pad = np.zeros(N_fft)
-    h_pad = np.zeros(N_fft)
-    y_pad[:n] = y
-    h_pad[:m] = h
-    H = np.fft.fft(h_pad)
-    H_flip = np.fft.fft(h_pad[::-1])
-    x = np.maximum(y_pad, 0.0) + eps  # init
-    for _ in range(int(n_iter)):
-        conv_x = np.fft.ifft(H * np.fft.fft(x)).real
-        ratio = y_pad / (conv_x + eps)
-        corr = np.fft.ifft(H_flip * np.fft.fft(ratio)).real
-        x *= corr
-        x = np.maximum(x, 0.0)
-        if smooth_sigma > 0.0:
-            from scipy.ndimage import gaussian_filter1d
-            x = gaussian_filter1d(x, smooth_sigma, mode='nearest')
-            x = np.maximum(x, 0.0)
-    x = np.fft.fftshift(x)
-    return x[N_fft//2-n//2:N_fft//2+n//2]
-
-def _roll_center_max(a):
-    a = np.asarray(a)
-    if a.size == 0:
-        return a
-    max_idx = int(np.argmax(a))
-    center_idx = a.size // 2
-    return np.roll(a, center_idx - max_idx)
-
 def synth_baseline(sp_pr,sp_x,om_pr,om_x,T):
 
     phase0 = np.exp(1j*0*T)
@@ -657,48 +548,6 @@ def synth_baseline_hermit(input,sp_x,om_pr,om_x,T):
     conv2 = -conv2/om_pr * np.conjugate(phase1)
 
     return np.sum(conv1 + conv2, axis=0)
-
-# def synth_baseline_hermit(d,bi,omd,ombi,T):
-
-#     phase0 = np.exp(1j*0*T)
-#     phase1 = np.exp(1j*om1*T)
-#     phase2 = np.exp(-1j*om2*T)
-
-#     conv1 = fftconvolve(d*phase0,(bi*phase0)[:,::-1],mode='same',axes=1)
-#     conv1 = (-phase1/omd)*conv1
-
-#     bi_mod = bi*(-phase2/ombi)
-#     conv2 = fftconvolve(d*phase0,bi_mod[:,::-1],mode='same',axes=1)
-
-#     return conv1 + conv2
-
-def synth_baseline_tau(sp1,sp2,om1,om2,tau):
-
-    phase1 = np.exp(1j*om1*tau)
-    phase2 = np.exp(-1j*om2*tau)
-
-    f1 = -(phase1/om1) * sp1
-    f2 = sp2
-    conv = fftconvolve(f1,f2,mode='same')
-
-    # f1 = sp1
-    # f2 = -sp2/om2 * phase2
-    # conv += fftconvolve(f1,f2,mode='same')
-
-    return conv
-
-def synth_baseline_transpose_tau(sp1,sp2,om1,om2,tau):
-
-    phase1 = np.exp(-1j*om1*tau)
-    phase2 = np.exp(1j*om2*tau)
-
-    conv = fftconvolve(sp1,sp2[::-1],mode='same')
-    conv = (-phase1/om1) * conv
-
-    # sp2_mod = sp2*(-phase2/om2)
-    # conv += fftconvolve(sp1,sp2_mod[::-1],mode='same')
-
-    return conv
 
 def plotc(ar):
     plt.plot(np.abs(ar))
@@ -861,7 +710,7 @@ om_xuv = (E/hbar - E_span/hbar/2 - 0.1)[0,:]
 sp_xuv = sp_tot(xuvs,om_xuv)
 
 synth_bsln = np.abs(synth_baseline(sp_probe,sp_xuv,om_probe,om_xuv,T))**2
-synth_bsln = rng.poisson(alpha*(synth_bsln+b)).astype(float) - b
+synth_bsln = rng.poisson(alpha*(synth_bsln)+b).astype(float) - b
 synth_bsln_FT, _, _, _ = CFT(T_range,synth_bsln,use_window=False)
 # CHECKED - PRODUCES SAME AS 'AMPLITUDE'
 
@@ -924,16 +773,59 @@ sideband_lo, sideband_hi = floor(0.30*N_T), floor(0.7*N_T)
 amplit_tot_FT_detrended_full[sideband_lo:i0,:] = amplit_tot_FT[0:i0-sideband_lo,:]
 amplit_tot_FT_detrended_full[i1:sideband_hi,:] = amplit_tot_FT[N_T-sideband_hi+i1:,:]
 
-# Remove rician bias
-avg_lim1 = floor(0.28*N_T)
-avg_lim2 = floor(0.72*N_T)
 
-tot_rician = (np.mean(signal[:avg_lim1,:],axis=0) + np.mean(signal[avg_lim2:,:],axis=0))/2*N_T/25
+
+###
+avg_lim1 = floor(0.2*N_T)
+avg_lim2 = floor(0.8*N_T)
+tot_rician = (np.mean(signal[:avg_lim1,:],axis=0) + np.mean(signal[avg_lim2:,:],axis=0))/2*N_T*(2*T_reach/N_T)**2
+
+nu = np.maximum(0,np.abs(amplit_tot_FT_detrended_full)-np.sqrt(tot_rician))
+r = np.abs(amplit_tot_FT_detrended_full)
+
+from scipy.special import i0,i1
+
+for j in range(N_E):
+    for _ in range(10):
+        nu[:,j] = r[:,j] * i1(2*r[:,j]*nu[:,j]/tot_rician[j]) / i0(2*r[:,j]*nu[:,j]/tot_rician[j])
+
+    if j%100==0:
+        print(j)
+
+amplit_tot_FT_detrended_full2 = nu * np.exp(1j*np.angle(amplit_tot_FT_detrended_full))
+
+
+
+
+# Remove rician bias
+# plt.plot(np.mean(np.abs(amplit_tot_FT_detrended_full[:1000,:])**2 - tot_rician,axis=0))
+# plt.plot(np.mean(np.abs(synth_bsln_FT[:1000,:])**2,axis=0))
+# plt.show()
 
 amp = np.abs(amplit_tot_FT_detrended_full)
 phase = np.angle(amplit_tot_FT_detrended_full)
 amp = np.sqrt(np.maximum(1e-20,amp**2 - tot_rician))
 amplit_tot_FT_detrended_full = amp * np.exp(1j*phase)
+
+pow_ana = np.abs(synth_bsln_FT)**2
+pow_mes = np.abs(amplit_tot_FT_detrended_full)**2
+
+plt.plot(np.mean(pow_ana[:1000,:],axis=0))
+plt.plot(np.mean(pow_mes[:1000,:],axis=0))
+plt.show()
+
+
+pow_ana = np.abs(synth_bsln_FT)**2
+pow_mes2 = np.abs(amplit_tot_FT_detrended_full2)**2
+
+plt.plot(np.mean(pow_ana[:1000,:],axis=0))
+plt.plot(np.mean(pow_mes2[:1000,:],axis=0))
+plt.show()
+
+
+
+
+
 
 sig_probe_reconstructed,_,_,_ = CFT(T_range,amplit_tot_FT_detrended_full,use_window=False,inverse=True)
 
