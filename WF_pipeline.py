@@ -8,6 +8,7 @@ from matplotlib import patheffects as pe
 from skimage.restoration import denoise_tv_bregman
 from scipy.special import i0e, i1e
 from scipy.optimize import brentq
+from scipy.interpolate import RectBivariateSpline
 
 # Reduced Planck constant in eV*fs (approx CODATA): ħ = 6.582119569e-16 eV·s
 hbar = 6.582119569e-1
@@ -301,135 +302,55 @@ def fit_n_gaussians_1d(
     y_vals,
     z_vals,
     n,
-    mask=None,
-    center_bounds=None,
-    width_bounds_frac=(1e-3, 3.0),
-    amp_bounds=(0.0, np.inf),
-    use_weights=True,
-    return_params=False,
-    return_components=False,
-    resample_y=None,
-    use_bounds=True
+    use_weights=False
 ):
-    """Fit a non-negative 1D signal as a sum of n Gaussians.
+    
+    N = y_vals.size
+    y_min, y_max = y_vals[0], y_vals[-1]
+    span_y = y_max - y_min
 
-    Args:
-        y_vals: 1D coordinate array (monotonic preferred)
-        z_vals: 1D data array (ideally non-negative)
-        n: number of Gaussian components
-        mask: optional boolean mask selecting samples to use in the fit
-        center_bounds: tuple (y_min, y_max) for all centers; default is (min(y), max(y))
-        width_bounds_frac: (min_frac, max_frac) of span(y) for s bounds
-        amp_bounds: (A_min, A_max) bounds for amplitudes (default non-negative)
-        use_weights: if True and z_vals >= 0, weight by 1/sqrt(z + eps)
-        return_params: if True, also return fitted parameter vector (3n,)
-        return_components: if True, also return individual Gaussian components as (n, len(y))
 
-    Returns:
-        fit_full: fitted signal on full y grid
-        [params]: optional, flat parameter vector [A1, mu1, s1, ..., An, mun, sn]
-        [components]: optional, array of shape (n, len(y)) with each Gaussian
-    """
-    y = np.asarray(y_vals).ravel()
-    z = np.asarray(z_vals).ravel()
-    if y.size != z.size:
-        raise ValueError("y_vals and z_vals must have the same length")
-    N = y.size
-    if N == 0 or int(n) <= 0:
-        return (np.zeros_like(z),) if not return_params and not return_components else (np.zeros_like(z), np.array([]))
+    # Initial guesses: centers at max, amps from local sampling, widths as span fraction
+    # mu0s = np.linspace(y_min, y_max, int(n) + 2)[1:-1]
+    mu0s = np.ones(n)*y_vals[np.argmax(z_vals)]
+    A0s = np.ones(n)*np.max(z_vals)/n
+    # A0s = []
+    # for mu0 in mu0s:
+    #     idx = int(np.clip(np.searchsorted(y_vals, mu0), 0, N-1))
+    #     A0s.append(max(z_vals[idx], 1e-12))
+    # A0s = np.asarray(A0s)
 
-    # Select samples
-    if mask is not None:
-        mask = np.asarray(mask, bool)
-        if mask.size != N:
-            raise ValueError("mask must have the same length as y_vals")
-        y_fit = y[mask]
-        z_fit = z[mask]
-    else:
-        y_fit = y
-        z_fit = z
+    s0 = 0.1 * span_y
 
-    # Bounds
-    y_min = float(np.min(y))
-    y_max = float(np.max(y))
-    span_y = max(y_max - y_min, 1e-12)
-    if center_bounds is None:
-        center_bounds = (y_min, y_max)
-    min_s = max(float(width_bounds_frac[0]) * span_y, 1e-12)
-    max_s = max(float(width_bounds_frac[1]) * span_y, min_s)
 
-    # Initial guesses: centers evenly spaced, amps from local sampling, widths as span fraction
-    mu0s = np.linspace(y_min, y_max, int(n) + 2)[1:-1]
-    # Sample z at nearest indices for initial amplitudes
-    if y_max > y_min:
-        A0s = []
-        for mu0 in mu0s:
-            idx = int(np.clip(np.searchsorted(y, mu0), 0, N-1))
-            A0s.append(max(z[idx], 1e-12))
-        A0s = np.asarray(A0s)
-    else:
-        A0s = np.full(int(n), max(np.median(np.abs(z_fit)), 1e-12))
-    s0 = 0.1 * span_y if span_y > 0 else 1.0
     theta0 = []
-    lb = []
-    ub = []
     for k in range(int(n)):
         theta0.extend([float(A0s[k]), float(mu0s[k]), float(s0)])
-        lb.extend([float(amp_bounds[0]), float(center_bounds[0]), float(min_s)])
-        ub.extend([float(amp_bounds[1]), float(center_bounds[1]), float(max_s)])
     theta0 = np.asarray(theta0)
-    lb = np.asarray(lb)
-    ub = np.asarray(ub)
 
     # Weights (optional): Poisson-like -> sigma ~ sqrt(z + eps)
     sigma = None
-    if use_weights and np.all(z_fit >= 0):
+    if use_weights:
         eps = 1e-12
-        sigma = np.sqrt(z_fit + eps)
+        sigma = np.sqrt(np.abs(z_vals + eps))
         # Avoid zero sigma
         sigma[sigma < 1e-12] = 1e-12
 
-    if use_bounds:
-        popt, _ = curve_fit(
-            _sum_n_gauss1d,
-            y_fit,
-            z_fit,
-            p0=theta0,
-            bounds=(lb, ub),
-            sigma=sigma,
-            absolute_sigma=False,
-            # maxfev=200000,
-        )
-    else:
-        popt, _ = curve_fit(
-            _sum_n_gauss1d,
-            y_fit,
-            z_fit,
-            p0=theta0,
-            sigma=sigma,
-            absolute_sigma=False,
-            # maxfev=200000,
-        )
+    popt, _ = curve_fit(
+        _sum_n_gauss1d,
+        y_vals,
+        z_vals,
+        p0=theta0,
+        sigma=sigma,
+        absolute_sigma=False,
+        maxfev=1000000,
+    )
 
-    # Evaluate on full grid
-    if resample_y is not None:
-        fit_full = _sum_n_gauss1d(resample_y, *popt)
-    else:
-        fit_full = _sum_n_gauss1d(y, *popt)
-    if not return_components and not return_params:
-        return fit_full
-
+    fit_full = _sum_n_gauss1d(y_vals, *popt)
     out = [fit_full]
-    if return_params:
-        out.append(popt)
-    if return_components:
-        comps = np.zeros((int(n), y.size))
-        for k in range(int(n)):
-            A, mu, s = popt[3*k:3*k+3]
-            comps[k] = A * np.exp(-0.5 * ((y - mu) / s) ** 2)
-        out.append(comps)
-    return tuple(out)
+    out.append(popt)
 
+    return tuple(out)
 
 def spectrum_fun(A,om0,s,om):
     retval = A/(2*s)*np.exp(-(om-om0)**2/(2*s**2))
@@ -578,7 +499,7 @@ def nfit_params_to_probes(params):
 def reconstruct_WirtFlow(sig_measrd,sp_probe,sp_xuv,om_probe,om_xuv,T,
                          n_power_iter=50,n_main_iter=10000,mu_step_max=0.06,I_warmup=1000,ifplot=50):
 
-    n_e, n_t = sig_measrd.shape
+    n_t, n_e = sig_measrd.shape
 
     w = np.ones((n_e,)).astype(complex) / np.sqrt(n_e)
 
@@ -662,6 +583,27 @@ def clip_amplitude(sig,c0,c1):
     phase = np.angle(sig)
     return np.clip(amp,c0,c1)*np.exp(1j*phase)
 
+def threshold_noise(M_obs, mean_noise_power):
+    n_t, n_e = M_obs.shape
+    # 1. Derive sigma from Mean Noise Power (2s^2)
+    # sigma = sqrt( Power / 2 )
+    sigma = np.sqrt(mean_noise_power / 2.0)
+    
+    # 2. Calculate the Noise Floor (The Expected Mean of Pure Noise)
+    # Floor = sigma * sqrt(pi/2)
+    noise_floor = sigma * np.sqrt(np.pi / 2.0)
+
+    A_est = np.zeros_like(M_obs)
+    # 3. Iterate through data
+    for j in range(n_e):
+        for i, m in enumerate(M_obs[:,j]):
+            # Case 1: Signal is below or equal to the noise floor
+            if m <= noise_floor[j]:
+                A_est[i,j] = 0.0
+            else:
+                A_est[i,j] = m
+    return A_est
+
 def koay_basser_correction(M_obs, mean_noise_power):
     """
     Removes Rician bias using the Koay-Basser inversion method.
@@ -726,6 +668,122 @@ def koay_basser_correction(M_obs, mean_noise_power):
 
     return A_est if len(A_est) > 1 else A_est[0]
 
+def modulating_function_multi(om_t,ene_Eg,pulse_params_x,probes,big_sigma=0):
+    ###
+    ### MODULATING FUNCTION NEEDS TO TAKE INTO ACCOUNT FT WINDOW IF USED (not done)
+
+    tau_x,A_x,om0_x,s_x,phi_x = pulse_params_x
+
+    retval = 0
+    A_tot = 0
+
+    for probe in probes:
+        tau_p,A_p,om0_p,s_p,phi_p = probe
+        s_pp = s_p+big_sigma
+
+        # Frequency-domain widths combine as s = sqrt(s_x^2 + s_p^2)
+        s = np.sqrt(s_x**2 + s_pp**2)
+        # Time-domain width for the cross term (amplitude-level) combines as
+        # s_t = sqrt(1/s_x^2 + 1/s_p^2)
+        s_t = np.sqrt(1/s_x**2 + 1/s_pp**2)
+
+        delta_p = om0_x + om0_p - ene_Eg/hbar
+        # Center of the ω_t Gaussian for the cross term in the amplitude model
+        # Derived form: om_t center at -delta_E, where
+        # delta_E = om0_x - ene_Eg/hbar - (s_x^2/s^2) * delta_p
+        delta_E = om0_x - ene_Eg/hbar - (s_x**2/s**2) * delta_p
+
+        # Use amplitude detuning factor (delta_p/s)^2, and ω_t Gaussian centered at -delta_E
+        retval += A_p/(s_pp) * np.exp(-0.5*((delta_p/s)**2 + (s_t * (om_t + delta_E))**2))
+
+    return retval
+
+def correcting_function_multi(om_t,ene_Eg,pulse_params_x,probes,dzeta=1e-3):
+    tau_x,A_x,om0_x,s_x,phi_x = pulse_params_x
+    mod_plus = modulating_function_multi(om_t,ene_Eg,pulse_params_x,probes)
+    err_area_plus = np.where(mod_plus<dzeta)
+    mod_plus[err_area_plus] = 1
+    mod2_plus = modulating_function_multi(om_t,ene_Eg,pulse_params_x,probes,big_sigma=1000)
+
+    correction_plus = om_t*mod2_plus/mod_plus
+    correction_plus[err_area_plus] = 0
+    return correction_plus
+
+def new_Sig_cc_interp(re_spline, im_spline, om_t_vals, Ef_vals, grid=None):
+    """
+    Evaluate the cubic splines.
+    - If om_t_vals and Ef_vals are 1D arrays and grid=True/None: returns a 2D grid evaluation.
+    - If om_t_vals and Ef_vals are 2D arrays (meshgrid): evaluates pointwise on that mesh.
+    - Otherwise, broadcasting rules are applied and evaluated pointwise.
+    """
+    om_t_vals = np.asarray(om_t_vals)
+    Ef_vals = np.asarray(Ef_vals)
+
+    # Case 1: 1D axes -> grid evaluation
+    if om_t_vals.ndim == 1 and Ef_vals.ndim == 1 and (grid is None or grid is True):
+        re = re_spline(om_t_vals, Ef_vals, grid=True)
+        im = im_spline(om_t_vals, Ef_vals, grid=True)
+        return re + 1j * im
+
+    # Case 2: meshgrid or arbitrary broadcastable arrays -> pointwise evaluation
+    om_b, ef_b = np.broadcast_arrays(om_t_vals, Ef_vals)
+    re = re_spline.ev(om_b.ravel(), ef_b.ravel()).reshape(om_b.shape)
+    im = im_spline.ev(om_b.ravel(), ef_b.ravel()).reshape(om_b.shape)
+    return re + 1j * im
+
+def resample(spec_corrected,rho_hi,rho_lo,om_ref,E,OM_T,N_NEW):
+
+    rho_valrange = rho_hi-rho_lo
+
+    new_Ef_min = rho_lo + hbar*om_ref
+    new_Ef_max = rho_hi + hbar*om_ref
+
+    new_omt_min = om_ref - rho_valrange/hbar
+    new_omt_max = om_ref + rho_valrange/hbar
+
+    idx_min = np.argmin(np.abs(new_Ef_min-E[0,:]))
+    idx_max = np.argmin(np.abs(new_Ef_max-E[0,:]))
+
+    idy_min = np.argmin(np.abs(new_omt_min-OM_T[:,0]))
+    idy_max = np.argmin(np.abs(new_omt_max-OM_T[:,0]))
+
+    extent = [E[0,idx_min], E[0,idx_max], hbar*OM_T[idy_min,0], hbar*OM_T[idy_max,0]]
+
+    small_sig = spec_corrected[idy_min:idy_max,idx_min:idx_max]
+
+    # Use the actual sampled axes from the selected window to avoid half-bin shifts
+    Ef_range = E[0, idx_min:idx_max]
+    omt_range = OM_T[idy_min:idy_max, 0]
+
+    re_spline = RectBivariateSpline(omt_range*hbar, Ef_range, np.real(small_sig), kx=3, ky=3, s=0)
+    im_spline = RectBivariateSpline(omt_range*hbar, Ef_range, np.imag(small_sig), kx=3, ky=3, s=0)
+
+    # Create grid directly in the desired (e1, e2) coordinates
+    # Both e1 and e2 should range over [rho_lo, rho_hi] in the OUTPUT
+    e1_range = np.linspace(rho_lo, rho_hi, N_NEW)
+    e2_range = np.linspace(rho_lo, rho_hi, N_NEW)
+    
+    E1, E2 = np.meshgrid(e1_range, e2_range, indexing='ij')
+    
+    # Inverse transformation to get (ℏ·ωt, Ef) for spline evaluation
+    # Desired: e1 = Ef - ℏ·ωt, e2 = Ef (in the final rotated frame)
+    # But the spline is defined on the ORIGINAL (ℏ·ωt, Ef) coordinates
+    # where Ef is shifted by hbar*om_ref relative to the rho scale
+    # 
+    # The mapping should be:
+    # Ef_spline = e2 + hbar*om_ref (shift e2 to spline's Ef domain)
+    # ℏ·ωt_spline = Ef_spline - e1 = (e2 + hbar*om_ref) - e1
+    EPS1 = E2 - E1 + hbar*om_ref  # This is ℏ·ωt (first argument to spline)
+    EPS2 = E2 + hbar*om_ref       # This is Ef (second argument to spline)
+
+    Sig_cc_cubic_mesh = new_Sig_cc_interp(re_spline, im_spline, EPS1, EPS2)
+
+    Sig_cc_cubic_mesh = 1/2*(Sig_cc_cubic_mesh + np.conjugate(Sig_cc_cubic_mesh.T))
+
+    Sig_cc_cubic_mesh = Sig_cc_cubic_mesh/np.sum(np.diag(np.abs(Sig_cc_cubic_mesh)))
+
+    return Sig_cc_cubic_mesh, small_sig, extent, [idy_min,idy_max,idx_min,idx_max]
+
 ###
 ### FIELD PARAMETERS
 ###
@@ -735,7 +793,7 @@ E_hi = 63.5
 T_reach = 100
 E_span = E_hi-E_lo
 
-N_E = 1000
+N_E = 300
 N_T = 1000
 
 E_range = np.linspace(E_lo,E_hi,N_E)
@@ -784,7 +842,7 @@ refprobes = tuple(list(refs) + list(probes))
 ifnoise = True
 rng = np.random.default_rng()
 # alpha = 0.1e-2
-alpha = 0.1e-1
+alpha = 1
 b = 1
 
 # Synthetic baseline with known spectra
@@ -862,30 +920,27 @@ amplit_tot_FT_detrended_full[i1:sideband_hi,:] = amplit_tot_FT[N_T-sideband_hi+i
 ### KOAY-BASSER FULL SIGNAL CORRECTION
 ###
 
-tot_rician = np.sum(signal+b,axis=0)
+tot_rician_full = np.sum(signal+b,axis=0)
 
-# --- Decompose RL reconstruction as a sum of n Gaussians and plot ---
-n_comp = 15
-# Use non-negative target for Gaussian fit
-tot_rician_fit, fit_params = fit_n_gaussians_1d(
-    y_vals=om_probe,
-    z_vals=tot_rician,
-    n=n_comp,
-    return_params=True,
-    return_components=False,
-    use_weights=False,
-    use_bounds=False
-)
+# # --- Decompose RL reconstruction as a sum of n Gaussians and plot ---
+# n_comp = 6
+# # Use non-negative target for Gaussian fit
+# tot_rician_fit, fit_params = fit_n_gaussians_1d(
+#     y_vals=om_probe,
+#     z_vals=tot_rician,
+#     n=n_comp
+# )
 
-plt.plot(tot_rician)
-plt.plot(tot_rician_fit)
-plt.show()
+# plt.plot(tot_rician)
+# plt.plot(tot_rician_fit)
+# plt.show()
 
 amp_corr = np.zeros_like(amplit_tot_FT)
 
 for j in range(N_E):
     col_now = np.abs(amplit_tot_FT[:,j])
-    bias_now = tot_rician_fit[j]
+    # bias_now = tot_rician_fit[j]
+    bias_now = tot_rician_full[j]
     amp_corr_now = koay_basser_correction(col_now,bias_now)
     amp_corr[:,j] = amp_corr_now
     if j%100==0:
@@ -900,8 +955,6 @@ plot_mat(amplit_tot_FT+1e-20)
 ### KOAY-BASSER PROBE SIGNAL CORRECTION
 ###
 
-plot_mat(amplit_tot_FT_detrended_full)
-
 avg_lim1 = floor(0.2*N_T)
 avg_lim2 = floor(0.8*N_T)
 tot_rician = (np.mean(signal[:avg_lim1,:],axis=0) + np.mean(signal[avg_lim2:,:],axis=0))/2*N_T*(2*T_reach/N_T)**2
@@ -912,10 +965,7 @@ n_comp = 1
 tot_rician_fit, _ = fit_n_gaussians_1d(
     y_vals=om_xuv,
     z_vals=tot_rician,
-    n=n_comp,
-    return_params=True,
-    return_components=False,
-    use_weights=False,
+    n=n_comp
 )
 
 amp_corr = np.zeros_like(amplit_tot_FT_detrended_full)
@@ -940,8 +990,8 @@ plt.show()
 
 sig_probe_reconstructed,_,_,_ = CFT(T_range,amplit_tot_FT_detrended_full,use_window=False,inverse=True)
 
-plot_mat(sig_probe_reconstructed)
-plot_mat(synth_bsln)
+# plot_mat(sig_probe_reconstructed)
+# plot_mat(synth_bsln)
 
 plot_mat((sig_probe_reconstructed - synth_bsln)/np.max(sig_probe_reconstructed))
 
@@ -960,10 +1010,7 @@ n_comp = 1
 fit_gauss, fit_params = fit_n_gaussians_1d(
     y_vals=om_xuv,
     z_vals=spike_only,
-    n=n_comp,
-    return_params=True,
-    return_components=False,
-    use_weights=False,
+    n=n_comp
 )
 rescale = np.max(sp_xuv)/np.max(fit_gauss)
 fit_gauss = fit_gauss*rescale
@@ -974,37 +1021,55 @@ idx_spk = int(np.argmax(fit_gauss))
 shift_cols = idx_xuv - idx_spk
 fit_gauss = np.roll(fit_gauss, shift_cols)
 
-plt.plot(sp_xuv/rescale)
-plt.plot(fit_gauss/rescale,linewidth=1,linestyle='-')
-plt.plot(spike_only,linewidth=0.7)
-plt.show()
+# plt.plot(sp_xuv/rescale)
+# plt.plot(fit_gauss/rescale,linewidth=1,linestyle='-')
+# plt.plot(spike_only,linewidth=0.7)
+# plt.show()
 
 ###
 ### RETRIEVE PROBE SPECTRUM
 ###
 
-sp_rec = reconstruct_WirtFlow(sig_probe_reconstructed,sp_probe,fit_gauss,om_probe,om_xuv,T,n_power_iter=50,n_main_iter=400,mu_step_max=0.01,I_warmup=300,ifplot=50)
+plot_mat(clip_amplitude(amplit_tot_FT,0,np.max(np.abs(amplit_tot_FT)/4)))
+
+amplit_tot_FT_re = np.real(amplit_tot_FT)
+amplit_tot_FT_im = np.imag(amplit_tot_FT)
+
+amplit_tot_FT_re = denoise_tv_bregman(amplit_tot_FT_re,weight=2)
+amplit_tot_FT_im = denoise_tv_bregman(amplit_tot_FT_im,weight=2)
+
+amplit_tot_FT_tv = amplit_tot_FT_re + 1j*amplit_tot_FT_im
+
+### perhaps after denoising we can squeeze more out of the regions right on the edge of signal/noise. Have to keep discarding pure noise for regularizing spectrum correction
+amp_tv = threshold_noise(np.abs(amplit_tot_FT_tv),tot_rician_full)
+amplit_tot_FT_tv = amp_tv * np.exp(1j*np.angle(amplit_tot_FT_tv))
+
+plot_mat(clip_amplitude(amplit_tot_FT_tv,0,np.max(np.abs(amplit_tot_FT)/4)))
+
+file = './rec_spectra/sp_probe.npy'
+
+sp_rec = reconstruct_WirtFlow(sig_probe_reconstructed,sp_probe,fit_gauss,om_probe,om_xuv,T,n_power_iter=50,n_main_iter=5000,mu_step_max=0.01,I_warmup=300,ifplot=50)
+np.save(file,sp_rec)
+
+sp_rec = np.load(file)
 
 # --- Decompose RL reconstruction as a sum of n Gaussians and plot ---
 n_comp = 12
 om_grid = om_probe
 # Use non-negative target for Gaussian fit
 
-z_target = sp_rec
+z_target = np.real(sp_rec)
 
 fit_gauss, fit_params = fit_n_gaussians_1d(
     y_vals=om_grid,
     z_vals=z_target,
-    n=n_comp,
-    return_params=True,
-    return_components=False,
-    use_weights=False,
+    n=n_comp
 )
 
 probes_reconstructed = nfit_params_to_probes(fit_params)
 
 plt.figure()
-plt.plot(om_grid*hbar, normalize_abs(z_target), label='RL target')
+plt.plot(om_grid*hbar, normalize_abs(z_target), label='WF target')
 plt.plot(om_grid*hbar, normalize_abs(fit_gauss), label=f'{n_comp}-Gaussian fit')
 plt.plot(om_grid*hbar, normalize_abs(sp_probe), label='True spectrum')
 plt.xlabel('E - E0')
@@ -1013,3 +1078,37 @@ plt.title('n-Gaussian decomposition of RL reconstruction')
 plt.legend()
 plt.tight_layout()
 plt.show()
+
+correction = correcting_function_multi(OM_T,E,pulse_xuv,probes,dzeta=1e-8)
+amplit_tot_FT_corrected = correction*amplit_tot_FT
+
+correction = correcting_function_multi(OM_T,E,pulse_xuv,probes,dzeta=1e-8)
+amplit_tot_FT_corrected = correction*amplit_tot_FT_tv
+
+correction_rec = correcting_function_multi(OM_T,E,pulse_xuv,probes_reconstructed,dzeta=1e-8)
+amplit_tot_FT_corrected_rec = correction_rec*amplit_tot_FT_tv
+
+
+###
+### RESAMPLE AND ANALYZE
+###
+
+rho_lo = 59.6
+rho_hi = 61.4
+rho_reconstructed, amplit_tot_FT_corrected_small, extent_small, idxs_small = resample(amplit_tot_FT_corrected,rho_hi,rho_lo,om_ref,E,OM_T,N_T)
+
+rho_lo = 59.6
+rho_hi = 61.4
+rho_reconstructed_rec, amplit_tot_FT_corrected_small_rec, extent_small, idxs_small = resample(amplit_tot_FT_corrected_rec,rho_hi,rho_lo,om_ref,E,OM_T,N_T)
+
+plot_mat(rho_reconstructed,extent=[rho_lo,rho_hi,rho_lo,rho_hi],cmap='plasma',
+         mode='abs',saveloc='newims/uncorr.png',xlabel='Energy [eV]',ylabel='Energy [eV]',
+         title='Rho ideally corrected for the probe spectrum')
+
+plot_mat(rho_reconstructed,extent=[rho_lo,rho_hi,rho_lo,rho_hi],cmap='plasma',
+         mode='abs',saveloc='newims/uncorr.png',xlabel='Energy [eV]',ylabel='Energy [eV]',
+         title='Rho TV and ideally corrected for the probe spectrum')
+
+plot_mat(rho_reconstructed_rec,extent=[rho_lo,rho_hi,rho_lo,rho_hi],cmap='plasma',
+         mode='abs',saveloc='newims/uncorr.png',xlabel='Energy [eV]',ylabel='Energy [eV]',
+         title='Rho TV and WF corrected for the probe spectrum')
