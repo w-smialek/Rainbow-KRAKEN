@@ -783,7 +783,8 @@ refprobes = tuple(list(refs) + list(probes))
 
 ifnoise = True
 rng = np.random.default_rng()
-alpha = 0.1e-2
+# alpha = 0.1e-2
+alpha = 0.1e-1
 b = 1
 
 # Synthetic baseline with known spectra
@@ -982,7 +983,7 @@ plt.show()
 ### RETRIEVE PROBE SPECTRUM
 ###
 
-sp_rec = reconstruct_WirtFlow(sig_probe_reconstructed,sp_probe,fit_gauss,om_probe,om_xuv,T,n_power_iter=50,n_main_iter=1400,mu_step_max=0.01,I_warmup=300,ifplot=50)
+sp_rec = reconstruct_WirtFlow(sig_probe_reconstructed,sp_probe,fit_gauss,om_probe,om_xuv,T,n_power_iter=50,n_main_iter=400,mu_step_max=0.01,I_warmup=300,ifplot=50)
 
 # --- Decompose RL reconstruction as a sum of n Gaussians and plot ---
 n_comp = 12
