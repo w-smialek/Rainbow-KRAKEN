@@ -6,6 +6,8 @@ from scipy.optimize import curve_fit
 from scipy.signal import fftconvolve
 from matplotlib import patheffects as pe
 from skimage.restoration import denoise_tv_bregman
+from scipy.special import i0e, i1e
+from scipy.optimize import brentq
 
 # Reduced Planck constant in eV*fs (approx CODATA): ħ = 6.582119569e-16 eV·s
 hbar = 6.582119569e-1
@@ -306,7 +308,8 @@ def fit_n_gaussians_1d(
     use_weights=True,
     return_params=False,
     return_components=False,
-    resample_y=None
+    resample_y=None,
+    use_bounds=True
 ):
     """Fit a non-negative 1D signal as a sum of n Gaussians.
 
@@ -386,16 +389,27 @@ def fit_n_gaussians_1d(
         # Avoid zero sigma
         sigma[sigma < 1e-12] = 1e-12
 
-    popt, _ = curve_fit(
-        _sum_n_gauss1d,
-        y_fit,
-        z_fit,
-        p0=theta0,
-        bounds=(lb, ub),
-        sigma=sigma,
-        absolute_sigma=False,
-        maxfev=200000,
-    )
+    if use_bounds:
+        popt, _ = curve_fit(
+            _sum_n_gauss1d,
+            y_fit,
+            z_fit,
+            p0=theta0,
+            bounds=(lb, ub),
+            sigma=sigma,
+            absolute_sigma=False,
+            # maxfev=200000,
+        )
+    else:
+        popt, _ = curve_fit(
+            _sum_n_gauss1d,
+            y_fit,
+            z_fit,
+            p0=theta0,
+            sigma=sigma,
+            absolute_sigma=False,
+            # maxfev=200000,
+        )
 
     # Evaluate on full grid
     if resample_y is not None:
@@ -555,6 +569,12 @@ def plotc(ar):
     plt.plot(np.imag(ar),linewidth=0.8)
     plt.show()
 
+def nfit_params_to_probes(params):
+    probes = []
+    for k in range(len(params)//3):
+        probes.append((T,params[3*k],params[3*k+1],params[3*k+2],0))
+    return tuple(probes)
+
 def reconstruct_WirtFlow(sig_measrd,sp_probe,sp_xuv,om_probe,om_xuv,T,
                          n_power_iter=50,n_main_iter=10000,mu_step_max=0.06,I_warmup=1000,ifplot=50):
 
@@ -641,6 +661,70 @@ def clip_amplitude(sig,c0,c1):
     amp = np.abs(sig)
     phase = np.angle(sig)
     return np.clip(amp,c0,c1)*np.exp(1j*phase)
+
+def koay_basser_correction(M_obs, mean_noise_power):
+    """
+    Removes Rician bias using the Koay-Basser inversion method.
+    
+    Parameters:
+    -----------
+    M_obs : float or array-like
+        The observed magnitude (SPD amplitude).
+    mean_noise_power : float
+        The known bias in the power domain (2*sigma^2).
+        
+    Returns:
+    --------
+    A_est : float or array-like
+        The corrected signal amplitude.
+    """
+    # 1. Derive sigma from Mean Noise Power (2s^2)
+    # sigma = sqrt( Power / 2 )
+    sigma = np.sqrt(mean_noise_power / 2.0)
+    
+    # 2. Calculate the Noise Floor (The Expected Mean of Pure Noise)
+    # Floor = sigma * sqrt(pi/2)
+    noise_floor = sigma * np.sqrt(np.pi / 2.0)
+    
+    # Handle array inputs
+    M_obs = np.atleast_1d(M_obs)
+    A_est = np.zeros_like(M_obs)
+    
+    # Define the objective function for root finding
+    # We solve for SNR_A (A/sigma) to keep numbers well-scaled
+    def rician_mean_eq(snr_a, snr_m_target):
+        # y = (A^2) / (4*sigma^2) = snr_a^2 / 4
+        y = (snr_a**2) / 4.0
+        
+        # Theoretical Mean / sigma
+        # Using exponentially scaled Bessel functions (i0e, i1e) to prevent overflow
+        # The exp(-y) term cancels out with the scaling of i0e and i1e
+        f_val = np.sqrt(np.pi / 2.0) * ((1 + 2*y) * i0e(y) + 2*y * i1e(y))
+        
+        return f_val - snr_m_target
+
+    # 3. Iterate through data
+    for i, m in enumerate(M_obs):
+        # Case 1: Signal is below or equal to the noise floor
+        if m <= noise_floor:
+            A_est[i] = 0.0
+        
+        # Case 2: Signal is above noise floor -> Invert the function
+        else:
+            current_snr_m = m / sigma
+            
+            # Use Brent's method to find the root.
+            # Lower bound 0, Upper bound usually just needs to be high enough.
+            # Since M > A usually, current_snr_m is a safe heuristic upper bound 
+            # for the search, but we add a buffer for safety.
+            try:
+                root_snr = brentq(rician_mean_eq, 0, current_snr_m * 2, args=(current_snr_m,))
+                A_est[i] = root_snr * sigma
+            except ValueError:
+                # Fallback if convergence fails (rare)
+                A_est[i] = m 
+
+    return A_est if len(A_est) > 1 else A_est[0]
 
 ###
 ### FIELD PARAMETERS
@@ -773,39 +857,78 @@ sideband_lo, sideband_hi = floor(0.30*N_T), floor(0.7*N_T)
 amplit_tot_FT_detrended_full[sideband_lo:i0,:] = amplit_tot_FT[0:i0-sideband_lo,:]
 amplit_tot_FT_detrended_full[i1:sideband_hi,:] = amplit_tot_FT[N_T-sideband_hi+i1:,:]
 
+###
+### KOAY-BASSER FULL SIGNAL CORRECTION
+###
 
+tot_rician = np.sum(signal+b,axis=0)
+
+# --- Decompose RL reconstruction as a sum of n Gaussians and plot ---
+n_comp = 15
+# Use non-negative target for Gaussian fit
+tot_rician_fit, fit_params = fit_n_gaussians_1d(
+    y_vals=om_probe,
+    z_vals=tot_rician,
+    n=n_comp,
+    return_params=True,
+    return_components=False,
+    use_weights=False,
+    use_bounds=False
+)
+
+plt.plot(tot_rician)
+plt.plot(tot_rician_fit)
+plt.show()
+
+amp_corr = np.zeros_like(amplit_tot_FT)
+
+for j in range(N_E):
+    col_now = np.abs(amplit_tot_FT[:,j])
+    bias_now = tot_rician_fit[j]
+    amp_corr_now = koay_basser_correction(col_now,bias_now)
+    amp_corr[:,j] = amp_corr_now
+    if j%100==0:
+        print(j)
+
+phase = np.angle(amplit_tot_FT)
+amplit_tot_FT = amp_corr * np.exp(1j*phase)
+
+plot_mat(amplit_tot_FT+1e-20)
 
 ###
+### KOAY-BASSER PROBE SIGNAL CORRECTION
+###
+
+plot_mat(amplit_tot_FT_detrended_full)
+
 avg_lim1 = floor(0.2*N_T)
 avg_lim2 = floor(0.8*N_T)
 tot_rician = (np.mean(signal[:avg_lim1,:],axis=0) + np.mean(signal[avg_lim2:,:],axis=0))/2*N_T*(2*T_reach/N_T)**2
 
-nu = np.maximum(0,np.abs(amplit_tot_FT_detrended_full)-np.sqrt(tot_rician))
-r = np.abs(amplit_tot_FT_detrended_full)
+# --- Decompose RL reconstruction as a sum of n Gaussians and plot ---
+n_comp = 1
+# Use non-negative target for Gaussian fit
+tot_rician_fit, _ = fit_n_gaussians_1d(
+    y_vals=om_xuv,
+    z_vals=tot_rician,
+    n=n_comp,
+    return_params=True,
+    return_components=False,
+    use_weights=False,
+)
 
-from scipy.special import i0,i1
+amp_corr = np.zeros_like(amplit_tot_FT_detrended_full)
 
 for j in range(N_E):
-    for _ in range(10):
-        nu[:,j] = r[:,j] * i1(2*r[:,j]*nu[:,j]/tot_rician[j]) / i0(2*r[:,j]*nu[:,j]/tot_rician[j])
-
+    col_now = np.abs(amplit_tot_FT_detrended_full[:,j])
+    bias_now = tot_rician_fit[j]
+    amp_corr_now = koay_basser_correction(col_now,bias_now)
+    amp_corr[:,j] = amp_corr_now
     if j%100==0:
         print(j)
 
-amplit_tot_FT_detrended_full2 = nu * np.exp(1j*np.angle(amplit_tot_FT_detrended_full))
-
-
-
-
-# Remove rician bias
-# plt.plot(np.mean(np.abs(amplit_tot_FT_detrended_full[:1000,:])**2 - tot_rician,axis=0))
-# plt.plot(np.mean(np.abs(synth_bsln_FT[:1000,:])**2,axis=0))
-# plt.show()
-
-amp = np.abs(amplit_tot_FT_detrended_full)
 phase = np.angle(amplit_tot_FT_detrended_full)
-amp = np.sqrt(np.maximum(1e-20,amp**2 - tot_rician))
-amplit_tot_FT_detrended_full = amp * np.exp(1j*phase)
+amplit_tot_FT_detrended_full = amp_corr * np.exp(1j*phase)
 
 pow_ana = np.abs(synth_bsln_FT)**2
 pow_mes = np.abs(amplit_tot_FT_detrended_full)**2
@@ -813,19 +936,6 @@ pow_mes = np.abs(amplit_tot_FT_detrended_full)**2
 plt.plot(np.mean(pow_ana[:1000,:],axis=0))
 plt.plot(np.mean(pow_mes[:1000,:],axis=0))
 plt.show()
-
-
-pow_ana = np.abs(synth_bsln_FT)**2
-pow_mes2 = np.abs(amplit_tot_FT_detrended_full2)**2
-
-plt.plot(np.mean(pow_ana[:1000,:],axis=0))
-plt.plot(np.mean(pow_mes2[:1000,:],axis=0))
-plt.show()
-
-
-
-
-
 
 sig_probe_reconstructed,_,_,_ = CFT(T_range,amplit_tot_FT_detrended_full,use_window=False,inverse=True)
 
@@ -840,15 +950,7 @@ plot_mat((sig_probe_reconstructed - synth_bsln)/np.max(sig_probe_reconstructed))
 
 spike_only = spike_only[spike_row_mid,:]
 
-spike_only = np.sqrt(np.abs(spike_only))
-
-# Align spike_only's maximum (along energy) with sp_xuv's maximum
-idx_xuv = int(np.argmax(sp_xuv))
-idx_spk = int(np.argmax(spike_only))
-shift_cols = idx_xuv - idx_spk
-spike_only = np.roll(spike_only, shift_cols)
-
-spike_only = spike_only*np.max(sp_xuv)/np.max(spike_only)
+spike_only = np.sqrt(np.abs(spike_only)) * np.sign(spike_only)
 
 # --- Decompose RL reconstruction as a sum of n Gaussians and plot ---
 n_comp = 1
@@ -862,19 +964,51 @@ fit_gauss, fit_params = fit_n_gaussians_1d(
     return_components=False,
     use_weights=False,
 )
+rescale = np.max(sp_xuv)/np.max(fit_gauss)
+fit_gauss = fit_gauss*rescale
 
-plt.plot(sp_xuv)
+# Align fit_gauss's maximum (along energy) with sp_xuv's maximum
+idx_xuv = int(np.argmax(sp_xuv))
+idx_spk = int(np.argmax(fit_gauss))
+shift_cols = idx_xuv - idx_spk
+fit_gauss = np.roll(fit_gauss, shift_cols)
+
+plt.plot(sp_xuv/rescale)
+plt.plot(fit_gauss/rescale,linewidth=1,linestyle='-')
 plt.plot(spike_only,linewidth=0.7)
-plt.plot(fit_gauss,linewidth=0.7)
 plt.show()
-
 
 ###
 ### RETRIEVE PROBE SPECTRUM
 ###
 
-### Prepare
+sp_rec = reconstruct_WirtFlow(sig_probe_reconstructed,sp_probe,fit_gauss,om_probe,om_xuv,T,n_power_iter=50,n_main_iter=1400,mu_step_max=0.01,I_warmup=300,ifplot=50)
 
+# --- Decompose RL reconstruction as a sum of n Gaussians and plot ---
+n_comp = 12
+om_grid = om_probe
+# Use non-negative target for Gaussian fit
 
+z_target = sp_rec
 
-sp_rec = reconstruct_WirtFlow(sig_probe_reconstructed,sp_probe,spike_only,om_probe,om_xuv,T,n_power_iter=50,n_main_iter=10000,mu_step_max=0.01,I_warmup=300,ifplot=50)
+fit_gauss, fit_params = fit_n_gaussians_1d(
+    y_vals=om_grid,
+    z_vals=z_target,
+    n=n_comp,
+    return_params=True,
+    return_components=False,
+    use_weights=False,
+)
+
+probes_reconstructed = nfit_params_to_probes(fit_params)
+
+plt.figure()
+plt.plot(om_grid*hbar, normalize_abs(z_target), label='RL target')
+plt.plot(om_grid*hbar, normalize_abs(fit_gauss), label=f'{n_comp}-Gaussian fit')
+plt.plot(om_grid*hbar, normalize_abs(sp_probe), label='True spectrum')
+plt.xlabel('E - E0')
+plt.ylabel('Amplitude (normalized)')
+plt.title('n-Gaussian decomposition of RL reconstruction')
+plt.legend()
+plt.tight_layout()
+plt.show()
