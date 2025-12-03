@@ -296,7 +296,7 @@ def _sum_n_gauss1d(y, *theta):
         s = theta[3*k + 2]
         if s <= 0:
             continue
-        out += A * np.exp(-0.5 * ((y - mu) / s) ** 2)
+        out += A/(2*s) * np.exp(-0.5 * ((y - mu) / s) ** 2)
     return out
 
 def fit_n_gaussians_1d(
@@ -579,7 +579,7 @@ def nfit_params_to_probes(params):
 
 #     return z
 
-def reconstruct_WirtFlow(sig_measrd,sp_probe,sp_xuv,om_probe,om_xuv,T,
+def reconstruct_WirtFlow(sig_measrd,sp_probe,sp_xuv,om_probe,om_xuv,T,b_est,
                          n_power_iter=50,n_main_iter=10000,mu_step_max=0.06,I_warmup=1000,ifplot=50):
 
     n_t, n_e = sig_measrd.shape
@@ -619,12 +619,12 @@ def reconstruct_WirtFlow(sig_measrd,sp_probe,sp_xuv,om_probe,om_xuv,T,
 
 
         # sbhermit_arg = (np.abs(sbforward)**2 - sig_measrd) * sbforward  GAUSSIAN WF
-        lambda_arr = np.abs(sbforward)**2 + b
-        sbhermit_arg = (1 - (sig_measrd+b)/lambda_arr) * sbforward # POISSON WF (??)
+        lambda_arr = np.abs(sbforward)**2 + b_est
+        sbhermit_arg = (1 - sig_measrd/lambda_arr) * sbforward # POISSON WF (??)
 
         grad = synth_baseline_hermit(sbhermit_arg,sp_xuv,om_probe,om_xuv,T)
 
-        weight_vec = (sig_measrd+b)/(lambda_arr)**2
+        weight_vec = sig_measrd/(lambda_arr)**2
         grad_forward = synth_baseline(grad,sp_xuv,om_probe,om_xuv,T)
         denom = np.sum(np.conjugate(grad_forward)*weight_vec*grad_forward)
         mu_step = np.sum(np.abs(grad)**2)/denom
@@ -981,13 +981,13 @@ noise_area_Elo, noise_area_Ehi = 0.0,0.3
 
 b_est = np.mean(signal[:,floor(noise_area_Elo*N_E):floor(noise_area_Ehi*N_E)])
 
-signal -= b
+signal -= b_est
 
 # import sgolay2
 # sg2 = sgolay2.SGolayFilter2(window_size=13,poly_order=3)
 # signal = sg2(signal)
 
-plot_mat(signal)
+# plot_mat(signal)
 
 amplit_tot_FT, OM_T, em_lo, em_hi = CFT(T_range,signal,use_window=False)
 
@@ -1015,7 +1015,7 @@ amplit_tot_FT_detrended_full[i1:sideband_hi,:] = amplit_tot_FT[N_T-sideband_hi+i
 ### KOAY-BASSER FULL SIGNAL CORRECTION
 ###
 
-tot_rician_full = np.sum(signal+b,axis=0)
+tot_rician_full = np.sum(signal+b_est,axis=0)
 
 # # --- Decompose RL reconstruction as a sum of n Gaussians and plot ---
 # n_comp = 6
@@ -1044,7 +1044,7 @@ for j in range(N_E):
 phase = np.angle(amplit_tot_FT)
 amplit_tot_FT = amp_corr * np.exp(1j*phase)
 
-plot_mat(amplit_tot_FT+1e-20)
+# plot_mat(amplit_tot_FT+1e-20)
 
 ###
 ### KOAY-BASSER PROBE SIGNAL CORRECTION
@@ -1079,16 +1079,16 @@ amplit_tot_FT_detrended_full = amp_corr * np.exp(1j*phase)
 pow_ana = np.abs(synth_bsln_FT)**2
 pow_mes = np.abs(amplit_tot_FT_detrended_full)**2
 
-plt.plot(np.mean(pow_ana[:1000,:],axis=0))
-plt.plot(np.mean(pow_mes[:1000,:],axis=0))
-plt.show()
+# plt.plot(np.mean(pow_ana[:1000,:],axis=0))
+# plt.plot(np.mean(pow_mes[:1000,:],axis=0))
+# plt.show()
 
 sig_probe_reconstructed,_,_,_ = CFT(T_range,amplit_tot_FT_detrended_full,use_window=False,inverse=True)
 
 # plot_mat(sig_probe_reconstructed)
 # plot_mat(synth_bsln)
 
-plot_mat((sig_probe_reconstructed - synth_bsln)/np.max(sig_probe_reconstructed))
+# plot_mat((sig_probe_reconstructed - synth_bsln)/np.max(sig_probe_reconstructed))
 
 ###
 ### XUV PEAK
@@ -1125,13 +1125,13 @@ fit_gauss = np.roll(fit_gauss, shift_cols)
 ### RETRIEVE PROBE SPECTRUM
 ###
 
-plot_mat(clip_amplitude(amplit_tot_FT,0,np.max(np.abs(amplit_tot_FT)/4)))
+# plot_mat(clip_amplitude(amplit_tot_FT,0,np.max(np.abs(amplit_tot_FT)/4)))
 
 amplit_tot_FT_re = np.real(amplit_tot_FT)
 amplit_tot_FT_im = np.imag(amplit_tot_FT)
 
-amplit_tot_FT_re = denoise_tv_bregman(amplit_tot_FT_re,weight=1)
-amplit_tot_FT_im = denoise_tv_bregman(amplit_tot_FT_im,weight=1)
+amplit_tot_FT_re = denoise_tv_bregman(amplit_tot_FT_re,weight=0.5)
+amplit_tot_FT_im = denoise_tv_bregman(amplit_tot_FT_im,weight=0.5)
 
 amplit_tot_FT_tv = amplit_tot_FT_re + 1j*amplit_tot_FT_im
 
@@ -1139,12 +1139,14 @@ amplit_tot_FT_tv = amplit_tot_FT_re + 1j*amplit_tot_FT_im
 amp_tv = threshold_noise(np.abs(amplit_tot_FT_tv),tot_rician_full)
 amplit_tot_FT_tv = amp_tv * np.exp(1j*np.angle(amplit_tot_FT_tv))
 
-plot_mat(clip_amplitude(amplit_tot_FT_tv,0,np.max(np.abs(amplit_tot_FT)/4)))
+# plot_mat(clip_amplitude(amplit_tot_FT_tv,0,np.max(np.abs(amplit_tot_FT)/4)))
 
 file = './rec_spectra/sp_probe.npy'
 
-sp_rec = reconstruct_WirtFlow(sig_probe_reconstructed,sp_probe,fit_gauss,om_probe,om_xuv,T,n_power_iter=50,n_main_iter=500,mu_step_max=0.01,I_warmup=300,ifplot=50)
-np.save(file,sp_rec)
+sig_probe_reconstructed = sig_probe_reconstructed + b_est
+
+# sp_rec = reconstruct_WirtFlow(sig_probe_reconstructed,sp_probe,fit_gauss,om_probe,om_xuv,T,b_est,n_power_iter=50,n_main_iter=500,mu_step_max=0.01,I_warmup=300,ifplot=50)
+# np.save(file,sp_rec)
 
 sp_rec = np.load(file)
 
@@ -1153,7 +1155,7 @@ n_comp = 12
 om_grid = om_probe
 # Use non-negative target for Gaussian fit
 
-z_target = np.real(sp_rec)
+z_target = np.abs(sp_rec)
 
 fit_gauss, fit_params = fit_n_gaussians_1d(
     y_vals=om_grid,
@@ -1163,16 +1165,16 @@ fit_gauss, fit_params = fit_n_gaussians_1d(
 
 probes_reconstructed = nfit_params_to_probes(fit_params)
 
-plt.figure()
-plt.plot(om_grid*hbar, normalize_abs(z_target), label='WF target')
-plt.plot(om_grid*hbar, normalize_abs(fit_gauss), label=f'{n_comp}-Gaussian fit')
-plt.plot(om_grid*hbar, normalize_abs(sp_probe), label='True spectrum')
-plt.xlabel('E - E0')
-plt.ylabel('Amplitude (normalized)')
-plt.title('n-Gaussian decomposition of RL reconstruction')
-plt.legend()
-plt.tight_layout()
-plt.show()
+# plt.figure()
+# plt.plot(om_grid*hbar, normalize_abs(z_target), label='WF target')
+# plt.plot(om_grid*hbar, normalize_abs(fit_gauss), label=f'{n_comp}-Gaussian fit')
+# plt.plot(om_grid*hbar, normalize_abs(sp_probe), label='True spectrum')
+# plt.xlabel('E - E0')
+# plt.ylabel('Amplitude (normalized)')
+# plt.title('n-Gaussian decomposition of RL reconstruction')
+# plt.legend()
+# plt.tight_layout()
+# plt.show()
 
 correction = correcting_function_multi(OM_T,E,pulse_xuv,probes,dzeta=1e-8)
 amplit_tot_FT_corrected = correction*amplit_tot_FT
