@@ -9,6 +9,7 @@ from skimage.restoration import denoise_tv_bregman
 from scipy.special import i0e, i1e
 from scipy.optimize import brentq
 from scipy.interpolate import RectBivariateSpline
+from scipy.linalg import sqrtm
 
 # Reduced Planck constant in eV*fs (approx CODATA): ħ = 6.582119569e-16 eV·s
 hbar = 6.582119569e-1
@@ -496,6 +497,88 @@ def nfit_params_to_probes(params):
         probes.append((T,params[3*k],params[3*k+1],params[3*k+2],0))
     return tuple(probes)
 
+# def reconstruct_WirtFlow(sig_measrd,sp_probe,sp_xuv,om_probe,om_xuv,T,
+#                          n_power_iter=50,n_main_iter=10000,mu_step_max=0.06,I_warmup=1000,ifplot=50):
+
+#     n_t, n_e = sig_measrd.shape
+
+#     w = np.ones((n_e,)).astype(complex) / np.sqrt(n_e)
+
+#     m = np.size(sig_measrd)
+
+#     for i_iter in range(n_power_iter):
+
+#         w = 1/m * synth_baseline_hermit(sig_measrd * synth_baseline(w,sp_xuv,om_probe,om_xuv,T),sp_xuv,om_probe,om_xuv,T)
+#         w = w / np.sqrt(np.sum(np.abs(w)**2))
+
+#     lambda_bsln = synth_baseline(w,sp_xuv,om_probe,om_xuv,T)
+#     alpha = np.sum( np.sqrt(sig_measrd) * np.abs(lambda_bsln) ) / np.sum( np.abs(lambda_bsln)**2 )
+
+#     w = alpha*w
+
+#     plt.plot(np.real(w),linewidth=0.7)
+#     plt.plot(np.imag(w),linewidth=0.7)
+#     plt.plot(np.abs(sp_probe))
+#     plt.savefig('initial_spectrum_estimate.png')
+#     plt.close()
+
+#     normsq_z0 = np.sum( np.abs(w)**2 )
+#     z = np.copy(w)
+
+#     ers = []
+
+#     for i_iter in range(n_main_iter):
+
+#         mu_step = mu_step_max*(1-np.exp(-(i_iter+1)/I_warmup))
+
+#         ers.append( np.sum(np.abs( normalize_abs(np.abs(z)) - normalize_abs(np.abs(sp_probe)) )**2)/np.sum(normalize_abs(np.abs(sp_probe))**2) )
+
+#         sbforward = synth_baseline(z,sp_xuv,om_probe,om_xuv,T)
+#         sbhermit_arg = (np.abs(sbforward)**2 - sig_measrd) * sbforward
+#         z = z - mu_step/normsq_z0*1/m * synth_baseline_hermit(sbhermit_arg,sp_xuv,om_probe,om_xuv,T)
+
+#         print(i_iter)
+
+#         if i_iter%int(ifplot)==0 and bool(ifplot):
+#             fig, axes = plt.subplots(2, 1, figsize=(8, 6))
+#             # axes[0].plot(np.real(z), label='Re(z)')
+#             # axes[0].plot(np.imag(z), label='Im(z)')
+#             # axes[0].plot(np.real(sp_probe), label='Re(sp_probe)')
+#             # axes[0].plot(np.imag(sp_probe), label='Im(sp_probe)')
+
+#             axes[0].plot(normalize_abs(np.abs(z)), label='Abs(z)')
+#             axes[0].plot(normalize_abs(np.abs(sp_probe)), label='Abs(sp_probe)')
+#             # axes[0].plot(np.angle(z), label='Abs(z)')
+#             # axes[0].plot(np.angle(sp_probe), label='Abs(sp_probe)')
+
+#             axes[0].set_title('Current spectrum estimate')
+#             axes[0].legend()
+
+#             axes[1].plot(ers, label='Relative MSE')
+#             axes[1].set_yscale('log')
+#             axes[1].set_title('Error history')
+#             axes[1].set_xlabel('Recorded iteration')
+#             axes[1].legend()
+#             if ers:
+#                 last_val = ers[-1]
+#                 axes[1].text(
+#                     0.02, 0.1,
+#                     f'Iter {i_iter}: {last_val:.5f}',
+#                     transform=axes[1].transAxes,
+#                     fontsize=10,
+#                     color='white',
+#                     weight='bold',
+#                     ha='left',
+#                     va='top',
+#                     path_effects=[pe.withStroke(linewidth=1, foreground='black')]
+#                 )
+
+#             plt.tight_layout()
+#             plt.savefig('spectrum_convergence_iter.png')
+#             plt.close()
+
+#     return z
+
 def reconstruct_WirtFlow(sig_measrd,sp_probe,sp_xuv,om_probe,om_xuv,T,
                          n_power_iter=50,n_main_iter=10000,mu_step_max=0.06,I_warmup=1000,ifplot=50):
 
@@ -533,8 +616,20 @@ def reconstruct_WirtFlow(sig_measrd,sp_probe,sp_xuv,om_probe,om_xuv,T,
         ers.append( np.sum(np.abs( normalize_abs(np.abs(z)) - normalize_abs(np.abs(sp_probe)) )**2)/np.sum(normalize_abs(np.abs(sp_probe))**2) )
 
         sbforward = synth_baseline(z,sp_xuv,om_probe,om_xuv,T)
-        sbhermit_arg = (np.abs(sbforward)**2 - sig_measrd) * sbforward
-        z = z - mu_step/normsq_z0*1/m * synth_baseline_hermit(sbhermit_arg,sp_xuv,om_probe,om_xuv,T)
+
+
+        # sbhermit_arg = (np.abs(sbforward)**2 - sig_measrd) * sbforward  GAUSSIAN WF
+        lambda_arr = np.abs(sbforward)**2 + b
+        sbhermit_arg = (1 - (sig_measrd+b)/lambda_arr) * sbforward # POISSON WF (??)
+
+        grad = synth_baseline_hermit(sbhermit_arg,sp_xuv,om_probe,om_xuv,T)
+
+        weight_vec = (sig_measrd+b)/(lambda_arr)**2
+        grad_forward = synth_baseline(grad,sp_xuv,om_probe,om_xuv,T)
+        denom = np.sum(np.conjugate(grad_forward)*weight_vec*grad_forward)
+        mu_step = np.sum(np.abs(grad)**2)/denom
+
+        z = z - mu_step/normsq_z0 * grad
 
         print(i_iter)
 
@@ -782,7 +877,7 @@ def resample(spec_corrected,rho_hi,rho_lo,om_ref,E,OM_T,N_NEW):
 
     Sig_cc_cubic_mesh = Sig_cc_cubic_mesh/np.sum(np.diag(np.abs(Sig_cc_cubic_mesh)))
 
-    return Sig_cc_cubic_mesh, small_sig, extent, [idy_min,idy_max,idx_min,idx_max]
+    return Sig_cc_cubic_mesh, small_sig, extent, [idy_min,idy_max,idx_min,idx_max], E1, E2
 
 ###
 ### FIELD PARAMETERS
@@ -801,9 +896,9 @@ T_range = np.linspace(-T_reach,T_reach,N_T)
 E, T = np.meshgrid(E_range,T_range)
 
 A_xuv = 1
-om_xuv = 60.65/hbar
+om0_xuv = 60.65/hbar
 s_xuv = 0.15/hbar
-pulse_xuv = (0*T,A_xuv,om_xuv,s_xuv,0)
+pulse_xuv = (0*T,A_xuv,om0_xuv,s_xuv,0)
 
 A_probe = 1.0
 om_probe = 1.55/hbar
@@ -1035,8 +1130,8 @@ plot_mat(clip_amplitude(amplit_tot_FT,0,np.max(np.abs(amplit_tot_FT)/4)))
 amplit_tot_FT_re = np.real(amplit_tot_FT)
 amplit_tot_FT_im = np.imag(amplit_tot_FT)
 
-amplit_tot_FT_re = denoise_tv_bregman(amplit_tot_FT_re,weight=2)
-amplit_tot_FT_im = denoise_tv_bregman(amplit_tot_FT_im,weight=2)
+amplit_tot_FT_re = denoise_tv_bregman(amplit_tot_FT_re,weight=1)
+amplit_tot_FT_im = denoise_tv_bregman(amplit_tot_FT_im,weight=1)
 
 amplit_tot_FT_tv = amplit_tot_FT_re + 1j*amplit_tot_FT_im
 
@@ -1048,7 +1143,7 @@ plot_mat(clip_amplitude(amplit_tot_FT_tv,0,np.max(np.abs(amplit_tot_FT)/4)))
 
 file = './rec_spectra/sp_probe.npy'
 
-sp_rec = reconstruct_WirtFlow(sig_probe_reconstructed,sp_probe,fit_gauss,om_probe,om_xuv,T,n_power_iter=50,n_main_iter=5000,mu_step_max=0.01,I_warmup=300,ifplot=50)
+sp_rec = reconstruct_WirtFlow(sig_probe_reconstructed,sp_probe,fit_gauss,om_probe,om_xuv,T,n_power_iter=50,n_main_iter=500,mu_step_max=0.01,I_warmup=300,ifplot=50)
 np.save(file,sp_rec)
 
 sp_rec = np.load(file)
@@ -1083,10 +1178,10 @@ correction = correcting_function_multi(OM_T,E,pulse_xuv,probes,dzeta=1e-8)
 amplit_tot_FT_corrected = correction*amplit_tot_FT
 
 correction = correcting_function_multi(OM_T,E,pulse_xuv,probes,dzeta=1e-8)
-amplit_tot_FT_corrected = correction*amplit_tot_FT_tv
+amplit_tot_FT_corrected_tv = correction*amplit_tot_FT_tv
 
 correction_rec = correcting_function_multi(OM_T,E,pulse_xuv,probes_reconstructed,dzeta=1e-8)
-amplit_tot_FT_corrected_rec = correction_rec*amplit_tot_FT_tv
+amplit_tot_FT_corrected_rec_tv = correction_rec*amplit_tot_FT_tv
 
 
 ###
@@ -1095,20 +1190,56 @@ amplit_tot_FT_corrected_rec = correction_rec*amplit_tot_FT_tv
 
 rho_lo = 59.6
 rho_hi = 61.4
-rho_reconstructed, amplit_tot_FT_corrected_small, extent_small, idxs_small = resample(amplit_tot_FT_corrected,rho_hi,rho_lo,om_ref,E,OM_T,N_T)
 
-rho_lo = 59.6
-rho_hi = 61.4
-rho_reconstructed_rec, amplit_tot_FT_corrected_small_rec, extent_small, idxs_small = resample(amplit_tot_FT_corrected_rec,rho_hi,rho_lo,om_ref,E,OM_T,N_T)
+rho_reconstructed, amplit_tot_FT_corrected_small, extent_small, idxs_small, E1, E2 = resample(amplit_tot_FT_corrected,rho_hi,rho_lo,om_ref,E,OM_T,N_T)
 
-plot_mat(rho_reconstructed,extent=[rho_lo,rho_hi,rho_lo,rho_hi],cmap='plasma',
-         mode='abs',saveloc='newims/uncorr.png',xlabel='Energy [eV]',ylabel='Energy [eV]',
-         title='Rho ideally corrected for the probe spectrum')
+rho_reconstructed_tv, amplit_tot_FT_corrected_small, extent_small, idxs_small, _, _ = resample(amplit_tot_FT_corrected_tv,rho_hi,rho_lo,om_ref,E,OM_T,N_T)
+
+rho_reconstructed_rec_tv, amplit_tot_FT_corrected_small_rec, extent_small, idxs_small, _, _ = resample(amplit_tot_FT_corrected_rec_tv,rho_hi,rho_lo,om_ref,E,OM_T,N_T)
 
 plot_mat(rho_reconstructed,extent=[rho_lo,rho_hi,rho_lo,rho_hi],cmap='plasma',
-         mode='abs',saveloc='newims/uncorr.png',xlabel='Energy [eV]',ylabel='Energy [eV]',
-         title='Rho TV and ideally corrected for the probe spectrum')
+         mode='abs',saveloc='rhos/synth_corr.png',xlabel='Energy [eV]',ylabel='Energy [eV]',
+         title='Rho ideally corrected for the probe spectrum',show=False)
 
-plot_mat(rho_reconstructed_rec,extent=[rho_lo,rho_hi,rho_lo,rho_hi],cmap='plasma',
-         mode='abs',saveloc='newims/uncorr.png',xlabel='Energy [eV]',ylabel='Energy [eV]',
-         title='Rho TV and WF corrected for the probe spectrum')
+plot_mat(rho_reconstructed_tv,extent=[rho_lo,rho_hi,rho_lo,rho_hi],cmap='plasma',
+         mode='abs',saveloc='rhos/synth_corr_tv.png',xlabel='Energy [eV]',ylabel='Energy [eV]',
+         title='Rho TV and ideally corrected for the probe spectrum',show=False)
+
+plot_mat(rho_reconstructed_rec_tv,extent=[rho_lo,rho_hi,rho_lo,rho_hi],cmap='plasma',
+         mode='abs',saveloc='rhos/rec_corr_tv.png',xlabel='Energy [eV]',ylabel='Energy [eV]',
+         title='Rho TV and WF corrected for the probe spectrum',show=False)
+
+###
+### COMPARISON WITH A GROUND TRUTH
+###
+
+ideal_rho = np.exp(-((E1 - om0_xuv*hbar)/s_xuv)**2 - ((E2 - om0_xuv*hbar)/s_xuv)**2)
+ideal_rho = normalize_rho(ideal_rho)
+
+plot_mat(ideal_rho,extent=[rho_lo,rho_hi,rho_lo,rho_hi],cmap='plasma',
+         mode='abs',saveloc='rhos/ideal.png',xlabel='Energy [eV]',ylabel='Energy [eV]',
+         title='Rho TV and WF corrected for the probe spectrum',show=False)
+
+plot_mat(ideal_rho - rho_reconstructed,extent=[rho_lo,rho_hi,rho_lo,rho_hi],cmap='plasma',
+         mode='abs',saveloc='rhos/diff1.png',xlabel='Energy [eV]',ylabel='Energy [eV]',
+         title='Rho TV and WF corrected for the probe spectrum',show=False)
+
+plot_mat(ideal_rho - rho_reconstructed_tv,extent=[rho_lo,rho_hi,rho_lo,rho_hi],cmap='plasma',
+         mode='abs',saveloc='rhos/diff2.png',xlabel='Energy [eV]',ylabel='Energy [eV]',
+         title='Rho TV and WF corrected for the probe spectrum',show=False)
+
+plot_mat(ideal_rho - rho_reconstructed_rec_tv,extent=[rho_lo,rho_hi,rho_lo,rho_hi],cmap='plasma',
+         mode='abs',saveloc='rhos/diff3.png',xlabel='Energy [eV]',ylabel='Energy [eV]',
+         title='Rho TV and WF corrected for the probe spectrum',show=False)
+
+def fidelity(rho,sigma):
+    sqrt_rho = sqrtm(rho)
+    a = sqrt_rho@sigma@sqrt_rho
+    b = sqrtm(a)
+    return np.trace(b)**2
+
+fid1 = np.real(fidelity(ideal_rho, rho_reconstructed))
+fid2 = np.real(fidelity(ideal_rho, rho_reconstructed_tv))
+fid3 = np.real(fidelity(ideal_rho, rho_reconstructed_rec_tv))
+
+print(fid1,fid2,fid3)
