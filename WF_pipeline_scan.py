@@ -839,6 +839,32 @@ def project_to_density_matrix(M):
 
     return rho
 
+def fidelity(rho, sigma):
+    """
+    Compute the Uhlmann fidelity between two density matrices.
+    
+    Parameters:
+        rho (np.ndarray): density matrix
+        sigma (np.ndarray): density matrix
+
+    Returns:
+        float: fidelity value
+    """
+    # Safety: ensure Hermitian
+    rho = (rho + rho.conj().T) / 2
+    sigma = (sigma + sigma.conj().T) / 2
+
+    # Compute root of rho
+    sqrt_rho = sqrtm(rho)
+
+    # Compute the intermediate matrix
+    inner = sqrt_rho @ sigma @ sqrt_rho
+
+    # Compute the fidelity
+    fidelity = np.real((np.trace(sqrtm(inner)))**2)
+
+    return float(fidelity)
+
 ###
 ### FIELD PARAMETERS
 ###
@@ -852,9 +878,7 @@ E_res = 0.025
 N_E = round(E_span/E_res/10)*10
 print(N_E)
 
-## In real polykraken data that I got, En_res is 0.025 eV, There are around 600 time delays and the count per pixel is up to 1e3 - 2e3 at max
-
-N_T = 300
+N_T = 500
 p_E = 4 # N_E upsampling integer
 
 alpha = 0.1
@@ -954,7 +978,7 @@ b_est = np.mean(signal[:,floor(noise_area_Elo*N_E):floor(noise_area_Ehi*N_E)])
 
 signal -= b_est
 
-plot_mat(signal)
+# plot_mat(signal)
 
 amplit_tot_FT, OM_T, em_lo, em_hi = CFT(T_range,signal,use_window=False)
 amplit_tot_FT_wndw, OM_T, em_lo, em_hi = CFT(T_range,signal,use_window=True)
@@ -1014,7 +1038,7 @@ for j in range(N_E):
 phase = np.angle(amplit_tot_FT)
 amplit_tot_FT = amp_corr * np.exp(1j*phase)
 
-plot_mat(amplit_tot_FT+1e-20)
+# plot_mat(amplit_tot_FT+1e-20)
 
 ###
 ### KOAY-BASSER PROBE SIGNAL CORRECTION
@@ -1217,32 +1241,6 @@ plot_mat(ideal_rho - rho_reconstructed_x,extent=[rho_lo,rho_hi,rho_lo,rho_hi],cm
 plot_mat(ideal_rho - rho_reconstructed_rec_x,extent=[rho_lo,rho_hi,rho_lo,rho_hi],cmap='plasma',
          mode='abs',saveloc='rhos/diff3.png',xlabel='Energy [eV]',ylabel='Energy [eV]',
          title='Rho TV and WF corrected for the probe spectrum',show=False)
-
-def fidelity(rho, sigma):
-    """
-    Compute the Uhlmann fidelity between two density matrices.
-    
-    Parameters:
-        rho (np.ndarray): density matrix
-        sigma (np.ndarray): density matrix
-
-    Returns:
-        float: fidelity value
-    """
-    # Safety: ensure Hermitian
-    rho = (rho + rho.conj().T) / 2
-    sigma = (sigma + sigma.conj().T) / 2
-
-    # Compute root of rho
-    sqrt_rho = sqrtm(rho)
-
-    # Compute the intermediate matrix
-    inner = sqrt_rho @ sigma @ sqrt_rho
-
-    # Compute the fidelity
-    fidelity = np.real((np.trace(sqrtm(inner)))**2)
-
-    return float(fidelity)
 
 fid1 = fidelity(ideal_rho, rho_reconstructed)
 fid2 = fidelity(ideal_rho, rho_reconstructed_x)
