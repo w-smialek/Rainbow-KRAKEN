@@ -1,5 +1,6 @@
 # Ignore everything inside the ims directory
 /ims/**
 /WFims/**
+/scans/ims/**
 # Keep the directory itself by tracking a .gitkeep file (create it if needed)
 !/ims/.gitkeep
