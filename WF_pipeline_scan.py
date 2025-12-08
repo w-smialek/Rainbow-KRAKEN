@@ -940,18 +940,27 @@ def fidelity(rho, sigma):
 ### FIELD PARAMETERS
 ###
 
-alpha_range = np.array([0.005,0.01,0.02,0.04,0.08,0.16,0.32,0.64])
-N_T_range = np.array([250,300,400,500,700,900,1100])
+# alpha_range = np.array([0.005,0.01,0.02,0.04,0.08,0.16,0.32,0.64])
+# N_T_range = np.array([250,300,400,500,700,900,1100])
+
+alpha_range = np.linspace(0.01,0.49,25)
+N_T_range = np.linspace(250,1000,16).astype(int)
+
+print(alpha_range)
+print(N_T_range)
 
 a,nt = np.meshgrid(alpha_range,N_T_range)
 
-final_rec_sqerr = np.zeros_like(a)
-fid1s = np.zeros_like(a)
-fid2s = np.zeros_like(a)
-fid3s = np.zeros_like(a)
-fid4s = np.zeros_like(a)
+final_rec_sqerr = np.load('scans/sqerrs.npy')
+fid1s = np.load('scans/fid1s.npy')
+fid2s = np.load('scans/fid2s.npy')
+fid3s = np.load('scans/fid3s.npy')
+fid4s = np.load('scans/fid4s.npy')
 
 for i_nt, N_T in enumerate(N_T_range):
+    if N_T < 800:
+        continue
+
     for i_a, alpha in enumerate(alpha_range):
         # try:
             E_lo = 60.0
@@ -1216,7 +1225,7 @@ for i_nt, N_T in enumerate(N_T_range):
             sig_probe_reconstructed = sig_probe_reconstructed + b_est
 
             sp_rec, rec_sqerr = reconstruct_WirtFlow(sig_probe_reconstructed,sp_probe,sp_xuv_meas_sig_fit,om_probe,om_xuv,T,b_est,
-                                                     n_power_iter=50,n_main_iter=3000,ifplot=50,median_regval=4,lastmax_margin=np.sqrt(alpha)*700,
+                                                     n_power_iter=50,n_main_iter=3000,ifplot=50,median_regval=4,lastmax_margin=np.sqrt(alpha)*700*np.sqrt(N_T/350),
                                                      ifwait=False,alph=alpha,nt=N_T)
             np.save(file,sp_rec)
 
