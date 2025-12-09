@@ -2,5 +2,6 @@
 /ims/**
 /WFims/**
 /scans/ims/**
+/scans/1dims/**
 # Keep the directory itself by tracking a .gitkeep file (create it if needed)
 !/ims/.gitkeep

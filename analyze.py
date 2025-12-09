@@ -1,14 +1,37 @@
 import matplotlib.pyplot as plt
 import numpy as np
+from scipy.ndimage import median_filter
 
-sqerrs = np.load('scans/sqerrs.npy')
-fid1s = 1 - np.load('scans/fid1s.npy')
-fid2s = 1 - np.load('scans/fid2s.npy')
-fid3s = 1 - np.load('scans/fid3s.npy')
-fid4s = 1 - np.load('scans/fid4s.npy')
 
-alpha_range = np.array([0.005,0.01,0.02,0.04,0.08,0.16,0.32,0.64])
-N_T_range = np.array([250,300,400,500,700,900,1100])
+sqerrs = np.load('scans/1dscans/sqerrs.npy')
+fid1s = np.load('scans/1dscans/fid1s.npy')
+fid2s = np.load('scans/1dscans/fid2s.npy')
+fid3s = np.load('scans/1dscans/fid3s.npy')
+fid4s = np.load('scans/1dscans/fid4s.npy')
+
+plt.plot(sqerrs)
+plt.show()
+plt.plot(fid1s)
+plt.show()
+plt.plot(fid2s)
+plt.show()
+plt.plot(fid3s)
+plt.show()
+plt.plot(fid4s)
+plt.show()
+
+
+sqerrs = median_filter(np.log10(np.load('scans/sqerrs.npy')[:-1,:]),size=(3,3),mode='nearest')
+fid1s = median_filter(np.log10(1 - np.load('scans/fid1s.npy')[:-1,:]),size=(3,3),mode='nearest')
+fid2s = median_filter(np.log10(1 - np.load('scans/fid2s.npy')[:-1,:]),size=(3,3),mode='nearest')
+fid3s = median_filter(np.log10(1 - np.load('scans/fid3s.npy')[:-1,:]),size=(3,3),mode='nearest')
+fid4s = median_filter(np.log10(1 - np.load('scans/fid4s.npy')[:-1,:]),size=(3,3),mode='nearest')
+
+# alpha_range = np.array([0.005,0.01,0.02,0.04,0.08,0.16,0.32,0.64])
+# N_T_range = np.array([250,300,400,500,700,900,1100])
+
+alpha_range = np.linspace(0.01,0.49,25)
+N_T_range = np.linspace(250,950,15).astype(int)
 
 # Create meshgrids for 3D surface plots
 ALPHA, N_T = np.meshgrid(alpha_range, N_T_range)

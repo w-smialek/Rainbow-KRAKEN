@@ -402,7 +402,7 @@ def extract_midslice(sig_full,slice_fracts,sliced_range):
 
     return sig_mid, axis_mid, i0, i1
 
-def detrend_spike(sig_mid,row_axis,n_spike_buffer,n_fitting_buffer,above_thresh_mask=False,plot=False):
+def detrend_spike(sig_mid,em_axis_mid,n_spike_buffer,n_fitting_buffer,above_thresh_mask=False,plot=False):
 
     abs_mid = np.abs(sig_mid)
     ny, nx = abs_mid.shape
@@ -411,7 +411,7 @@ def detrend_spike(sig_mid,row_axis,n_spike_buffer,n_fitting_buffer,above_thresh_
     # Fit per column outside the central rows and evaluate on full grid
     fit_cols = np.zeros_like(abs_mid)
     for j in range(nx):
-        fit_cols[:, j] = fit_single_gaussian_centered_1d(row_axis, abs_mid[:, j], n_spike_buffer=n_spike_buffer, n_fitting_buffer=n_fitting_buffer, center_index=spike_row_mid)
+        fit_cols[:, j] = fit_single_gaussian_centered_1d(em_axis_mid, abs_mid[:, j], n_spike_buffer=n_spike_buffer, n_fitting_buffer=n_fitting_buffer, center_index=spike_row_mid)
 
     # Compute spike as residual but restrict it to central rows only
     spike_mask = np.zeros_like(abs_mid, dtype=bool)
@@ -626,7 +626,8 @@ def reconstruct_WirtFlow(sig_measrd,sp_probe,sp_xuv,om_probe,om_xuv,T,b_est,
                 )
 
             plt.tight_layout()
-            plt.savefig('scans/ims/spectrum_convergence_iter%.2f_%i.png'%(alph,nt))
+            # plt.savefig('scans/ims/spectrum_convergence_iter%.2f_%i.png'%(alph,nt))
+            plt.savefig('scans/1dims/spectrum_convergence_iter%.2f_%i.png'%(alph,nt))
             plt.close()
 
         if i_iter%coarse_bin == coarse_bin-1:
@@ -943,402 +944,799 @@ def fidelity(rho, sigma):
 # alpha_range = np.array([0.005,0.01,0.02,0.04,0.08,0.16,0.32,0.64])
 # N_T_range = np.array([250,300,400,500,700,900,1100])
 
-alpha_range = np.linspace(0.01,0.49,25)
-N_T_range = np.linspace(250,1000,16).astype(int)
-
-print(alpha_range)
-print(N_T_range)
-
-a,nt = np.meshgrid(alpha_range,N_T_range)
-
-final_rec_sqerr = np.load('scans/sqerrs.npy')
-fid1s = np.load('scans/fid1s.npy')
-fid2s = np.load('scans/fid2s.npy')
-fid3s = np.load('scans/fid3s.npy')
-fid4s = np.load('scans/fid4s.npy')
-
-for i_nt, N_T in enumerate(N_T_range):
-    if N_T < 800:
-        continue
-
-    for i_a, alpha in enumerate(alpha_range):
-        # try:
-            E_lo = 60.0
-            E_hi = 63.5
-            T_reach = 100
-            E_span = E_hi-E_lo
-
-            E_res = 0.025
-            N_E = round(E_span/E_res/10)*10
-
-            ## In real polykraken data that I got, En_res is 0.025 eV, There are around 600 time delays and the count per pixel is up to 1e3 - 2e3 at max
-
-            p_E = 4 # N_E upsampling integer
-
-            b = 1
-
-            E_range = np.linspace(E_lo,E_hi,N_E)
-            T_range = np.linspace(-T_reach,T_reach,N_T)
-            E, T = np.meshgrid(E_range,T_range)
+# alpha_range = np.linspace(0.01,0.49,25)
+# N_T_range = np.linspace(250,1000,16).astype(int)
+
+# a,nt = np.meshgrid(alpha_range,N_T_range)
+
+# final_rec_sqerr = np.load('scans/sqerrs.npy')
+# fid1s = np.load('scans/fid1s.npy')
+# fid2s = np.load('scans/fid2s.npy')
+# fid3s = np.load('scans/fid3s.npy')
+# fid4s = np.load('scans/fid4s.npy')
+
+# final_rec_sqerr = np.zeros_like(a)
+# fid1s = np.zeros_like(a)
+# fid2s = np.zeros_like(a)
+# fid3s = np.zeros_like(a)
+# fid4s = np.zeros_like(a)
+
+# for i_nt, N_T in enumerate(N_T_range):
+#     for i_a, alpha in enumerate(alpha_range):
+#         # try:
+#             E_lo = 60.0
+#             E_hi = 63.5
+#             T_reach = 100
+#             E_span = E_hi-E_lo
+
+#             E_res = 0.025
+#             N_E = round(E_span/E_res/10)*10
+
+#             ## In real polykraken data that I got, En_res is 0.025 eV, There are around 600 time delays and the count per pixel is up to 1e3 - 2e3 at max
+
+#             p_E = 4 # N_E upsampling integer
+
+#             b = 1
+
+#             E_range = np.linspace(E_lo,E_hi,N_E)
+#             T_range = np.linspace(-T_reach,T_reach,N_T)
+#             E, T = np.meshgrid(E_range,T_range)
+
+#             N_E_up = p_E*N_E
+#             E_up_range = np.linspace(E_lo,E_hi,N_E_up)
+#             E_up, T_up = np.meshgrid(E_up_range,T_range)
+
+#             A_xuv = 1
+#             om0_xuv = 60.65/hbar
+#             s_xuv = 0.15/hbar
+#             pulse_xuv = (0*T,A_xuv,om0_xuv,s_xuv,0)
+
+#             A_probe = 1.0
+#             om_probe = 1.55/hbar
+#             s_probe = 0.15/hbar
+#             pulse_probe = (T,A_probe,om_probe,s_probe,0)
 
-            N_E_up = p_E*N_E
-            E_up_range = np.linspace(E_lo,E_hi,N_E_up)
-            E_up, T_up = np.meshgrid(E_up_range,T_range)
+#             A_probe2 = 0.2
+#             om_probe2 = 1.20/hbar
+#             s_probe2 = 0.04/hbar
+#             pulse_probe2 = (T,A_probe2,om_probe2,s_probe2,0)
 
-            A_xuv = 1
-            om0_xuv = 60.65/hbar
-            s_xuv = 0.15/hbar
-            pulse_xuv = (0*T,A_xuv,om0_xuv,s_xuv,0)
+#             A_probe3 = 0.2
+#             om_probe3 = 2.0/hbar
+#             s_probe3 = 0.07/hbar
+#             pulse_probe3 = (T,A_probe3,om_probe3,s_probe3,0)
 
-            A_probe = 1.0
-            om_probe = 1.55/hbar
-            s_probe = 0.15/hbar
-            pulse_probe = (T,A_probe,om_probe,s_probe,0)
+#             A_probe4 = 0.3
+#             om_probe4 = 1.85/hbar
+#             s_probe4 = 0.17/hbar
+#             pulse_probe4 = (T,A_probe4,om_probe4,s_probe4,0)
 
-            A_probe2 = 0.2
-            om_probe2 = 1.20/hbar
-            s_probe2 = 0.04/hbar
-            pulse_probe2 = (T,A_probe2,om_probe2,s_probe2,0)
+#             A_ref = 0.3
+#             om_ref = 1.55/hbar
+#             s_ref = 0.005/hbar
+#             pulse_ref = (0*T,A_ref,om_ref,s_ref,0)
 
-            A_probe3 = 0.2
-            om_probe3 = 2.0/hbar
-            s_probe3 = 0.07/hbar
-            pulse_probe3 = (T,A_probe3,om_probe3,s_probe3,0)
+#             refs = (pulse_ref,)
+#             probes = (pulse_probe,pulse_probe2,pulse_probe3,pulse_probe4)
+#             xuvs = (pulse_xuv,)
+#             refprobes = tuple(list(refs) + list(probes))
 
-            A_probe4 = 0.3
-            om_probe4 = 1.85/hbar
-            s_probe4 = 0.17/hbar
-            pulse_probe4 = (T,A_probe4,om_probe4,s_probe4,0)
+#             ###
+#             ### GENERATE SIGNAL
+#             ###
 
-            A_ref = 0.3
-            om_ref = 1.55/hbar
-            s_ref = 0.005/hbar
-            pulse_ref = (0*T,A_ref,om_ref,s_ref,0)
+#             ifnoise = True
+#             rng = np.random.default_rng()
 
-            refs = (pulse_ref,)
-            probes = (pulse_probe,pulse_probe2,pulse_probe3,pulse_probe4)
-            xuvs = (pulse_xuv,)
-            refprobes = tuple(list(refs) + list(probes))
+#             # Synthetic baseline with known spectra
+#             # om_probe = (E/hbar - E_lo/hbar + 0.1 + E_span/hbar/N_E/2 * ((N_E-1) % 2))[0,:]
+#             # om_xuv = (E/hbar - E_span/hbar/2 - 0.1)[0,:]
+#             om_probe = (E/hbar - E_lo/hbar + E_span/hbar/N_E/2 * ((N_E-1) % 2))[0,:]
+#             om_xuv = (E/hbar - E_span/hbar/2)[0,:]
+
+#             om_probe += 5*(om_probe[1] - om_probe[0])
+#             om_xuv += 5*(om_probe[0] - om_probe[1])
 
-            ###
-            ### GENERATE SIGNAL
-            ###
+#             sp_xuv = sp_tot(xuvs,om_xuv)
+#             sp_probe = sp_tot(probes,om_probe)
+#             sp_ref = sp_tot(refs,om_probe)
 
-            ifnoise = True
-            rng = np.random.default_rng()
+#             om_probe_up = (E_up/hbar - E_lo/hbar + 0.1 + E_span/hbar/N_E_up/2 * ((N_E_up-1) % 2))[0,:]
+#             om_xuv_up = (E_up/hbar - E_span/hbar/2 - 0.1)[0,:]
+#             sp_xuv_up = sp_tot(xuvs,om_xuv_up)
+#             sp_probe_up = sp_tot(probes,om_probe_up)
+#             sp_ref_up = sp_tot(refs,om_probe_up)
 
-            # Synthetic baseline with known spectra
-            # om_probe = (E/hbar - E_lo/hbar + 0.1 + E_span/hbar/N_E/2 * ((N_E-1) % 2))[0,:]
-            # om_xuv = (E/hbar - E_span/hbar/2 - 0.1)[0,:]
-            om_probe = (E/hbar - E_lo/hbar + E_span/hbar/N_E/2 * ((N_E-1) % 2))[0,:]
-            om_xuv = (E/hbar - E_span/hbar/2)[0,:]
+#             ### PROBE ONLY FOR REFERENCE
+#             synth_bsln = np.abs(downsample(synth_baseline(sp_probe_up,sp_xuv_up,om_probe_up,om_xuv_up,T_up),p_E))**2
+#             synth_bsln = rng.poisson(alpha*(synth_bsln)+b).astype(float) - b
+#             synth_bsln_FT, _, _, _ = CFT(T_range,synth_bsln,use_window=False)
 
-            om_probe += 5*(om_probe[1] - om_probe[0])
-            om_xuv += 5*(om_probe[0] - om_probe[1])
+#             ### SYNTHETIC FULL SIGNAL
+#             amplit_tot_0 = downsample(synth_baseline(sp_probe_up,sp_xuv_up,om_probe_up,om_xuv_up,T_up) + synth_baseline(sp_ref_up,sp_xuv_up,om_probe_up,om_xuv_up,T_up*0),p_E)
+#             signal_clean = np.abs(amplit_tot_0)**2
+#             signal_clean *= alpha
+#             signal_clean += b
 
-            sp_xuv = sp_tot(xuvs,om_xuv)
-            sp_probe = sp_tot(probes,om_probe)
-            sp_ref = sp_tot(refs,om_probe)
+#             if not ifnoise:
+#                 signal = signal_clean.copy()
+#             else:
+#                 # Apply Poisson noise assuming signal_clean contains expected values (means)
+#                 signal = rng.poisson(signal_clean).astype(float)
 
-            om_probe_up = (E_up/hbar - E_lo/hbar + 0.1 + E_span/hbar/N_E_up/2 * ((N_E_up-1) % 2))[0,:]
-            om_xuv_up = (E_up/hbar - E_span/hbar/2 - 0.1)[0,:]
-            sp_xuv_up = sp_tot(xuvs,om_xuv_up)
-            sp_probe_up = sp_tot(probes,om_probe_up)
-            sp_ref_up = sp_tot(refs,om_probe_up)
+#             ### Total number of counts (signal/noise measure):
 
-            ### PROBE ONLY FOR REFERENCE
-            synth_bsln = np.abs(downsample(synth_baseline(sp_probe_up,sp_xuv_up,om_probe_up,om_xuv_up,T_up),p_E))**2
-            synth_bsln = rng.poisson(alpha*(synth_bsln)+b).astype(float) - b
-            synth_bsln_FT, _, _, _ = CFT(T_range,synth_bsln,use_window=False)
+#             # print("N Total = %.2e"%np.sum(signal))
 
-            ### SYNTHETIC FULL SIGNAL
-            amplit_tot_0 = downsample(synth_baseline(sp_probe_up,sp_xuv_up,om_probe_up,om_xuv_up,T_up) + synth_baseline(sp_ref_up,sp_xuv_up,om_probe_up,om_xuv_up,T_up*0),p_E)
-            signal_clean = np.abs(amplit_tot_0)**2
-            signal_clean *= alpha
-            signal_clean += b
+#             ###
+#             ### PROCESSING STARTS HERE
+#             ###
 
-            if not ifnoise:
-                signal = signal_clean.copy()
-            else:
-                # Apply Poisson noise assuming signal_clean contains expected values (means)
-                signal = rng.poisson(signal_clean).astype(float)
+#             noise_area_Elo, noise_area_Ehi = 0.0,0.3
 
-            ### Total number of counts (signal/noise measure):
+#             b_est = np.mean(signal[:,floor(noise_area_Elo*N_E):floor(noise_area_Ehi*N_E)])
 
-            # print("N Total = %.2e"%np.sum(signal))
+#             signal -= b_est
 
-            ###
-            ### PROCESSING STARTS HERE
-            ###
+#             # plot_mat(signal)
 
-            noise_area_Elo, noise_area_Ehi = 0.0,0.3
+#             amplit_tot_FT, OM_T, em_lo, em_hi = CFT(T_range,signal,use_window=False)
+#             amplit_tot_FT_wndw, OM_T, em_lo, em_hi = CFT(T_range,signal,use_window=True)
 
-            b_est = np.mean(signal[:,floor(noise_area_Elo*N_E):floor(noise_area_Ehi*N_E)])
+#             # import sgolay2
+#             # sg2 = sgolay2.SGolayFilter2(window_size=13,poly_order=3)
+#             # signal = sg2(signal)
 
-            signal -= b_est
+#             ###
+#             ### DETRENDING - SEPARATING PROBE AND REF ZERO FREQ COMPONENT 
+#             ###
 
-            # plot_mat(signal)
+#             em_axis_mid_reach = 1.00
+#             slice_fracts = (0.5*(1 - em_axis_mid_reach/em_hi), 0.5*(1 + em_axis_mid_reach/em_hi))
 
-            amplit_tot_FT, OM_T, em_lo, em_hi = CFT(T_range,signal,use_window=False)
-            amplit_tot_FT_wndw, OM_T, em_lo, em_hi = CFT(T_range,signal,use_window=True)
+#             amplit_tot_FT_mid, em_axis_mid, i0, i1 = extract_midslice(amplit_tot_FT, slice_fracts, hbar*OM_T[:,0])
 
-            # import sgolay2
-            # sg2 = sgolay2.SGolayFilter2(window_size=13,poly_order=3)
-            # signal = sg2(signal)
+#             amplit_tot_FT_mid_detrended, spike_only, spike_row_mid = detrend_spike(amplit_tot_FT_mid,em_axis_mid,0,2,plot=False)
 
-            ###
-            ### DETRENDING - SEPARATING PROBE AND REF ZERO FREQ COMPONENT 
-            ###
+#             # Zero-pad the detrended mid-band to the full (ω, E) grid
+#             amplit_tot_FT_detrended_full = np.copy(amplit_tot_FT)
+#             amplit_tot_FT_detrended_full[i0:i1, :] = amplit_tot_FT_mid_detrended
 
-            em_axis_mid_reach = 1.00
-            slice_fracts = (0.5*(1 - em_axis_mid_reach/em_hi), 0.5*(1 + em_axis_mid_reach/em_hi))
+#             # Extent the poissonian noise with rician bias
 
-            amplit_tot_FT_mid, em_axis_mid, i0, i1 = extract_midslice(amplit_tot_FT, slice_fracts, hbar*OM_T[:,0])
+#             sidebands_reach = 2.15
+#             sideband_lo, sideband_hi = floor(0.5*(1 - sidebands_reach/em_hi)*N_T), floor(0.5*(1 + sidebands_reach/em_hi)*N_T)
+#             amplit_tot_FT_detrended_full[sideband_lo:i0,:] = amplit_tot_FT[0:i0-sideband_lo,:]
+#             amplit_tot_FT_detrended_full[i1:sideband_hi,:] = amplit_tot_FT[N_T-sideband_hi+i1:,:]
 
-            amplit_tot_FT_mid_detrended, spike_only, spike_row_mid = detrend_spike(amplit_tot_FT_mid,em_axis_mid,0,2,plot=False)
+#             ###
+#             ### KOAY-BASSER FULL SIGNAL CORRECTION
+#             ###
 
-            # Zero-pad the detrended mid-band to the full (ω, E) grid
-            amplit_tot_FT_detrended_full = np.copy(amplit_tot_FT)
-            amplit_tot_FT_detrended_full[i0:i1, :] = amplit_tot_FT_mid_detrended
+#             tot_rician_full = np.sum(signal+b_est,axis=0)
+#             z_target = np.sum(signal,axis=0)
 
-            # Extent the poissonian noise with rician bias
+#             # # --- Decompose RL reconstruction as a sum of n Gaussians and plot ---
+#             # n_comp = 12
+#             # # Use non-negative target for Gaussian fit
+#             # tot_rician_pr_fit, _ = fit_n_gaussians_1d(
+#             #     y_vals=om_probe,
+#             #     z_vals=z_target,
+#             #     n=n_comp
+#             # )
+#             # tot_rician_full_fit = tot_rician_pr_fit + b_est*N_T
 
-            sidebands_reach = 2.15
-            sideband_lo, sideband_hi = floor(0.5*(1 - sidebands_reach/em_hi)*N_T), floor(0.5*(1 + sidebands_reach/em_hi)*N_T)
-            amplit_tot_FT_detrended_full[sideband_lo:i0,:] = amplit_tot_FT[0:i0-sideband_lo,:]
-            amplit_tot_FT_detrended_full[i1:sideband_hi,:] = amplit_tot_FT[N_T-sideband_hi+i1:,:]
+#             amp_corr = np.zeros_like(amplit_tot_FT_wndw)
 
-            ###
-            ### KOAY-BASSER FULL SIGNAL CORRECTION
-            ###
+#             for j in range(N_E):
+#                 col_now = np.abs(amplit_tot_FT_wndw[:,j])
+#                 # bias_now = tot_rician_full_fit[j]
+#                 bias_now = tot_rician_full[j]
+#                 amp_corr_now = koay_basser_correction(col_now,bias_now,lambda_thresh=1)
+#                 amp_corr[:,j] = amp_corr_now
 
-            tot_rician_full = np.sum(signal+b_est,axis=0)
-            z_target = np.sum(signal,axis=0)
+#             phase = np.angle(amplit_tot_FT_wndw)
+#             amplit_tot_FT_wndw = amp_corr * np.exp(1j*phase)
 
-            # # --- Decompose RL reconstruction as a sum of n Gaussians and plot ---
-            # n_comp = 12
-            # # Use non-negative target for Gaussian fit
-            # tot_rician_pr_fit, _ = fit_n_gaussians_1d(
-            #     y_vals=om_probe,
-            #     z_vals=z_target,
-            #     n=n_comp
-            # )
-            # tot_rician_full_fit = tot_rician_pr_fit + b_est*N_T
+#             # plot_mat(amplit_tot_FT_wndw+1e-20)
 
-            amp_corr = np.zeros_like(amplit_tot_FT_wndw)
+#             ###
+#             ### KOAY-BASSER PROBE SIGNAL CORRECTION
+#             ###
 
-            for j in range(N_E):
-                col_now = np.abs(amplit_tot_FT_wndw[:,j])
-                # bias_now = tot_rician_full_fit[j]
-                bias_now = tot_rician_full[j]
-                amp_corr_now = koay_basser_correction(col_now,bias_now,lambda_thresh=1)
-                amp_corr[:,j] = amp_corr_now
+#             # mixed signal time reach
+#             T_mix_reach = 40
+#             i_mix = floor(T_mix_reach/T_reach/2*N_T)
 
-            phase = np.angle(amplit_tot_FT_wndw)
-            amplit_tot_FT_wndw = amp_corr * np.exp(1j*phase)
+#             # Remove rows [N_T//2 - i_mix : N_T//2 + i_mix] along time axis
+#             signal_xuv = np.delete(signal, np.s_[N_T//2 - i_mix : N_T//2 + i_mix], axis=0)
 
-            # plot_mat(amplit_tot_FT_wndw+1e-20)
+#             tot_rician = np.mean(signal_xuv,axis=0)*N_T*(2*T_reach/N_T)**2
+#             # tot_rician = (np.mean(signal[:avg_lim1,:],axis=0) + np.mean(signal[avg_lim2:,:],axis=0))/2*N_T*(2*T_reach/N_T)**2
 
-            ###
-            ### KOAY-BASSER PROBE SIGNAL CORRECTION
-            ###
+#             # --- Decompose RL reconstruction as a sum of n Gaussians and plot ---
+#             n_comp = 1
+#             # Use non-negative target for Gaussian fit
+#             tot_rician_fit, _ = fit_n_gaussians_1d(
+#                 y_vals=om_xuv,
+#                 z_vals=tot_rician,
+#                 n=n_comp
+#             )
 
-            # mixed signal time reach
-            T_mix_reach = 40
-            i_mix = floor(T_mix_reach/T_reach/2*N_T)
+#             amp_corr = np.zeros_like(amplit_tot_FT_detrended_full)
 
-            # Remove rows [N_T//2 - i_mix : N_T//2 + i_mix] along time axis
-            signal_xuv = np.delete(signal, np.s_[N_T//2 - i_mix : N_T//2 + i_mix], axis=0)
+#             for j in range(N_E):
+#                 col_now = np.abs(amplit_tot_FT_detrended_full[:,j])
+#                 bias_now = tot_rician_fit[j]
+#                 amp_corr_now = koay_basser_correction(col_now,bias_now)
+#                 amp_corr[:,j] = amp_corr_now
 
-            tot_rician = np.mean(signal_xuv,axis=0)*N_T*(2*T_reach/N_T)**2
-            # tot_rician = (np.mean(signal[:avg_lim1,:],axis=0) + np.mean(signal[avg_lim2:,:],axis=0))/2*N_T*(2*T_reach/N_T)**2
+#             phase = np.angle(amplit_tot_FT_detrended_full)
+#             amplit_tot_FT_detrended_full = amp_corr * np.exp(1j*phase)
 
-            # --- Decompose RL reconstruction as a sum of n Gaussians and plot ---
-            n_comp = 1
-            # Use non-negative target for Gaussian fit
-            tot_rician_fit, _ = fit_n_gaussians_1d(
-                y_vals=om_xuv,
-                z_vals=tot_rician,
-                n=n_comp
-            )
+#             # pow_ana = np.abs(synth_bsln_FT)**2
+#             # pow_mes = np.abs(amplit_tot_FT_detrended_full)**2
+#             # plt.plot(np.mean(pow_ana[:1000,:],axis=0))
+#             # plt.plot(np.mean(pow_mes[:1000,:],axis=0))
+#             # plt.show()
 
-            amp_corr = np.zeros_like(amplit_tot_FT_detrended_full)
+#             sig_probe_reconstructed,_,_,_ = CFT(T_range,amplit_tot_FT_detrended_full,use_window=False,inverse=True)
 
-            for j in range(N_E):
-                col_now = np.abs(amplit_tot_FT_detrended_full[:,j])
-                bias_now = tot_rician_fit[j]
-                amp_corr_now = koay_basser_correction(col_now,bias_now)
-                amp_corr[:,j] = amp_corr_now
+#             # plot_mat(sig_probe_reconstructed)
+#             # plot_mat(synth_bsln)
+#             # plot_mat((sig_probe_reconstructed - synth_bsln)/np.max(sig_probe_reconstructed))
 
-            phase = np.angle(amplit_tot_FT_detrended_full)
-            amplit_tot_FT_detrended_full = amp_corr * np.exp(1j*phase)
+#             ###
+#             ### XUV PEAK
+#             ###
 
-            # pow_ana = np.abs(synth_bsln_FT)**2
-            # pow_mes = np.abs(amplit_tot_FT_detrended_full)**2
-            # plt.plot(np.mean(pow_ana[:1000,:],axis=0))
-            # plt.plot(np.mean(pow_mes[:1000,:],axis=0))
-            # plt.show()
+#             sp_xuv_meas_sig_fit = np.sqrt(tot_rician_fit)
+#             sp_xuv_meas_sig_fit *= np.max(sp_xuv)/np.max(sp_xuv_meas_sig_fit)
 
-            sig_probe_reconstructed,_,_,_ = CFT(T_range,amplit_tot_FT_detrended_full,use_window=False,inverse=True)
+#             # Align fit_gauss's maximum (along energy) with sp_xuv's maximum
+#             idx_xuv = int(np.argmax(sp_xuv))
+#             idx_spk = int(np.argmax(sp_xuv_meas_sig_fit))
+#             shift_cols = idx_xuv - idx_spk
+#             sp_xuv_meas_sig_fit = np.roll(sp_xuv_meas_sig_fit, shift_cols)
 
-            # plot_mat(sig_probe_reconstructed)
-            # plot_mat(synth_bsln)
-            # plot_mat((sig_probe_reconstructed - synth_bsln)/np.max(sig_probe_reconstructed))
 
-            ###
-            ### XUV PEAK
-            ###
+#             # --- Decompose RL reconstruction as a sum of n Gaussians and plot ---
+#             n_comp = 1
+#             # Use non-negative target for Gaussian fit
+#             sp_xuv_meas_sig_fit, sp_xuv_meas_sig_fit_params = fit_n_gaussians_1d(
+#                 y_vals=om_xuv,
+#                 z_vals=sp_xuv_meas_sig_fit,
+#                 n=n_comp
+#             )
 
-            sp_xuv_meas_sig_fit = np.sqrt(tot_rician_fit)
-            sp_xuv_meas_sig_fit *= np.max(sp_xuv)/np.max(sp_xuv_meas_sig_fit)
+#             xuvs_rec = nfit_params_to_probes(sp_xuv_meas_sig_fit_params)
 
-            # Align fit_gauss's maximum (along energy) with sp_xuv's maximum
-            idx_xuv = int(np.argmax(sp_xuv))
-            idx_spk = int(np.argmax(sp_xuv_meas_sig_fit))
-            shift_cols = idx_xuv - idx_spk
-            sp_xuv_meas_sig_fit = np.roll(sp_xuv_meas_sig_fit, shift_cols)
+#             # plt.plot(sp_xuv,label='true spec')
+#             # plt.plot(sp_xuv_meas_sig_fit,linewidth=0.65,linestyle='--',label='sig rec')
+#             # plt.legend()
+#             # plt.show()
 
 
-            # --- Decompose RL reconstruction as a sum of n Gaussians and plot ---
-            n_comp = 1
-            # Use non-negative target for Gaussian fit
-            sp_xuv_meas_sig_fit, sp_xuv_meas_sig_fit_params = fit_n_gaussians_1d(
-                y_vals=om_xuv,
-                z_vals=sp_xuv_meas_sig_fit,
-                n=n_comp
-            )
+#             ###
+#             ### RETRIEVE PROBE SPECTRUM
+#             ###
 
-            xuvs_rec = nfit_params_to_probes(sp_xuv_meas_sig_fit_params)
+#             file = './rec_spectra/sp_probe.npy'
 
-            # plt.plot(sp_xuv,label='true spec')
-            # plt.plot(sp_xuv_meas_sig_fit,linewidth=0.65,linestyle='--',label='sig rec')
-            # plt.legend()
-            # plt.show()
+#             sig_probe_reconstructed = sig_probe_reconstructed + b_est
 
+#             sp_rec, rec_sqerr = reconstruct_WirtFlow(sig_probe_reconstructed,sp_probe,sp_xuv_meas_sig_fit,om_probe,om_xuv,T,b_est,
+#                                                      n_power_iter=50,n_main_iter=3000,ifplot=50,median_regval=4,lastmax_margin=np.sqrt(alpha)*700*np.sqrt(N_T/350),
+#                                                      ifwait=False,alph=alpha,nt=N_T)
+#             np.save(file,sp_rec)
 
-            ###
-            ### RETRIEVE PROBE SPECTRUM
-            ###
+#             sp_rec = np.load(file)
 
-            file = './rec_spectra/sp_probe.npy'
+#             final_rec_sqerr[i_nt,i_a] = rec_sqerr
+#             np.save('scans/sqerrs.npy',final_rec_sqerr)
 
-            sig_probe_reconstructed = sig_probe_reconstructed + b_est
+#             # --- Decompose RL reconstruction as a sum of n Gaussians and plot ---
+#             n_comp = 10
+#             om_grid = om_probe
+#             # Use non-negative target for Gaussian fit
 
-            sp_rec, rec_sqerr = reconstruct_WirtFlow(sig_probe_reconstructed,sp_probe,sp_xuv_meas_sig_fit,om_probe,om_xuv,T,b_est,
-                                                     n_power_iter=50,n_main_iter=3000,ifplot=50,median_regval=4,lastmax_margin=np.sqrt(alpha)*700*np.sqrt(N_T/350),
-                                                     ifwait=False,alph=alpha,nt=N_T)
-            np.save(file,sp_rec)
+#             z_target = np.abs(sp_rec)
 
-            sp_rec = np.load(file)
+#             fit_gauss, fit_params = fit_n_gaussians_1d(
+#                 y_vals=om_grid,
+#                 z_vals=z_target,
+#                 n=n_comp
+#             )
 
-            final_rec_sqerr[i_nt,i_a] = rec_sqerr
-            np.save('scans/sqerrs.npy',final_rec_sqerr)
+#             probes_reconstructed = nfit_params_to_probes(fit_params)
 
-            # --- Decompose RL reconstruction as a sum of n Gaussians and plot ---
-            n_comp = 10
-            om_grid = om_probe
-            # Use non-negative target for Gaussian fit
+#             plt.figure()
+#             plt.plot(om_grid*hbar, normalize_abs(z_target), label='WF target')
+#             plt.plot(om_grid*hbar, normalize_abs(fit_gauss), label=f'{n_comp}-Gaussian fit')
+#             plt.plot(om_grid*hbar, normalize_abs(sp_probe), label='True spectrum')
+#             plt.xlabel('E - E0')
+#             plt.ylabel('Amplitude (normalized)')
+#             plt.title('n-Gaussian decomposition of RL reconstruction')
+#             plt.legend()
+#             plt.tight_layout()
+#             plt.savefig('final_rec_probe.png',dpi=300)
+#             plt.close()
 
-            z_target = np.abs(sp_rec)
+#             dzeta_val = 1e-3
+#             theta_val = 0.01
 
-            fit_gauss, fit_params = fit_n_gaussians_1d(
-                y_vals=om_grid,
-                z_vals=z_target,
-                n=n_comp
-            )
+#             correction = correcting_function_multi(OM_T,E,normalize_params(xuvs,om_xuv)[0],normalize_params(probes,om_probe),dzeta=dzeta_val,theta=theta_val)
+#             amplit_tot_FT_corrected = correction*amplit_tot_FT_wndw
+#             amplit_tot_FT_corrected = median_filter(np.abs(amplit_tot_FT_corrected),size=(3,3))*np.exp(1j*np.angle(amplit_tot_FT_corrected))
 
-            probes_reconstructed = nfit_params_to_probes(fit_params)
+#             correction_x = correcting_function_multi(OM_T,E,normalize_params(xuvs_rec,om_xuv)[0],normalize_params(probes,om_probe),dzeta=dzeta_val,theta=theta_val)
+#             amplit_tot_FT_corrected_x = correction_x*amplit_tot_FT_wndw
+#             amplit_tot_FT_corrected_x = median_filter(np.abs(amplit_tot_FT_corrected_x),size=(3,3))*np.exp(1j*np.angle(amplit_tot_FT_corrected_x))
 
-            plt.figure()
-            plt.plot(om_grid*hbar, normalize_abs(z_target), label='WF target')
-            plt.plot(om_grid*hbar, normalize_abs(fit_gauss), label=f'{n_comp}-Gaussian fit')
-            plt.plot(om_grid*hbar, normalize_abs(sp_probe), label='True spectrum')
-            plt.xlabel('E - E0')
-            plt.ylabel('Amplitude (normalized)')
-            plt.title('n-Gaussian decomposition of RL reconstruction')
-            plt.legend()
-            plt.tight_layout()
-            plt.savefig('final_rec_probe.png',dpi=300)
-            plt.close()
+#             correction_rec_x = correcting_function_multi(OM_T,E,normalize_params(xuvs_rec,om_xuv)[0],normalize_params(probes_reconstructed,om_probe),dzeta=dzeta_val,theta=theta_val)
+#             amplit_tot_FT_corrected_rec_x_nomedian = correction_rec_x*amplit_tot_FT_wndw
+#             amplit_tot_FT_corrected_rec_x = median_filter(np.abs(amplit_tot_FT_corrected_rec_x_nomedian),size=(3,3))*np.exp(1j*np.angle(amplit_tot_FT_corrected_rec_x_nomedian))
 
-            dzeta_val = 1e-3
-            theta_val = 0.01
 
-            correction = correcting_function_multi(OM_T,E,normalize_params(xuvs,om_xuv)[0],normalize_params(probes,om_probe),dzeta=dzeta_val,theta=theta_val)
-            amplit_tot_FT_corrected = correction*amplit_tot_FT_wndw
-            amplit_tot_FT_corrected = median_filter(np.abs(amplit_tot_FT_corrected),size=(3,3))*np.exp(1j*np.angle(amplit_tot_FT_corrected))
+#             ###
+#             ### RESAMPLE AND ANALYZE
+#             ###
 
-            correction_x = correcting_function_multi(OM_T,E,normalize_params(xuvs_rec,om_xuv)[0],normalize_params(probes,om_probe),dzeta=dzeta_val,theta=theta_val)
-            amplit_tot_FT_corrected_x = correction_x*amplit_tot_FT_wndw
-            amplit_tot_FT_corrected_x = median_filter(np.abs(amplit_tot_FT_corrected_x),size=(3,3))*np.exp(1j*np.angle(amplit_tot_FT_corrected_x))
+#             rho_lo = 59.6
+#             rho_hi = 61.4
 
-            correction_rec_x = correcting_function_multi(OM_T,E,normalize_params(xuvs_rec,om_xuv)[0],normalize_params(probes_reconstructed,om_probe),dzeta=dzeta_val,theta=theta_val)
-            amplit_tot_FT_corrected_rec_x_nomedian = correction_rec_x*amplit_tot_FT_wndw
-            amplit_tot_FT_corrected_rec_x = median_filter(np.abs(amplit_tot_FT_corrected_rec_x_nomedian),size=(3,3))*np.exp(1j*np.angle(amplit_tot_FT_corrected_rec_x_nomedian))
+#             rho_reconstructed, amplit_tot_FT_corrected_small, extent_small, idxs_small, E1, E2 = resample(amplit_tot_FT_corrected,rho_hi,rho_lo,om_ref,E,OM_T,N_T)
+#             rho_reconstructed = project_to_density_matrix(rho_reconstructed)
 
+#             rho_reconstructed_x, amplit_tot_FT_corrected_small, extent_small, idxs_small, _, _ = resample(amplit_tot_FT_corrected_x,rho_hi,rho_lo,om_ref,E,OM_T,N_T)
+#             rho_reconstructed_x = project_to_density_matrix(rho_reconstructed_x)
 
-            ###
-            ### RESAMPLE AND ANALYZE
-            ###
+#             rho_reconstructed_rec_x, amplit_tot_FT_corrected_small_rec, extent_small, idxs_small, _, _ = resample(amplit_tot_FT_corrected_rec_x,rho_hi,rho_lo,om_ref,E,OM_T,N_T)
+#             rho_reconstructed_rec_x = project_to_density_matrix(rho_reconstructed_rec_x)
 
-            rho_lo = 59.6
-            rho_hi = 61.4
+#             rho_reconstructed_rec_x_nomedian, amplit_tot_FT_corrected_small_rec, extent_small, idxs_small, _, _ = resample(amplit_tot_FT_corrected_rec_x_nomedian,rho_hi,rho_lo,om_ref,E,OM_T,N_T)
+#             rho_reconstructed_rec_x_nomedian = project_to_density_matrix(rho_reconstructed_rec_x_nomedian)
 
-            rho_reconstructed, amplit_tot_FT_corrected_small, extent_small, idxs_small, E1, E2 = resample(amplit_tot_FT_corrected,rho_hi,rho_lo,om_ref,E,OM_T,N_T)
-            rho_reconstructed = project_to_density_matrix(rho_reconstructed)
+#             plot_mat(rho_reconstructed,extent=[rho_lo,rho_hi,rho_lo,rho_hi],cmap='plasma',
+#                     mode='abs',saveloc='rhos/synth_corr.png',xlabel='Energy [eV]',ylabel='Energy [eV]',
+#                     title='Rho ideally corrected for the probe spectrum',show=False)
 
-            rho_reconstructed_x, amplit_tot_FT_corrected_small, extent_small, idxs_small, _, _ = resample(amplit_tot_FT_corrected_x,rho_hi,rho_lo,om_ref,E,OM_T,N_T)
-            rho_reconstructed_x = project_to_density_matrix(rho_reconstructed_x)
+#             plot_mat(rho_reconstructed_x,extent=[rho_lo,rho_hi,rho_lo,rho_hi],cmap='plasma',
+#                     mode='abs',saveloc='rhos/synth_corr_x.png',xlabel='Energy [eV]',ylabel='Energy [eV]',
+#                     title='Rho rec xuv and ideally corrected for the probe spectrum',show=False)
 
-            rho_reconstructed_rec_x, amplit_tot_FT_corrected_small_rec, extent_small, idxs_small, _, _ = resample(amplit_tot_FT_corrected_rec_x,rho_hi,rho_lo,om_ref,E,OM_T,N_T)
-            rho_reconstructed_rec_x = project_to_density_matrix(rho_reconstructed_rec_x)
+#             plot_mat(rho_reconstructed_rec_x,extent=[rho_lo,rho_hi,rho_lo,rho_hi],cmap='plasma',
+#                     mode='abs',saveloc='rhos/rec_corr_x.png',xlabel='Energy [eV]',ylabel='Energy [eV]',
+#                     title='Rho rec xuv and WF rec probe',show=False)
 
-            rho_reconstructed_rec_x_nomedian, amplit_tot_FT_corrected_small_rec, extent_small, idxs_small, _, _ = resample(amplit_tot_FT_corrected_rec_x_nomedian,rho_hi,rho_lo,om_ref,E,OM_T,N_T)
-            rho_reconstructed_rec_x_nomedian = project_to_density_matrix(rho_reconstructed_rec_x_nomedian)
+#             plot_mat(rho_reconstructed_rec_x_nomedian,extent=[rho_lo,rho_hi,rho_lo,rho_hi],cmap='plasma',
+#                     mode='abs',saveloc='rhos/rec_corr_x_nomedian.png',xlabel='Energy [eV]',ylabel='Energy [eV]',
+#                     title='Rho rec xuv and WF rec probe',show=False)
 
-            plot_mat(rho_reconstructed,extent=[rho_lo,rho_hi,rho_lo,rho_hi],cmap='plasma',
-                    mode='abs',saveloc='rhos/synth_corr.png',xlabel='Energy [eV]',ylabel='Energy [eV]',
-                    title='Rho ideally corrected for the probe spectrum',show=False)
+#             ###
+#             ### COMPARISON WITH A GROUND TRUTH
+#             ###
 
-            plot_mat(rho_reconstructed_x,extent=[rho_lo,rho_hi,rho_lo,rho_hi],cmap='plasma',
-                    mode='abs',saveloc='rhos/synth_corr_x.png',xlabel='Energy [eV]',ylabel='Energy [eV]',
-                    title='Rho rec xuv and ideally corrected for the probe spectrum',show=False)
+#             ideal_rho = np.exp(-((E1 - om0_xuv*hbar)/s_xuv)**2 - ((E2 - om0_xuv*hbar)/s_xuv)**2)
+#             ideal_rho = project_to_density_matrix(ideal_rho)
 
-            plot_mat(rho_reconstructed_rec_x,extent=[rho_lo,rho_hi,rho_lo,rho_hi],cmap='plasma',
-                    mode='abs',saveloc='rhos/rec_corr_x.png',xlabel='Energy [eV]',ylabel='Energy [eV]',
-                    title='Rho rec xuv and WF rec probe',show=False)
+#             fid1 = fidelity(ideal_rho, rho_reconstructed)
+#             fid2 = fidelity(ideal_rho, rho_reconstructed_x)
+#             fid3 = fidelity(ideal_rho, rho_reconstructed_rec_x)
+#             fid4 = fidelity(ideal_rho, rho_reconstructed_rec_x_nomedian)
 
-            plot_mat(rho_reconstructed_rec_x_nomedian,extent=[rho_lo,rho_hi,rho_lo,rho_hi],cmap='plasma',
-                    mode='abs',saveloc='rhos/rec_corr_x_nomedian.png',xlabel='Energy [eV]',ylabel='Energy [eV]',
-                    title='Rho rec xuv and WF rec probe',show=False)
+#             # print(fid1,fid2,fid3,fid4)
 
-            ###
-            ### COMPARISON WITH A GROUND TRUTH
-            ###
+#             fid1s[i_nt,i_a] = fid1
+#             fid2s[i_nt,i_a] = fid2
+#             fid3s[i_nt,i_a] = fid3
+#             fid4s[i_nt,i_a] = fid4
 
-            ideal_rho = np.exp(-((E1 - om0_xuv*hbar)/s_xuv)**2 - ((E2 - om0_xuv*hbar)/s_xuv)**2)
-            ideal_rho = project_to_density_matrix(ideal_rho)
+#             np.save('scans/fid1s.npy',fid1s)
+#             np.save('scans/fid2s.npy',fid2s)
+#             np.save('scans/fid3s.npy',fid3s)
+#             np.save('scans/fid4s.npy',fid4s)
+#             print(alpha, N_T)
+#         # except KeyboardInterrupt as e:
+#         #     print(f"Error at alpha={alpha}, N_T={N_T}: {type(e).__name__}")
+#         #     exit()
+#         # except Exception as e:
+#         #     print(f"Error at alpha={alpha}, N_T={N_T}: {type(e).__name__}: {e}")
+#         #     pass
 
-            fid1 = fidelity(ideal_rho, rho_reconstructed)
-            fid2 = fidelity(ideal_rho, rho_reconstructed_x)
-            fid3 = fidelity(ideal_rho, rho_reconstructed_rec_x)
-            fid4 = fidelity(ideal_rho, rho_reconstructed_rec_x_nomedian)
+N_T_range = np.linspace(250,1500,10).astype(int)
+alpha_range = 80/N_T_range
 
-            # print(fid1,fid2,fid3,fid4)
+final_rec_sqerr = []
+fid1s = []
+fid2s = []
+fid3s = []
+fid4s = []
 
-            fid1s[i_nt,i_a] = fid1
-            fid2s[i_nt,i_a] = fid2
-            fid3s[i_nt,i_a] = fid3
-            fid4s[i_nt,i_a] = fid4
+for i_scan in range(len(N_T_range)):
+    N_T = N_T_range[i_scan]
+    alpha = alpha_range[i_scan]
+    E_lo = 60.0
+    E_hi = 63.5
+    T_reach = 100
+    E_span = E_hi-E_lo
 
-            np.save('scans/fid1s.npy',fid1s)
-            np.save('scans/fid2s.npy',fid2s)
-            np.save('scans/fid3s.npy',fid3s)
-            np.save('scans/fid4s.npy',fid4s)
-            print(alpha, N_T)
-        # except KeyboardInterrupt as e:
-        #     print(f"Error at alpha={alpha}, N_T={N_T}: {type(e).__name__}")
-        #     exit()
-        # except Exception as e:
-        #     print(f"Error at alpha={alpha}, N_T={N_T}: {type(e).__name__}: {e}")
-        #     pass
+    E_res = 0.025
+    N_E = round(E_span/E_res/10)*10
+
+    ## In real polykraken data that I got, En_res is 0.025 eV, There are around 600 time delays and the count per pixel is up to 1e3 - 2e3 at max
+
+    p_E = 4 # N_E upsampling integer
+
+    b = 1
+
+    E_range = np.linspace(E_lo,E_hi,N_E)
+    T_range = np.linspace(-T_reach,T_reach,N_T)
+    E, T = np.meshgrid(E_range,T_range)
+
+    N_E_up = p_E*N_E
+    E_up_range = np.linspace(E_lo,E_hi,N_E_up)
+    E_up, T_up = np.meshgrid(E_up_range,T_range)
+
+    A_xuv = 1
+    om0_xuv = 60.65/hbar
+    s_xuv = 0.15/hbar
+    pulse_xuv = (0*T,A_xuv,om0_xuv,s_xuv,0)
+
+    A_probe = 1.0
+    om_probe = 1.55/hbar
+    s_probe = 0.15/hbar
+    pulse_probe = (T,A_probe,om_probe,s_probe,0)
+
+    A_probe2 = 0.2
+    om_probe2 = 1.20/hbar
+    s_probe2 = 0.04/hbar
+    pulse_probe2 = (T,A_probe2,om_probe2,s_probe2,0)
+
+    A_probe3 = 0.2
+    om_probe3 = 2.0/hbar
+    s_probe3 = 0.07/hbar
+    pulse_probe3 = (T,A_probe3,om_probe3,s_probe3,0)
+
+    A_probe4 = 0.3
+    om_probe4 = 1.85/hbar
+    s_probe4 = 0.17/hbar
+    pulse_probe4 = (T,A_probe4,om_probe4,s_probe4,0)
+
+    A_ref = 0.3
+    om_ref = 1.55/hbar
+    s_ref = 0.005/hbar
+    pulse_ref = (0*T,A_ref,om_ref,s_ref,0)
+
+    refs = (pulse_ref,)
+    probes = (pulse_probe,pulse_probe2,pulse_probe3,pulse_probe4)
+    xuvs = (pulse_xuv,)
+    refprobes = tuple(list(refs) + list(probes))
+
+    ###
+    ### GENERATE SIGNAL
+    ###
+
+    ifnoise = True
+    rng = np.random.default_rng()
+
+    # Synthetic baseline with known spectra
+    # om_probe = (E/hbar - E_lo/hbar + 0.1 + E_span/hbar/N_E/2 * ((N_E-1) % 2))[0,:]
+    # om_xuv = (E/hbar - E_span/hbar/2 - 0.1)[0,:]
+    om_probe = (E/hbar - E_lo/hbar + E_span/hbar/N_E/2 * ((N_E-1) % 2))[0,:]
+    om_xuv = (E/hbar - E_span/hbar/2)[0,:]
+
+    om_probe += 5*(om_probe[1] - om_probe[0])
+    om_xuv += 5*(om_probe[0] - om_probe[1])
+
+    sp_xuv = sp_tot(xuvs,om_xuv)
+    sp_probe = sp_tot(probes,om_probe)
+    sp_ref = sp_tot(refs,om_probe)
+
+    om_probe_up = (E_up/hbar - E_lo/hbar + 0.1 + E_span/hbar/N_E_up/2 * ((N_E_up-1) % 2))[0,:]
+    om_xuv_up = (E_up/hbar - E_span/hbar/2 - 0.1)[0,:]
+    sp_xuv_up = sp_tot(xuvs,om_xuv_up)
+    sp_probe_up = sp_tot(probes,om_probe_up)
+    sp_ref_up = sp_tot(refs,om_probe_up)
+
+    ### PROBE ONLY FOR REFERENCE
+    synth_bsln = np.abs(downsample(synth_baseline(sp_probe_up,sp_xuv_up,om_probe_up,om_xuv_up,T_up),p_E))**2
+    synth_bsln = rng.poisson(alpha*(synth_bsln)+b).astype(float) - b
+    synth_bsln_FT, _, _, _ = CFT(T_range,synth_bsln,use_window=False)
+
+    ### SYNTHETIC FULL SIGNAL
+    amplit_tot_0 = downsample(synth_baseline(sp_probe_up,sp_xuv_up,om_probe_up,om_xuv_up,T_up) + synth_baseline(sp_ref_up,sp_xuv_up,om_probe_up,om_xuv_up,T_up*0),p_E)
+    signal_clean = np.abs(amplit_tot_0)**2
+    signal_clean *= alpha
+    signal_clean += b
+
+    if not ifnoise:
+        signal = signal_clean.copy()
+    else:
+        # Apply Poisson noise assuming signal_clean contains expected values (means)
+        signal = rng.poisson(signal_clean).astype(float)
+
+    ### Total number of counts (signal/noise measure):
+
+    # print("N Total = %.2e"%np.sum(signal))
+
+    ###
+    ### PROCESSING STARTS HERE
+    ###
+
+    noise_area_Elo, noise_area_Ehi = 0.0,0.3
+
+    b_est = np.mean(signal[:,floor(noise_area_Elo*N_E):floor(noise_area_Ehi*N_E)])
+
+    signal -= b_est
+
+    # plot_mat(signal)
+
+    amplit_tot_FT, OM_T, em_lo, em_hi = CFT(T_range,signal,use_window=False)
+    amplit_tot_FT_wndw, OM_T, em_lo, em_hi = CFT(T_range,signal,use_window=True)
+
+    # import sgolay2
+    # sg2 = sgolay2.SGolayFilter2(window_size=13,poly_order=3)
+    # signal = sg2(signal)
+
+    ###
+    ### DETRENDING - SEPARATING PROBE AND REF ZERO FREQ COMPONENT 
+    ###
+
+    em_axis_mid_reach = 1.00
+    slice_fracts = (0.5*(1 - em_axis_mid_reach/em_hi), 0.5*(1 + em_axis_mid_reach/em_hi))
+
+    amplit_tot_FT_mid, em_axis_mid, i0, i1 = extract_midslice(amplit_tot_FT, slice_fracts, hbar*OM_T[:,0])
+
+    amplit_tot_FT_mid_detrended, spike_only, spike_row_mid = detrend_spike(amplit_tot_FT_mid,em_axis_mid,0,2,plot=False)
+
+    # Zero-pad the detrended mid-band to the full (ω, E) grid
+    amplit_tot_FT_detrended_full = np.copy(amplit_tot_FT)
+    amplit_tot_FT_detrended_full[i0:i1, :] = amplit_tot_FT_mid_detrended
+
+    # Extent the poissonian noise with rician bias
+
+    sidebands_reach = 2.15
+    sideband_lo, sideband_hi = floor(0.5*(1 - sidebands_reach/em_hi)*N_T), floor(0.5*(1 + sidebands_reach/em_hi)*N_T)
+    amplit_tot_FT_detrended_full[sideband_lo:i0,:] = amplit_tot_FT[0:i0-sideband_lo,:]
+    amplit_tot_FT_detrended_full[i1:sideband_hi,:] = amplit_tot_FT[N_T-sideband_hi+i1:,:]
+
+    ###
+    ### KOAY-BASSER FULL SIGNAL CORRECTION
+    ###
+
+    tot_rician_full = np.sum(signal+b_est,axis=0)
+    z_target = np.sum(signal,axis=0)
+
+    # # --- Decompose RL reconstruction as a sum of n Gaussians and plot ---
+    # n_comp = 12
+    # # Use non-negative target for Gaussian fit
+    # tot_rician_pr_fit, _ = fit_n_gaussians_1d(
+    #     y_vals=om_probe,
+    #     z_vals=z_target,
+    #     n=n_comp
+    # )
+    # tot_rician_full_fit = tot_rician_pr_fit + b_est*N_T
+
+    amp_corr = np.zeros_like(amplit_tot_FT_wndw)
+
+    for j in range(N_E):
+        col_now = np.abs(amplit_tot_FT_wndw[:,j])
+        # bias_now = tot_rician_full_fit[j]
+        bias_now = tot_rician_full[j]
+        amp_corr_now = koay_basser_correction(col_now,bias_now,lambda_thresh=1)
+        amp_corr[:,j] = amp_corr_now
+
+    phase = np.angle(amplit_tot_FT_wndw)
+    amplit_tot_FT_wndw = amp_corr * np.exp(1j*phase)
+
+    # plot_mat(amplit_tot_FT_wndw+1e-20)
+
+    ###
+    ### KOAY-BASSER PROBE SIGNAL CORRECTION
+    ###
+
+    # mixed signal time reach
+    T_mix_reach = 40
+    i_mix = floor(T_mix_reach/T_reach/2*N_T)
+
+    # Remove rows [N_T//2 - i_mix : N_T//2 + i_mix] along time axis
+    signal_xuv = np.delete(signal, np.s_[N_T//2 - i_mix : N_T//2 + i_mix], axis=0)
+
+    tot_rician = np.mean(signal_xuv,axis=0)*N_T*(2*T_reach/N_T)**2
+    # tot_rician = (np.mean(signal[:avg_lim1,:],axis=0) + np.mean(signal[avg_lim2:,:],axis=0))/2*N_T*(2*T_reach/N_T)**2
+
+    # --- Decompose RL reconstruction as a sum of n Gaussians and plot ---
+    n_comp = 1
+    # Use non-negative target for Gaussian fit
+    tot_rician_fit, _ = fit_n_gaussians_1d(
+        y_vals=om_xuv,
+        z_vals=tot_rician,
+        n=n_comp
+    )
+
+    amp_corr = np.zeros_like(amplit_tot_FT_detrended_full)
+
+    for j in range(N_E):
+        col_now = np.abs(amplit_tot_FT_detrended_full[:,j])
+        bias_now = tot_rician_fit[j]
+        amp_corr_now = koay_basser_correction(col_now,bias_now)
+        amp_corr[:,j] = amp_corr_now
+
+    phase = np.angle(amplit_tot_FT_detrended_full)
+    amplit_tot_FT_detrended_full = amp_corr * np.exp(1j*phase)
+
+    # pow_ana = np.abs(synth_bsln_FT)**2
+    # pow_mes = np.abs(amplit_tot_FT_detrended_full)**2
+    # plt.plot(np.mean(pow_ana[:1000,:],axis=0))
+    # plt.plot(np.mean(pow_mes[:1000,:],axis=0))
+    # plt.show()
+
+    sig_probe_reconstructed,_,_,_ = CFT(T_range,amplit_tot_FT_detrended_full,use_window=False,inverse=True)
+
+    # plot_mat(sig_probe_reconstructed)
+    # plot_mat(synth_bsln)
+    # plot_mat((sig_probe_reconstructed - synth_bsln)/np.max(sig_probe_reconstructed))
+
+    ###
+    ### XUV PEAK
+    ###
+
+    sp_xuv_meas_sig_fit = np.sqrt(tot_rician_fit)
+    sp_xuv_meas_sig_fit *= np.max(sp_xuv)/np.max(sp_xuv_meas_sig_fit)
+
+    # Align fit_gauss's maximum (along energy) with sp_xuv's maximum
+    idx_xuv = int(np.argmax(sp_xuv))
+    idx_spk = int(np.argmax(sp_xuv_meas_sig_fit))
+    shift_cols = idx_xuv - idx_spk
+    sp_xuv_meas_sig_fit = np.roll(sp_xuv_meas_sig_fit, shift_cols)
+
+
+    # --- Decompose RL reconstruction as a sum of n Gaussians and plot ---
+    n_comp = 1
+    # Use non-negative target for Gaussian fit
+    sp_xuv_meas_sig_fit, sp_xuv_meas_sig_fit_params = fit_n_gaussians_1d(
+        y_vals=om_xuv,
+        z_vals=sp_xuv_meas_sig_fit,
+        n=n_comp
+    )
+
+    xuvs_rec = nfit_params_to_probes(sp_xuv_meas_sig_fit_params)
+
+    # plt.plot(sp_xuv,label='true spec')
+    # plt.plot(sp_xuv_meas_sig_fit,linewidth=0.65,linestyle='--',label='sig rec')
+    # plt.legend()
+    # plt.show()
+
+
+    ###
+    ### RETRIEVE PROBE SPECTRUM
+    ###
+
+    file = './rec_spectra/sp_probe.npy'
+
+    sig_probe_reconstructed = sig_probe_reconstructed + b_est
+
+    sp_rec, rec_sqerr = reconstruct_WirtFlow(sig_probe_reconstructed,sp_probe,sp_xuv_meas_sig_fit,om_probe,om_xuv,T,b_est,
+                                             n_power_iter=50,n_main_iter=3000,ifplot=50,median_regval=4,lastmax_margin=np.sqrt(alpha)*700*np.sqrt(N_T/350),
+                                             ifwait=False,alph=alpha,nt=N_T)
+    np.save(file,sp_rec)
+
+    sp_rec = np.load(file)
+
+    final_rec_sqerr.append(rec_sqerr)
+    np.save('scans/1dscans/sqerrs80.npy',final_rec_sqerr)
+
+    # --- Decompose RL reconstruction as a sum of n Gaussians and plot ---
+    n_comp = 10
+    om_grid = om_probe
+    # Use non-negative target for Gaussian fit
+
+    z_target = np.abs(sp_rec)
+
+    fit_gauss, fit_params = fit_n_gaussians_1d(
+        y_vals=om_grid,
+        z_vals=z_target,
+        n=n_comp
+    )
+
+    probes_reconstructed = nfit_params_to_probes(fit_params)
+
+    plt.figure()
+    plt.plot(om_grid*hbar, normalize_abs(z_target), label='WF target')
+    plt.plot(om_grid*hbar, normalize_abs(fit_gauss), label=f'{n_comp}-Gaussian fit')
+    plt.plot(om_grid*hbar, normalize_abs(sp_probe), label='True spectrum')
+    plt.xlabel('E - E0')
+    plt.ylabel('Amplitude (normalized)')
+    plt.title('n-Gaussian decomposition of RL reconstruction')
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig('final_rec_probe.png',dpi=300)
+    plt.close()
+
+    dzeta_val = 1e-3
+    theta_val = 0.01
+
+    correction = correcting_function_multi(OM_T,E,normalize_params(xuvs,om_xuv)[0],normalize_params(probes,om_probe),dzeta=dzeta_val,theta=theta_val)
+    amplit_tot_FT_corrected = correction*amplit_tot_FT_wndw
+    amplit_tot_FT_corrected = median_filter(np.abs(amplit_tot_FT_corrected),size=(3,3))*np.exp(1j*np.angle(amplit_tot_FT_corrected))
+
+    correction_x = correcting_function_multi(OM_T,E,normalize_params(xuvs_rec,om_xuv)[0],normalize_params(probes,om_probe),dzeta=dzeta_val,theta=theta_val)
+    amplit_tot_FT_corrected_x = correction_x*amplit_tot_FT_wndw
+    amplit_tot_FT_corrected_x = median_filter(np.abs(amplit_tot_FT_corrected_x),size=(3,3))*np.exp(1j*np.angle(amplit_tot_FT_corrected_x))
+
+    correction_rec_x = correcting_function_multi(OM_T,E,normalize_params(xuvs_rec,om_xuv)[0],normalize_params(probes_reconstructed,om_probe),dzeta=dzeta_val,theta=theta_val)
+    amplit_tot_FT_corrected_rec_x_nomedian = correction_rec_x*amplit_tot_FT_wndw
+    amplit_tot_FT_corrected_rec_x = median_filter(np.abs(amplit_tot_FT_corrected_rec_x_nomedian),size=(3,3))*np.exp(1j*np.angle(amplit_tot_FT_corrected_rec_x_nomedian))
+
+
+    ###
+    ### RESAMPLE AND ANALYZE
+    ###
+
+    rho_lo = 59.6
+    rho_hi = 61.4
+
+    rho_reconstructed, amplit_tot_FT_corrected_small, extent_small, idxs_small, E1, E2 = resample(amplit_tot_FT_corrected,rho_hi,rho_lo,om_ref,E,OM_T,N_T)
+    rho_reconstructed = project_to_density_matrix(rho_reconstructed)
+
+    rho_reconstructed_x, amplit_tot_FT_corrected_small, extent_small, idxs_small, _, _ = resample(amplit_tot_FT_corrected_x,rho_hi,rho_lo,om_ref,E,OM_T,N_T)
+    rho_reconstructed_x = project_to_density_matrix(rho_reconstructed_x)
+
+    rho_reconstructed_rec_x, amplit_tot_FT_corrected_small_rec, extent_small, idxs_small, _, _ = resample(amplit_tot_FT_corrected_rec_x,rho_hi,rho_lo,om_ref,E,OM_T,N_T)
+    rho_reconstructed_rec_x = project_to_density_matrix(rho_reconstructed_rec_x)
+
+    rho_reconstructed_rec_x_nomedian, amplit_tot_FT_corrected_small_rec, extent_small, idxs_small, _, _ = resample(amplit_tot_FT_corrected_rec_x_nomedian,rho_hi,rho_lo,om_ref,E,OM_T,N_T)
+    rho_reconstructed_rec_x_nomedian = project_to_density_matrix(rho_reconstructed_rec_x_nomedian)
+
+    plot_mat(rho_reconstructed,extent=[rho_lo,rho_hi,rho_lo,rho_hi],cmap='plasma',
+            mode='abs',saveloc='rhos/synth_corr.png',xlabel='Energy [eV]',ylabel='Energy [eV]',
+            title='Rho ideally corrected for the probe spectrum',show=False)
+
+    plot_mat(rho_reconstructed_x,extent=[rho_lo,rho_hi,rho_lo,rho_hi],cmap='plasma',
+            mode='abs',saveloc='rhos/synth_corr_x.png',xlabel='Energy [eV]',ylabel='Energy [eV]',
+            title='Rho rec xuv and ideally corrected for the probe spectrum',show=False)
+
+    plot_mat(rho_reconstructed_rec_x,extent=[rho_lo,rho_hi,rho_lo,rho_hi],cmap='plasma',
+            mode='abs',saveloc='rhos/rec_corr_x.png',xlabel='Energy [eV]',ylabel='Energy [eV]',
+            title='Rho rec xuv and WF rec probe',show=False)
+
+    plot_mat(rho_reconstructed_rec_x_nomedian,extent=[rho_lo,rho_hi,rho_lo,rho_hi],cmap='plasma',
+            mode='abs',saveloc='rhos/rec_corr_x_nomedian.png',xlabel='Energy [eV]',ylabel='Energy [eV]',
+            title='Rho rec xuv and WF rec probe',show=False)
+
+    ###
+    ### COMPARISON WITH A GROUND TRUTH
+    ###
+
+    ideal_rho = np.exp(-((E1 - om0_xuv*hbar)/s_xuv)**2 - ((E2 - om0_xuv*hbar)/s_xuv)**2)
+    ideal_rho = project_to_density_matrix(ideal_rho)
+
+    fid1 = fidelity(ideal_rho, rho_reconstructed)
+    fid2 = fidelity(ideal_rho, rho_reconstructed_x)
+    fid3 = fidelity(ideal_rho, rho_reconstructed_rec_x)
+    fid4 = fidelity(ideal_rho, rho_reconstructed_rec_x_nomedian)
+
+    # print(fid1,fid2,fid3,fid4)
+
+    fid1s.append(fid1)
+    fid2s.append(fid2)
+    fid3s.append(fid3)
+    fid4s.append(fid4)
+
+    np.save('scans/1dscans/fid1s80.npy',fid1s)
+    np.save('scans/1dscans/fid2s80.npy',fid2s)
+    np.save('scans/1dscans/fid3s80.npy',fid3s)
+    np.save('scans/1dscans/fid4s80.npy',fid4s)
+    print(alpha, N_T)
+
+plt.plot(final_rec_sqerr)
+plt.show()
+plt.plot(fid1s)
+plt.show()
+plt.plot(fid2s)
+plt.show()
+plt.plot(fid3s)
+plt.show()
+plt.plot(fid4s)
+plt.show()
