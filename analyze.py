@@ -3,11 +3,11 @@ import numpy as np
 from scipy.ndimage import median_filter
 
 
-sqerrs = np.load('scans/1dscans/sqerrs.npy')
-fid1s = np.load('scans/1dscans/fid1s.npy')
-fid2s = np.load('scans/1dscans/fid2s.npy')
-fid3s = np.load('scans/1dscans/fid3s.npy')
-fid4s = np.load('scans/1dscans/fid4s.npy')
+sqerrs = np.load('scans/1dscans/sqerrs80.npy')
+fid1s = np.load('scans/1dscans/fid1s80.npy')
+fid2s = np.load('scans/1dscans/fid2s80.npy')
+fid3s = np.load('scans/1dscans/fid3s80.npy')
+fid4s = np.load('scans/1dscans/fid4s80.npy')
 
 plt.plot(sqerrs)
 plt.show()

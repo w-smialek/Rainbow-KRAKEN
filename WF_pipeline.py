@@ -499,7 +499,8 @@ def nfit_params_to_probes(params):
     return tuple(probes)
 
 def reconstruct_WirtFlow(sig_measrd,sp_probe,sp_xuv,om_probe,om_xuv,T,b_est,
-                         n_power_iter=50,n_main_iter=10000,ifplot=50,naive_init=None,median_regval=2,logdiff_thresh=-0.015):
+                         n_power_iter=50,n_main_iter=10000,ifplot=50,naive_init=None,
+                         median_regval=2,lastmax_margin=200,ifwait=True,alph=0,nt=0):
 
     n_t, n_e = sig_measrd.shape
 
@@ -533,9 +534,7 @@ def reconstruct_WirtFlow(sig_measrd,sp_probe,sp_xuv,om_probe,om_xuv,T,b_est,
 
     ers = []
     mus = []
-
-    dcrs_len = 200
-    dcrs_bin = 40
+    coarse_bin = 10
 
     for i_iter in range(n_main_iter):
 
@@ -561,7 +560,7 @@ def reconstruct_WirtFlow(sig_measrd,sp_probe,sp_xuv,om_probe,om_xuv,T,b_est,
 
         print(i_iter)
 
-        if i_iter%int(ifplot)==0 and bool(ifplot):
+        if i_iter%int(ifplot)==ifplot-1 and bool(ifplot):
             fig, axes = plt.subplots(2, 1, figsize=(8, 6))
             
             # fig, axes = plt.subplots(3, 1, figsize=(8, 6))
@@ -601,21 +600,15 @@ def reconstruct_WirtFlow(sig_measrd,sp_probe,sp_xuv,om_probe,om_xuv,T,b_est,
                 )
 
             plt.tight_layout()
-            plt.savefig('spectrum_convergence_iter.png')
+            plt.savefig('scans/ims/spectrum_convergence_iter%.3f_%i.png'%(alph,nt))
             plt.close()
 
-            # Early stopping: if the last 200-step trend of 20-bin averages is strictly decreasing
-            # and the current value is at least 10x larger than the minimum recorded
-            if len(mus) >= dcrs_len:
-                last_len = np.abs(np.array(mus[-dcrs_len:]))
-                avgs = np.mean(last_len.reshape(-1, dcrs_bin), axis=1)
-                increase = np.insert(np.diff(avgs),0,-1e-20)/dcrs_bin/avgs
-                strictly_decreasing = np.all(0 >= increase) and np.all(increase > logdiff_thresh)
-                if strictly_decreasing and (mus[-1] >= np.min(mus)):
-                    print("Early stop: decreasing trend over last 200 steps and current μ >= min(μ).")
-                    break
+        if i_iter%coarse_bin == coarse_bin-1:
+            avgs = np.mean(np.abs(mus).reshape(-1, coarse_bin), axis=1)
+            if i_iter - np.argmax(avgs)*10 > lastmax_margin and avgs[-1] < avgs[-2] and (not ifwait or avgs[-1] > avgs[0]) :
+                break
 
-    return z
+    return z, ers[-1]
 
 def clip_amplitude(sig,c0,c1):
     amp = np.abs(sig)
@@ -1032,14 +1025,12 @@ b_est = np.mean(signal[:,floor(noise_area_Elo*N_E):floor(noise_area_Ehi*N_E)])
 
 signal -= b_est
 
-# plot_mat(signal)
+plot_mat(signal,extent=[E_lo,E_hi,-T_reach,T_reach])
 
 amplit_tot_FT, OM_T, em_lo, em_hi = CFT(T_range,signal,use_window=False)
 amplit_tot_FT_wndw, OM_T, em_lo, em_hi = CFT(T_range,signal,use_window=True)
 
-# import sgolay2
-# sg2 = sgolay2.SGolayFilter2(window_size=13,poly_order=3)
-# signal = sg2(signal)
+plot_mat(amplit_tot_FT_wndw,extent=[E_lo,E_hi,em_lo,em_hi])
 
 ###
 ### DETRENDING - SEPARATING PROBE AND REF ZERO FREQ COMPONENT 
@@ -1050,7 +1041,11 @@ slice_fracts = (0.5*(1 - em_axis_mid_reach/em_hi), 0.5*(1 + em_axis_mid_reach/em
 
 amplit_tot_FT_mid, em_axis_mid, i0, i1 = extract_midslice(amplit_tot_FT, slice_fracts, hbar*OM_T[:,0])
 
+plot_mat(amplit_tot_FT_mid,extent=[E_lo,E_hi,-em_axis_mid_reach,em_axis_mid_reach])
+
 amplit_tot_FT_mid_detrended, spike_only, spike_row_mid = detrend_spike(amplit_tot_FT_mid,em_axis_mid,0,2,plot=False)
+
+plot_mat(amplit_tot_FT_mid_detrended,extent=[E_lo,E_hi,-em_axis_mid_reach,em_axis_mid_reach])
 
 # Zero-pad the detrended mid-band to the full (ω, E) grid
 amplit_tot_FT_detrended_full = np.copy(amplit_tot_FT)
@@ -1132,6 +1127,8 @@ for j in range(N_E):
 phase = np.angle(amplit_tot_FT_detrended_full)
 amplit_tot_FT_detrended_full = amp_corr * np.exp(1j*phase)
 
+plot_mat(amplit_tot_FT_detrended_full,extent=[E_lo,E_hi,em_lo,em_hi])
+
 # pow_ana = np.abs(synth_bsln_FT)**2
 # pow_mes = np.abs(amplit_tot_FT_detrended_full)**2
 # plt.plot(np.mean(pow_ana[:1000,:],axis=0))
@@ -1140,9 +1137,9 @@ amplit_tot_FT_detrended_full = amp_corr * np.exp(1j*phase)
 
 sig_probe_reconstructed,_,_,_ = CFT(T_range,amplit_tot_FT_detrended_full,use_window=False,inverse=True)
 
-# plot_mat(sig_probe_reconstructed)
-# plot_mat(synth_bsln)
-# plot_mat((sig_probe_reconstructed - synth_bsln)/np.max(sig_probe_reconstructed))
+plot_mat(sig_probe_reconstructed)
+plot_mat(synth_bsln)
+plot_mat((sig_probe_reconstructed - synth_bsln)/np.max(sig_probe_reconstructed))
 
 ###
 ### XUV PEAK
@@ -1169,10 +1166,10 @@ sp_xuv_meas_sig_fit, sp_xuv_meas_sig_fit_params = fit_n_gaussians_1d(
 
 xuvs_rec = nfit_params_to_probes(sp_xuv_meas_sig_fit_params)
 
-# plt.plot(sp_xuv,label='true spec')
-# plt.plot(sp_xuv_meas_sig_fit,linewidth=0.65,linestyle='--',label='sig rec')
-# plt.legend()
-# plt.show()
+plt.plot(sp_xuv,label='true spec')
+plt.plot(sp_xuv_meas_sig_fit,linewidth=0.65,linestyle='--',label='sig rec')
+plt.legend()
+plt.show()
 
 
 ###
@@ -1197,8 +1194,10 @@ file = './rec_spectra/sp_probe.npy'
 
 sig_probe_reconstructed = sig_probe_reconstructed + b_est
 
-# sp_rec = reconstruct_WirtFlow(sig_probe_reconstructed,sp_probe,sp_xuv_meas_sig_fit,om_probe,om_xuv,T,b_est,n_power_iter=50,n_main_iter=3000,ifplot=50,median_regval=4,logdiff_thresh=-0.15)
-# np.save(file,sp_rec)
+sp_rec, lasterr = reconstruct_WirtFlow(sig_probe_reconstructed,sp_probe,sp_xuv_meas_sig_fit,om_probe,om_xuv,T,b_est,n_power_iter=50,
+                              n_main_iter=3000,ifplot=50,median_regval=4,lastmax_margin=np.sqrt(alpha)*700*np.sqrt(N_T/350),
+                              ifwait=False,alph=alpha,nt=N_T)
+np.save(file,sp_rec)
 
 sp_rec = np.load(file)
 
