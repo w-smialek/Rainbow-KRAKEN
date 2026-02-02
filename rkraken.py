@@ -661,11 +661,11 @@ def reconstruct_WirtFlow(sig_measrd,sp_probe,sp_xuv,om_probe,om_xuv,T,b_est,
     else:
         w = naive_init
 
-    plt.plot(np.real(w),linewidth=0.7)
-    plt.plot(np.imag(w),linewidth=0.7)
-    plt.plot(np.abs(sp_probe))
-    plt.savefig('initial_spectrum_estimate.png')
-    plt.close()
+    # plt.plot(np.real(w),linewidth=0.7)
+    # plt.plot(np.imag(w),linewidth=0.7)
+    # plt.plot(np.abs(sp_probe))
+    # plt.savefig('initial_spectrum_estimate.png')
+    # plt.close()
 
     normsq_z0 = np.sum( np.abs(w)**2 )
     z = np.copy(w)
@@ -737,7 +737,7 @@ def reconstruct_WirtFlow(sig_measrd,sp_probe,sp_xuv,om_probe,om_xuv,T,b_est,
                 )
 
             plt.tight_layout()
-            plt.savefig('single_output/WF_diag/spectrum_convergence_iter%.3f_%i.png'%(alph,nt))
+            plt.savefig('single_output_temp/WF_diag/spectrum_convergence_iter%.3f_%i.png'%(alph,nt))
             plt.close()
 
         if (i_iter+1)%100==0:

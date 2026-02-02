@@ -1,4 +1,5 @@
 # Ignore everything inside the single_output directory
 /single_output/
+/single_output_temp/
 # Keep the directory itself by tracking a .gitkeep file (create it if needed)
 !/ims/.gitkeep
