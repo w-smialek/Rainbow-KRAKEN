@@ -1,7 +1,4 @@
-# Ignore everything inside the ims directory
-/ims/**
-/WFims/**
-/scans/ims/**
-/scans/1dims/**
+# Ignore everything inside the single_output directory
+/single_output/
 # Keep the directory itself by tracking a .gitkeep file (create it if needed)
 !/ims/.gitkeep

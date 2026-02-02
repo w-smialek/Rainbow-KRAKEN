@@ -517,7 +517,7 @@ def plotc(ar):
     plt.plot(np.imag(ar),linewidth=0.8)
     plt.show()
 
-def nfit_params_to_probes(params):
+def nfit_params_to_probes(params,T):
     probes = []
     for k in range(len(params)//3):
         probes.append((T,params[3*k],params[3*k+1],params[3*k+2],0))
@@ -1601,7 +1601,7 @@ for i_scan in range(len(N_T_range)):
         n=n_comp
     )
 
-    xuvs_rec = nfit_params_to_probes(sp_xuv_meas_sig_fit_params)
+    xuvs_rec = nfit_params_to_probes(sp_xuv_meas_sig_fit_params,T)
 
     # plt.plot(sp_xuv,label='true spec')
     # plt.plot(sp_xuv_meas_sig_fit,linewidth=0.65,linestyle='--',label='sig rec')
@@ -1640,7 +1640,7 @@ for i_scan in range(len(N_T_range)):
         n=n_comp
     )
 
-    probes_reconstructed = nfit_params_to_probes(fit_params)
+    probes_reconstructed = nfit_params_to_probes(fit_params,T)
 
     plt.figure()
     plt.plot(om_grid*hbar, normalize_abs(z_target), label='WF target')
