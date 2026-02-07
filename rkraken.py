@@ -309,10 +309,10 @@ def fit_n_gaussians_1d(
     amp_min=0.0                      # amplitude lower bound
 ):
     """
-    Fit a sum of n 1D Gaussians with reasonable bounds:
-      - amplitudes >= amp_min
-      - centers within [y_min, y_max]
-      - widths within [min_s, max_s] where min_s/max_s are fractions of span_y
+    Fit a sum of n 1D Gaussians with improved initialization for multi-peak features:
+      - Smart initial center distribution around prominent peaks
+      - Reasonable amplitude and width initialization
+      - Multiple fallback strategies for robustness
 
     The target shape is assumed concentrated around the middle of the array.
     """
@@ -328,14 +328,80 @@ def fit_n_gaussians_1d(
     if span_y <= 0:
         raise ValueError("y_vals must be strictly increasing")
 
-    # Initial guesses: place all centers at the peak, split amplitude, reasonable width
-    peak_idx = int(np.argmax(z_vals))
-    mu_peak = float(y_vals[peak_idx])
-    A_tot = float(np.max(np.abs(z_vals))) if np.any(z_vals) else 1.0
-    A0s = np.ones(n) * (A_tot / max(n, 1))
-    mu0s = np.ones(n) * mu_peak
-    s0 = 0.1 * span_y
+    # Improved initial guess strategy
+    def get_initial_params():
+        # Find prominent peaks using simple local maxima detection
+        z_smooth = z_vals.copy()
+        if N > 5:
+            # Light smoothing to reduce noise in peak detection
+            window = min(5, N//3)
+            z_smooth = np.convolve(z_vals, np.ones(window)/window, mode='same')
+        
+        # Find local maxima
+        peaks = []
+        for i in range(1, N-1):
+            if z_smooth[i] > z_smooth[i-1] and z_smooth[i] > z_smooth[i+1]:
+                peaks.append((i, z_smooth[i]))
+        
+        # Sort by amplitude and take the strongest ones
+        peaks.sort(key=lambda x: x[1], reverse=True)
+        
+        # If we found enough peaks, use them; otherwise fall back to distributed centers
+        if len(peaks) >= n:
+            peak_indices = [p[0] for p in peaks[:n]]
+        else:
+            # Distribute centers around the center region (assume multi-peak is central)
+            center_idx = N // 2
+            center_region = min(N//3, 20)  # Focus on central 1/3 or 20 points
+            if n == 1:
+                peak_indices = [center_idx]
+            else:
+                # Spread around center
+                start_idx = max(0, center_idx - center_region//2)
+                end_idx = min(N, center_idx + center_region//2)
+                peak_indices = np.linspace(start_idx, end_idx, n, dtype=int)
+        
+        # Initialize parameters
+        A_tot = float(np.max(np.abs(z_vals))) if np.any(z_vals) else 1.0
+        
+        # Better amplitude distribution - stronger for main peaks
+        A0s = []
+        for i, idx in enumerate(peak_indices):
+            # Weight by local amplitude, with fallback
+            local_amp = z_vals[idx] if idx < len(z_vals) else A_tot / n
+            weight = max(local_amp / A_tot, 0.1)  # At least 10% of max
+            A0s.append(A_tot * weight / n)
+        A0s = np.array(A0s)
+        
+        # Centers from peak positions
+        mu0s = np.array([float(y_vals[min(idx, N-1)]) for idx in peak_indices])
+        
+        # Better width estimation - estimate from peak width
+        try:
+            # Try to estimate typical peak width from main peak
+            main_peak_idx = np.argmax(z_vals)
+            half_max = z_vals[main_peak_idx] / 2
+            
+            # Find half-width points
+            left_idx = main_peak_idx
+            right_idx = main_peak_idx
+            
+            while left_idx > 0 and z_vals[left_idx] > half_max:
+                left_idx -= 1
+            while right_idx < N-1 and z_vals[right_idx] > half_max:
+                right_idx += 1
+            
+            fwhm = y_vals[right_idx] - y_vals[left_idx]
+            s0 = max(fwhm / 2.35, 0.05 * span_y)  # FWHM to sigma conversion
+        except:
+            s0 = 0.1 * span_y
+        
+        return A0s, mu0s, s0
 
+    # Get initial parameters
+    A0s, mu0s, s0 = get_initial_params()
+    
+    # Pack into theta0
     theta0 = []
     for k in range(int(n)):
         theta0.extend([float(A0s[k]), float(mu0s[k]), float(s0)])
@@ -360,20 +426,72 @@ def fit_n_gaussians_1d(
         sigma = np.sqrt(np.abs(z_vals) + eps)
         sigma[sigma < 1e-12] = 1e-12
 
+    # Multiple fitting attempts with different strategies
+    strategies = [
+        {'maxfev': 500000, 'method': 'lm'},  # Levenberg-Marquardt
+        {'maxfev': 200000, 'method': 'trf'},  # Trust Region Reflective
+    ]
+    
+    for strategy in strategies:
+        try:
+            if strategy['method'] == 'lm':
+                # LM doesn't support bounds, so use unbounded version
+                popt, _ = curve_fit(
+                    _sum_n_gauss1d,
+                    y_vals,
+                    z_vals,
+                    p0=theta0,
+                    sigma=sigma,
+                    absolute_sigma=False,
+                    maxfev=strategy['maxfev'],
+                    method='lm'
+                )
+            else:
+                # TRF supports bounds
+                popt, _ = curve_fit(
+                    _sum_n_gauss1d,
+                    y_vals,
+                    z_vals,
+                    p0=theta0,
+                    bounds=(lower, upper),
+                    sigma=sigma,
+                    absolute_sigma=False,
+                    maxfev=strategy['maxfev'],
+                    method='trf'
+                )
+            
+            fit_full = _sum_n_gauss1d(y_vals, *popt)
+            
+            # Sanity check: if fit is reasonable, accept it
+            if np.all(np.isfinite(fit_full)) and np.any(fit_full > 0):
+                return fit_full, popt
+                
+        except Exception:
+            continue
+    
+    # Ultimate fallback: single Gaussian fit to the main peak
     try:
+        peak_idx = np.argmax(z_vals)
+        mu_peak = y_vals[peak_idx]
+        A_peak = z_vals[peak_idx]
+        
+        # Single Gaussian parameters
+        single_theta0 = [A_peak, mu_peak, s0]
+        for k in range(1, n):  # Fill remaining with small Gaussians
+            single_theta0.extend([A_peak/10, mu_peak, s0])
+        
         popt, _ = curve_fit(
             _sum_n_gauss1d,
             y_vals,
             z_vals,
-            p0=theta0,
-            bounds=(lower, upper),
-            sigma=sigma,
-            absolute_sigma=False,
-            maxfev=200000
+            p0=single_theta0,
+            maxfev=50000,
+            method='lm'
         )
         fit_full = _sum_n_gauss1d(y_vals, *popt)
+        
     except Exception:
-        # Fallback: return zeros with initial params
+        # Final fallback: return zeros with initial params
         popt = theta0
         fit_full = np.zeros_like(y_vals, dtype=float)
 
@@ -402,7 +520,7 @@ def extract_midslice(sig_full,slice_fracts,sliced_range):
 
     return sig_mid, axis_mid, i0, i1
 
-def detrend_spike(sig_mid,row_axis,n_spike_buffer,n_fitting_buffer,N_E,above_thresh_mask=False,plot=False):
+def detrend_spike(sig_mid,row_axis,n_spike_buffer,n_fitting_buffer,N_E=None,above_thresh_mask=False,plot=False):
 
     abs_mid = np.abs(sig_mid)
     ny, nx = abs_mid.shape
@@ -435,7 +553,7 @@ def detrend_spike(sig_mid,row_axis,n_spike_buffer,n_fitting_buffer,N_E,above_thr
     else:
         apply_mask = spike_mask
 
-    if plot:
+    if plot and N_E is not None:
         i_cross = floor(N_E*0.53)
 
         for v in np.linspace(0,0.99,20):
@@ -479,6 +597,7 @@ def detrend_spike(sig_mid,row_axis,n_spike_buffer,n_fitting_buffer,N_E,above_thr
     return amplit_tot_FT_mid_detrended, spike_only, spike_row_mid
 
 def synth_baseline(sp_pr,sp_x,om_pr,om_x,T):
+    d_om = om_x[1]-om_x[0]
 
     phase0 = np.exp(1j*0*T)
     phase1 = np.exp(1j*om_pr*T)
@@ -486,15 +605,16 @@ def synth_baseline(sp_pr,sp_x,om_pr,om_x,T):
 
     f1 = sp_pr * phase0
     f2 = -sp_x/om_x * phase2
-    conv1 = fftconvolve(f1,f2,mode='same',axes=1)
+    conv1 = fftconvolve(f1,f2,mode='same',axes=1)*d_om
 
     f1 = -sp_pr/om_pr * phase1
     f2 = sp_x * phase0
-    conv2 = fftconvolve(f1,f2,mode='same',axes=1)
+    conv2 = fftconvolve(f1,f2,mode='same',axes=1)*d_om
 
     return conv1 + conv2
 
 def synth_baseline_hermit(input,sp_x,om_pr,om_x,T):
+    d_om = om_x[1]-om_x[0]
 
     phase0 = np.exp(1j*0*T)
     phase1 = np.exp(1j*om_pr*T)
@@ -502,11 +622,11 @@ def synth_baseline_hermit(input,sp_x,om_pr,om_x,T):
 
     f1 = input
     f2 = -sp_x/om_x * np.conjugate(phase2)
-    conv1 = fftconvolve(f1,f2[:,::-1],mode='same',axes=1)
+    conv1 = fftconvolve(f1,f2[:,::-1],mode='same',axes=1)*d_om
 
     f1 = input
     f2 = sp_x * phase0
-    conv2 = fftconvolve(f1,f2[:,::-1],mode='same',axes=1)
+    conv2 = fftconvolve(f1,f2[:,::-1],mode='same',axes=1)*d_om
     conv2 = -conv2/om_pr * np.conjugate(phase1)
 
     return np.sum(conv1 + conv2, axis=0)
@@ -517,128 +637,18 @@ def plotc(ar):
     plt.plot(np.imag(ar),linewidth=0.8)
     plt.show()
 
-def nfit_params_to_probes(params,T):
+def nfit_params_to_probes(params, T):
     probes = []
     for k in range(len(params)//3):
         probes.append((T,params[3*k],params[3*k+1],params[3*k+2],0))
     return tuple(probes)
 
-# def reconstruct_WirtFlow(sig_measrd,sp_probe,sp_xuv,om_probe,om_xuv,T,b_est,
-#                          n_power_iter=50,n_main_iter=10000,ifplot=50,naive_init=None,
-#                          median_regval=2,lastmax_margin=200,ifwait=True,alph=0,nt=0):
-
-#     n_t, n_e = sig_measrd.shape
-
-#     if naive_init is None:
-#         w = np.ones((n_e,)).astype(complex) / np.sqrt(n_e)
-#         poisson_wghts = np.copy(sig_measrd)
-#         poisson_wghts[sig_measrd < median_regval * np.median(sig_measrd)] = 0
-
-#         m = np.size(poisson_wghts)
-
-#         for i_iter in range(n_power_iter):
-#             w = 1/m * synth_baseline_hermit(poisson_wghts * synth_baseline(w,sp_xuv,om_probe,om_xuv,T),sp_xuv,om_probe,om_xuv,T)
-#             lambda_val0 = np.sqrt(np.sum(np.abs(w)**2))
-#             w = w / lambda_val0
-
-#         lambda_bsln = synth_baseline(w,sp_xuv,om_probe,om_xuv,T)
-#         alpha = np.sum( np.sqrt(poisson_wghts-b_est) * np.abs(lambda_bsln) ) / np.sum( np.abs(lambda_bsln)**2 )
-
-#         w = alpha*w
-#     else:
-#         w = naive_init
-
-#     plt.plot(np.real(w),linewidth=0.7)
-#     plt.plot(np.imag(w),linewidth=0.7)
-#     plt.plot(np.abs(sp_probe))
-#     plt.savefig('initial_spectrum_estimate.png')
-#     plt.close()
-
-#     normsq_z0 = np.sum( np.abs(w)**2 )
-#     z = np.copy(w)
-
-#     ers = []
-#     mus = []
-#     coarse_bin = 10
-
-#     for i_iter in range(n_main_iter):
-
-#         ers.append( np.sum(np.abs( normalize_abs(np.abs(z)) - normalize_abs(np.abs(sp_probe)) )**2)/np.sum(normalize_abs(np.abs(sp_probe))**2) )
-
-#         sbforward = synth_baseline(z,sp_xuv,om_probe,om_xuv,T)
-
-
-#         # sbhermit_arg = (np.abs(sbforward)**2 - sig_measrd) * sbforward  GAUSSIAN WF
-#         lambda_arr = np.abs(sbforward)**2 + b_est
-#         sbhermit_arg = (1 - sig_measrd/lambda_arr) * sbforward # POISSON WF (??)
-
-#         grad = synth_baseline_hermit(sbhermit_arg,sp_xuv,om_probe,om_xuv,T)
-
-#         weight_vec = sig_measrd/(lambda_arr)**2
-#         grad_forward = synth_baseline(grad,sp_xuv,om_probe,om_xuv,T)
-#         denom = np.sum(np.conjugate(grad_forward)*weight_vec*grad_forward)
-#         mu_step = np.sum(np.abs(grad)**2)/denom
-
-#         z = z - mu_step/normsq_z0 * grad
-
-#         mus.append(mu_step)
-
-#         print(i_iter)
-
-#         if i_iter%int(ifplot)==ifplot-1 and bool(ifplot):
-#             fig, axes = plt.subplots(2, 1, figsize=(8, 6))
-            
-#             # fig, axes = plt.subplots(3, 1, figsize=(8, 6))
-#             # axes[2].plot(np.abs(mus))
-#             # axes[2].set_yscale('log')
-
-#             # axes[0].plot(np.real(z), label='Re(z)')
-#             # axes[0].plot(np.imag(z), label='Im(z)')
-#             # axes[0].plot(np.real(sp_probe), label='Re(sp_probe)')
-#             # axes[0].plot(np.imag(sp_probe), label='Im(sp_probe)')
-
-#             axes[0].plot(normalize_abs(np.abs(z)), label='Abs(z)')
-#             axes[0].plot(normalize_abs(np.abs(sp_probe)), label='Abs(sp_probe)')
-#             # axes[0].plot(np.angle(z), label='Abs(z)')
-#             # axes[0].plot(np.angle(sp_probe), label='Abs(sp_probe)')
-
-#             axes[0].set_title('Current spectrum estimate')
-#             axes[0].legend()
-
-#             axes[1].plot(ers, label='Relative MSE')
-#             axes[1].set_yscale('log')
-#             axes[1].set_title('Error history')
-#             axes[1].set_xlabel('Recorded iteration')
-#             axes[1].legend()
-#             if ers:
-#                 last_val = ers[-1]
-#                 axes[1].text(
-#                     0.02, 0.1,
-#                     f'Iter {i_iter}: {last_val:.5f}',
-#                     transform=axes[1].transAxes,
-#                     fontsize=10,
-#                     color='white',
-#                     weight='bold',
-#                     ha='left',
-#                     va='top',
-#                     path_effects=[pe.withStroke(linewidth=1, foreground='black')]
-#                 )
-
-#             plt.tight_layout()
-#             plt.savefig('single_output/WF_diag/spectrum_convergence_iter%.3f_%i.png'%(alph,nt))
-#             plt.close()
-
-#         if i_iter%coarse_bin == coarse_bin-1:
-#             avgs = np.mean(np.abs(mus).reshape(-1, coarse_bin), axis=1)
-#             if i_iter - np.argmax(avgs)*10 > lastmax_margin and avgs[-1] < avgs[-2] and (not ifwait or avgs[-1] > avgs[0]) :
-#                 break
-
-#     return z, ers[-1]
-
-
 def reconstruct_WirtFlow(sig_measrd,sp_probe,sp_xuv,om_probe,om_xuv,T,b_est,
                          n_power_iter=50,n_main_iter=10000,ifplot=50,naive_init=None,
-                         median_regval=2,epsilon=1e-6,alph=0,nt=0):
+                         median_regval=2,lastmax_margin=200,ifwait=True,eps=1e-8,alph=0,nt=0):
+
+    om_probe_reg = regularize_omega(om_probe)
+    om_xuv_reg = regularize_omega(om_xuv)
 
     n_t, n_e = sig_measrd.shape
 
@@ -650,59 +660,62 @@ def reconstruct_WirtFlow(sig_measrd,sp_probe,sp_xuv,om_probe,om_xuv,T,b_est,
         m = np.size(poisson_wghts)
 
         for i_iter in range(n_power_iter):
-            w = 1/m * synth_baseline_hermit(poisson_wghts * synth_baseline(w,sp_xuv,om_probe,om_xuv,T),sp_xuv,om_probe,om_xuv,T)
+            w = 1/m * synth_baseline_hermit(poisson_wghts * synth_baseline(w,sp_xuv,om_probe_reg,om_xuv_reg,T),sp_xuv,om_probe_reg,om_xuv_reg,T)
             lambda_val0 = np.sqrt(np.sum(np.abs(w)**2))
             w = w / lambda_val0
 
-        lambda_bsln = synth_baseline(w,sp_xuv,om_probe,om_xuv,T)
-        alpha = np.sum( np.sqrt(poisson_wghts-b_est) * np.abs(lambda_bsln) ) / np.sum( np.abs(lambda_bsln)**2 )
+        lambda_bsln = synth_baseline(w,sp_xuv,om_probe_reg,om_xuv_reg,T)
+        alpha = np.sum( np.sqrt((poisson_wghts-b_est)/alph) * np.abs(lambda_bsln) ) / np.sum( np.abs(lambda_bsln)**2 )
 
         w = alpha*w
     else:
         w = naive_init
 
-    # plt.plot(np.real(w),linewidth=0.7)
-    # plt.plot(np.imag(w),linewidth=0.7)
-    # plt.plot(np.abs(sp_probe))
-    # plt.savefig('initial_spectrum_estimate.png')
-    # plt.close()
+    plt.plot(np.real(w),linewidth=0.7)
+    plt.plot(np.imag(w),linewidth=0.7)
+    plt.plot(np.abs(sp_probe))
+    plt.savefig('initial_spectrum_estimate.png')
+    plt.close()
 
     normsq_z0 = np.sum( np.abs(w)**2 )
     z = np.copy(w)
 
     ers = []
     mus = []
+    diffs = []
+    coarse_bin = 10
 
     for i_iter in range(n_main_iter):
 
         ers.append( np.sum(np.abs( normalize_abs(np.abs(z)) - normalize_abs(np.abs(sp_probe)) )**2)/np.sum(normalize_abs(np.abs(sp_probe))**2) )
 
-        sbforward = synth_baseline(z,sp_xuv,om_probe,om_xuv,T)
+        sbforward = synth_baseline(z,sp_xuv,om_probe_reg,om_xuv_reg,T)
 
 
         # sbhermit_arg = (np.abs(sbforward)**2 - sig_measrd) * sbforward  GAUSSIAN WF
         lambda_arr = np.abs(sbforward)**2 + b_est
         sbhermit_arg = (1 - sig_measrd/lambda_arr) * sbforward # POISSON WF (??)
 
-        grad = synth_baseline_hermit(sbhermit_arg,sp_xuv,om_probe,om_xuv,T)
+        grad = synth_baseline_hermit(sbhermit_arg,sp_xuv,om_probe_reg,om_xuv_reg,T)
 
         weight_vec = sig_measrd/(lambda_arr)**2
-        grad_forward = synth_baseline(grad,sp_xuv,om_probe,om_xuv,T)
+        grad_forward = synth_baseline(grad,sp_xuv,om_probe_reg,om_xuv_reg,T)
         denom = np.sum(np.conjugate(grad_forward)*weight_vec*grad_forward)
         mu_step = np.sum(np.abs(grad)**2)/denom
 
         z = z - mu_step/normsq_z0 * grad
 
         mus.append(mu_step)
+        diffs.append(np.sum(np.abs(mu_step/normsq_z0 * grad)**2)/np.sum(np.abs(z))**2)
 
-        # print(i_iter)
+        print(i_iter)
 
         if i_iter%int(ifplot)==ifplot-1 and bool(ifplot):
-            fig, axes = plt.subplots(2, 1, figsize=(8, 6))
+            # fig, axes = plt.subplots(2, 1, figsize=(8, 6))
             
-            # fig, axes = plt.subplots(3, 1, figsize=(8, 6))
-            # axes[2].plot(np.abs(mus))
-            # axes[2].set_yscale('log')
+            fig, axes = plt.subplots(3, 1, figsize=(8, 10))
+            axes[2].plot(diffs)
+            axes[2].set_yscale('log')
 
             # axes[0].plot(np.real(z), label='Re(z)')
             # axes[0].plot(np.imag(z), label='Im(z)')
@@ -740,11 +753,14 @@ def reconstruct_WirtFlow(sig_measrd,sp_probe,sp_xuv,om_probe,om_xuv,T,b_est,
             plt.savefig('single_output_temp/WF_diag/spectrum_convergence_iter%.3f_%i.png'%(alph,nt))
             plt.close()
 
-        if (i_iter+1)%100==0:
-            reldiff = np.sqrt(np.sum(np.abs(mu_step/normsq_z0 * grad)**2))/(np.sqrt(np.sum(np.abs(z)**2)) + 1e-12)
-            print(reldiff)
-            if reldiff < epsilon:
+            if diffs[-1] < eps:
                 break
+
+        # if i_iter%coarse_bin == coarse_bin-1:
+            # avgs = np.mean(np.abs(mus).reshape(-1, coarse_bin), axis=1)
+            # if i_iter - np.argmax(avgs)*10 > lastmax_margin and avgs[-1] < avgs[-2] and (not ifwait or avgs[-1] > avgs[0]) :
+            #     break
+
 
     return z, ers[-1]
 
@@ -1047,3 +1063,63 @@ def fidelity(rho, sigma):
     fidelity = np.real((np.trace(sqrtm(inner)))**2)
 
     return float(fidelity)
+
+def regularize_omega(om):
+    """
+    Regularize an array of omega values around zero crossing.
+    
+    For values close to zero, replace with a constant (negative before zero, 
+    positive after zero). Values far from zero remain unchanged.
+    
+    Parameters:
+        om : array-like
+            Regularly spaced array of floats
+            
+    Returns:
+        array-like
+            Regularized omega array
+    """
+    om = np.asarray(om)
+    result = np.copy(om)
+    
+    # Determine spacing to define "close to zero"
+    d_om = np.abs(om[1] - om[0]) if len(om) > 1 else 1.0
+    threshold = 10 * d_om  # Regularize within ~4 grid spacings of zero
+    
+    # Find indices close to zero
+    close_to_zero = np.abs(om) <= threshold
+    
+    if np.any(close_to_zero):
+        # Find the zero crossing point
+        zero_idx = np.argmin(np.abs(om))
+        
+        # Regularize: negative constant before zero, positive after
+        before_zero = (om < 0) & close_to_zero
+        after_zero = (om >= 0) & close_to_zero
+        
+        result[before_zero] = -threshold
+        result[after_zero] = threshold
+    
+    return result
+
+def pulse_emit(probes):
+    """
+    Take a tuple of pulse values and flip the omega to negative in all of them.
+    
+    Parameters:
+    -----------
+    probes : tuple
+        Tuple of pulse tuples, each in format (tau, amplitude, omega, sigma, phi)
+    
+    Returns:
+    --------
+    tuple
+        Tuple of pulse tuples with omega values flipped to negative
+    """
+    flipped_probes = []
+    for probe in probes:
+        tau, amplitude, omega, sigma, phi = probe
+        flipped_probe = (tau, amplitude, -omega, sigma, phi)
+        flipped_probes.append(flipped_probe)
+    
+    return tuple(flipped_probes)
