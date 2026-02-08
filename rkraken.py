@@ -2,11 +2,11 @@ import numpy as np
 from numpy import pi
 import matplotlib.pyplot as plt
 from math import floor
-from scipy.optimize import curve_fit
-from scipy.signal import fftconvolve
+from scipy.optimize import curve_fit, differential_evolution
+from scipy.signal import fftconvolve, find_peaks, peak_widths
 from matplotlib import patheffects as pe
 from skimage.restoration import denoise_tv_bregman
-from scipy.ndimage import median_filter
+from scipy.ndimage import median_filter, gaussian_filter
 from scipy.special import i0e, i1e
 from scipy.optimize import brentq
 from scipy.interpolate import RectBivariateSpline
@@ -280,25 +280,30 @@ def fit_single_gaussian_centered_1d(y_vals, z_vals, n_spike_buffer=1, n_fitting_
 
 
 def _sum_n_gauss1d(y, *theta):
-    """Sum of n 1D Gaussians.
+    """Sum of n 1D Gaussians (vectorized).
 
     Parameters are packed as [A1, mu1, s1, A2, mu2, s2, ..., An, mun, sn].
-    Returns A1*exp(-0.5*((y-mu1)/s1)^2) + ...
+    Returns A1/(2*s1)*exp(-0.5*((y-mu1)/s1)^2) + ...
     """
-    y = np.asarray(y)
+    y = np.asarray(y, float)
     theta = np.asarray(theta, float)
     if theta.size % 3 != 0:
         raise ValueError("theta length must be a multiple of 3: [A1, mu1, s1, ..., An, mun, sn]")
     n = theta.size // 3
-    out = np.zeros_like(y, dtype=float)
-    for k in range(n):
-        A = theta[3*k + 0]
-        mu = theta[3*k + 1]
-        s = theta[3*k + 2]
-        if s <= 0:
-            continue
-        out += A/(2*s) * np.exp(-0.5 * ((y - mu) / s) ** 2)
-    return out
+    # Reshape for broadcasting: (n, 3) params vs (N,) y
+    p = theta.reshape(n, 3)
+    A  = p[:, 0]   # (n,)
+    mu = p[:, 1]   # (n,)
+    s  = p[:, 2]   # (n,)
+    # Mask out zero/negative widths
+    valid = s > 0
+    if not np.any(valid):
+        return np.zeros_like(y)
+    A  = A[valid, np.newaxis]    # (m, 1)
+    mu = mu[valid, np.newaxis]   # (m, 1)
+    s  = s[valid, np.newaxis]    # (m, 1)
+    y_row = y[np.newaxis, :]     # (1, N)
+    return np.sum(A / (2 * s) * np.exp(-0.5 * ((y_row - mu) / s) ** 2), axis=0)
 
 def fit_n_gaussians_1d(
     y_vals,
@@ -306,16 +311,34 @@ def fit_n_gaussians_1d(
     n,
     use_weights=False,
     width_frac_bounds=(0.01, 0.6),   # min/max sigma as fraction of span_y
-    amp_min=0.0                      # amplitude lower bound
+    amp_min=0.0,                     # amplitude lower bound
+    verbose=True                     # print status to terminal
 ):
     """
-    Fit a sum of n 1D Gaussians with improved initialization for multi-peak features:
-      - Smart initial center distribution around prominent peaks
-      - Reasonable amplitude and width initialization
-      - Multiple fallback strategies for robustness
+    Fit a sum of n 1D Gaussians to a 1D signal.
 
-    The target shape is assumed concentrated around the middle of the array.
+    Strategy:
+      1. Multi-scale peak detection (light→heavy smoothing).
+      2. Greedy sequential fit: fit one Gaussian at a time to the residual
+         so each component locks onto a single feature.
+      3. Joint refinement of all parameters together.
+      4. Falls back to differential_evolution if local optimisation fails.
+
+    Returns
+    -------
+    fit_full : ndarray   – model evaluated on y_vals
+    popt     : ndarray   – fitted [A1, mu1, s1, ..., An, mun, sn]
     """
+    import time as _time
+    _t_start = _time.perf_counter()
+
+    def _log(msg):
+        if verbose:
+            elapsed = _time.perf_counter() - _t_start
+            print(f"  [fit_{n}G {elapsed:6.3f}s] {msg}")
+
+    _log(f"starting: {y_vals.size} pts, range [{y_vals[0]:.3g}, {y_vals[-1]:.3g}]")
+
     y_vals = np.asarray(y_vals, float)
     z_vals = np.asarray(z_vals, float)
 
@@ -327,174 +350,237 @@ def fit_n_gaussians_1d(
     span_y = float(y_max - y_min)
     if span_y <= 0:
         raise ValueError("y_vals must be strictly increasing")
+    dy = span_y / (N - 1)
+    n = int(n)
 
-    # Improved initial guess strategy
-    def get_initial_params():
-        # Find prominent peaks using simple local maxima detection
-        z_smooth = z_vals.copy()
-        if N > 5:
-            # Light smoothing to reduce noise in peak detection
-            window = min(5, N//3)
-            z_smooth = np.convolve(z_vals, np.ones(window)/window, mode='same')
-        
-        # Find local maxima
-        peaks = []
-        for i in range(1, N-1):
-            if z_smooth[i] > z_smooth[i-1] and z_smooth[i] > z_smooth[i+1]:
-                peaks.append((i, z_smooth[i]))
-        
-        # Sort by amplitude and take the strongest ones
-        peaks.sort(key=lambda x: x[1], reverse=True)
-        
-        # If we found enough peaks, use them; otherwise fall back to distributed centers
-        if len(peaks) >= n:
-            peak_indices = [p[0] for p in peaks[:n]]
-        else:
-            # Distribute centers around the center region (assume multi-peak is central)
-            center_idx = N // 2
-            center_region = min(N//3, 20)  # Focus on central 1/3 or 20 points
-            if n == 1:
-                peak_indices = [center_idx]
-            else:
-                # Spread around center
-                start_idx = max(0, center_idx - center_region//2)
-                end_idx = min(N, center_idx + center_region//2)
-                peak_indices = np.linspace(start_idx, end_idx, n, dtype=int)
-        
-        # Initialize parameters
-        A_tot = float(np.max(np.abs(z_vals))) if np.any(z_vals) else 1.0
-        
-        # Better amplitude distribution - stronger for main peaks
-        A0s = []
-        for i, idx in enumerate(peak_indices):
-            # Weight by local amplitude, with fallback
-            local_amp = z_vals[idx] if idx < len(z_vals) else A_tot / n
-            weight = max(local_amp / A_tot, 0.1)  # At least 10% of max
-            A0s.append(A_tot * weight / n)
-        A0s = np.array(A0s)
-        
-        # Centers from peak positions
-        mu0s = np.array([float(y_vals[min(idx, N-1)]) for idx in peak_indices])
-        
-        # Better width estimation - estimate from peak width
-        try:
-            # Try to estimate typical peak width from main peak
-            main_peak_idx = np.argmax(z_vals)
-            half_max = z_vals[main_peak_idx] / 2
-            
-            # Find half-width points
-            left_idx = main_peak_idx
-            right_idx = main_peak_idx
-            
-            while left_idx > 0 and z_vals[left_idx] > half_max:
-                left_idx -= 1
-            while right_idx < N-1 and z_vals[right_idx] > half_max:
-                right_idx += 1
-            
-            fwhm = y_vals[right_idx] - y_vals[left_idx]
-            s0 = max(fwhm / 2.35, 0.05 * span_y)  # FWHM to sigma conversion
-        except:
-            s0 = 0.1 * span_y
-        
-        return A0s, mu0s, s0
-
-    # Get initial parameters
-    A0s, mu0s, s0 = get_initial_params()
-    
-    # Pack into theta0
-    theta0 = []
-    for k in range(int(n)):
-        theta0.extend([float(A0s[k]), float(mu0s[k]), float(s0)])
-    theta0 = np.asarray(theta0, float)
-
-    # Bounds
+    # ── bounds per component ────────────────────────────────────────
     min_s = max(width_frac_bounds[0] * span_y, 1e-12)
     max_s = max(width_frac_bounds[1] * span_y, min_s * 2)
 
-    lower = []
-    upper = []
-    for _ in range(int(n)):
-        lower.extend([float(amp_min), y_min, min_s])
-        upper.extend([np.inf,         y_max, max_s])
-    lower = np.asarray(lower, float)
-    upper = np.asarray(upper, float)
+    lower = np.tile([float(amp_min), y_min, min_s], n)
+    upper = np.tile([np.inf,         y_max, max_s], n)
 
-    # Optional weights: Poisson-like -> sigma ~ sqrt(z + eps)
-    sigma = None
+    # ── weights ─────────────────────────────────────────────────────
+    sigma_w = None
     if use_weights:
         eps = 1e-12
-        sigma = np.sqrt(np.abs(z_vals) + eps)
-        sigma[sigma < 1e-12] = 1e-12
+        sigma_w = np.sqrt(np.abs(z_vals) + eps)
+        sigma_w[sigma_w < 1e-12] = 1e-12
 
-    # Multiple fitting attempts with different strategies
-    strategies = [
-        {'maxfev': 500000, 'method': 'lm'},  # Levenberg-Marquardt
-        {'maxfev': 200000, 'method': 'trf'},  # Trust Region Reflective
-    ]
-    
-    for strategy in strategies:
-        try:
-            if strategy['method'] == 'lm':
-                # LM doesn't support bounds, so use unbounded version
-                popt, _ = curve_fit(
-                    _sum_n_gauss1d,
-                    y_vals,
-                    z_vals,
-                    p0=theta0,
-                    sigma=sigma,
-                    absolute_sigma=False,
-                    maxfev=strategy['maxfev'],
-                    method='lm'
-                )
-            else:
-                # TRF supports bounds
-                popt, _ = curve_fit(
-                    _sum_n_gauss1d,
-                    y_vals,
-                    z_vals,
-                    p0=theta0,
-                    bounds=(lower, upper),
-                    sigma=sigma,
-                    absolute_sigma=False,
-                    maxfev=strategy['maxfev'],
-                    method='trf'
-                )
-            
-            fit_full = _sum_n_gauss1d(y_vals, *popt)
-            
-            # Sanity check: if fit is reasonable, accept it
-            if np.all(np.isfinite(fit_full)) and np.any(fit_full > 0):
-                return fit_full, popt
-                
-        except Exception:
-            continue
-    
-    # Ultimate fallback: single Gaussian fit to the main peak
-    try:
-        peak_idx = np.argmax(z_vals)
-        mu_peak = y_vals[peak_idx]
-        A_peak = z_vals[peak_idx]
-        
-        # Single Gaussian parameters
-        single_theta0 = [A_peak, mu_peak, s0]
-        for k in range(1, n):  # Fill remaining with small Gaussians
-            single_theta0.extend([A_peak/10, mu_peak, s0])
-        
-        popt, _ = curve_fit(
-            _sum_n_gauss1d,
-            y_vals,
-            z_vals,
-            p0=single_theta0,
-            maxfev=50000,
-            method='lm'
+    # ── single-component model for greedy stage ─────────────────────
+    def _gauss1(y, A, mu, s):
+        return A / (2 * s) * np.exp(-0.5 * ((y - mu) / s) ** 2)
+
+    # ── multi-scale peak detection ──────────────────────────────────
+    z_pos = np.maximum(z_vals, 0.0)
+    z_max = float(z_pos.max()) if z_pos.max() > 0 else 1.0
+
+    prom_threshold = 0.01 * z_max
+    min_dist = max(1, N // (5 * max(n, 2)))
+
+    smooth_candidates = sorted(set([
+        max(1, N // 200),
+        max(1, N // 80),
+        max(2, N // 40),
+    ]))
+
+    best_peak_idx = np.array([], dtype=int)
+    best_widths = np.array([])
+
+    for sm_sigma in smooth_candidates:
+        z_smooth = gaussian_filter(z_pos, sigma=sm_sigma)
+        trial_idx, trial_props = find_peaks(
+            z_smooth, prominence=prom_threshold, distance=min_dist,
         )
-        fit_full = _sum_n_gauss1d(y_vals, *popt)
-        
-    except Exception:
-        # Final fallback: return zeros with initial params
-        popt = theta0
-        fit_full = np.zeros_like(y_vals, dtype=float)
+        if trial_idx.size > 0:
+            trial_widths, _, _, _ = peak_widths(
+                z_smooth, trial_idx, rel_height=0.5)
+            proms = trial_props['prominences']
+            order = np.argsort(proms)[::-1]
+            trial_idx = trial_idx[order]
+            trial_widths = trial_widths[order]
+            if trial_idx.size > best_peak_idx.size:
+                best_peak_idx = trial_idx
+                best_widths = trial_widths
+            if best_peak_idx.size >= n:
+                break
 
+    if best_peak_idx.size == 0:
+        best_peak_idx = np.array([np.argmax(z_pos)])
+        best_widths = np.array([N / 4.0])
+
+    _log(f"peak detection: {best_peak_idx.size} peaks found "
+         f"at y=[{', '.join(f'{y_vals[i]:.3g}' for i in best_peak_idx[:6])}]"
+         + (" ..." if best_peak_idx.size > 6 else ""))
+
+    # ── greedy sequential fit ───────────────────────────────────────
+    # Fit one Gaussian at a time to the residual; this prevents the
+    # optimizer from merging nearby peaks into a single wide component.
+
+    fitted_params = []          # list of (A, mu, s) tuples
+    residual = z_pos.copy()
+    n_detected = best_peak_idx.size
+
+    for k in range(n):
+        # Choose initial guess for this component
+        if k < n_detected:
+            idx = int(best_peak_idx[k])
+            s_init = np.clip(best_widths[k] * dy / 2.35, min_s, max_s)
+            A_init = max(residual[idx] * 2 * s_init, 1e-6)
+            mu_init = float(y_vals[idx])
+        else:
+            # Pick the argmax of the current residual
+            res_pos = np.maximum(residual, 0.0)
+            idx = int(np.argmax(res_pos))
+            mu_init = float(y_vals[idx])
+            s_init = np.clip(0.05 * span_y, min_s, max_s)
+            A_init = max(res_pos[idx] * 2 * s_init, 1e-6)
+
+        p0_k = [A_init, mu_init, s_init]
+        lo_k = [float(amp_min), y_min, min_s]
+        hi_k = [np.inf,         y_max, max_s]
+
+        try:
+            popt_k, _ = curve_fit(
+                _gauss1, y_vals, np.maximum(residual, 0.0),
+                p0=p0_k, bounds=(lo_k, hi_k),
+                maxfev=5000, method='trf',
+            )
+            status = "ok"
+        except Exception as e:
+            popt_k = np.array(p0_k)
+            status = f"fallback ({type(e).__name__})"
+
+        fitted_params.extend(popt_k.tolist())
+        # Subtract this component from the residual
+        residual = residual - _gauss1(y_vals, *popt_k)
+        _log(f"greedy {k+1}/{n}: mu={popt_k[1]:.4g}  s={popt_k[2]:.4g}  A={popt_k[0]:.4g}  [{status}]")
+
+    theta0 = np.asarray(fitted_params, float)
+    theta0 = np.clip(theta0, lower + 1e-14, upper - 1e-14)
+
+    # ── prune negligible components ─────────────────────────────────
+    # After greedy fitting, some components (especially beyond the number
+    # of detected peaks) capture almost nothing.  Collapse them to tiny
+    # amplitudes so curve_fit effectively ignores them, reducing the
+    # effective dimensionality of the problem.
+    amps_greedy = theta0[0::3].copy()
+    total_amp = amps_greedy.sum()
+    if total_amp > 0:
+        pruned = 0
+        for k in range(n):
+            if amps_greedy[k] / total_amp < 0.005:     # < 0.5 % of total
+                theta0[3*k + 0] = lower[3*k + 0] + 1e-14  # A → ~0
+                # leave mu, s at their greedy values (harmless)
+                pruned += 1
+        if pruned > 0:
+            _log(f"pruned {pruned}/{n} negligible components")
+
+    greedy_rss = float(np.sum((_sum_n_gauss1d(y_vals, *theta0) - z_vals) ** 2))
+    _log(f"greedy done — RSS={greedy_rss:.4g}")
+
+    # ── joint refinement ────────────────────────────────────────────
+    # Use relaxed tolerances + limited maxfev to keep wall-time bounded.
+    def _try_curvefit(p0, maxfev=5000):
+        popt, _ = curve_fit(
+            _sum_n_gauss1d, y_vals, z_vals,
+            p0=p0, bounds=(lower, upper),
+            sigma=sigma_w, absolute_sigma=False,
+            maxfev=maxfev, method='trf',
+            ftol=1e-6, xtol=1e-6, gtol=1e-6,
+        )
+        fit = _sum_n_gauss1d(y_vals, *popt)
+        if np.all(np.isfinite(fit)) and np.any(fit > 0):
+            return fit, popt
+        raise RuntimeError("bad fit")
+
+    # Measure fit quality: relative sum-of-squares
+    def _rss(params):
+        fit = _sum_n_gauss1d(y_vals, *params)
+        return float(np.sum((fit - z_vals) ** 2))
+
+    best_result = None
+    best_rss = np.inf
+
+    # Try joint refinement from greedy init
+    try:
+        fit, popt = _try_curvefit(theta0)
+        rss = _rss(popt)
+        if rss < best_rss:
+            best_rss = rss
+            best_result = (fit, popt)
+        _log(f"joint refine (greedy init): RSS={rss:.4g}")
+    except Exception as e:
+        _log(f"joint refine (greedy init): failed ({type(e).__name__})")
+
+    # Jittered restarts — skip if greedy already gave a good fit,
+    # and enforce a wall-time budget.
+    greedy_rel_rmse = np.sqrt(greedy_rss / N) / z_max if z_max > 0 else 0.0
+    need_jitters = best_result is None or greedy_rel_rmse > 0.02
+    n_jitters = 4 if need_jitters else 1
+    time_budget = 30.0  # seconds max for jitter phase
+
+    if not need_jitters:
+        _log("greedy init good enough — running 1 jitter for safety")
+
+    rng = np.random.default_rng(42)
+    for ji in range(n_jitters):
+        if _time.perf_counter() - _t_start > time_budget:
+            _log(f"jitter {ji+1}/{n_jitters}: skipped (time budget)")
+            break
+        jitter = theta0.copy()
+        jitter[1::3] += rng.uniform(-0.05, 0.05, n) * span_y
+        jitter[2::3] *= rng.uniform(0.5, 2.0, n)
+        jitter = np.clip(jitter, lower + 1e-14, upper - 1e-14)
+        try:
+            fit, popt = _try_curvefit(jitter)
+            rss = _rss(popt)
+            improved = rss < best_rss
+            if improved:
+                best_rss = rss
+                best_result = (fit, popt)
+            _log(f"jitter {ji+1}/{n_jitters}: RSS={rss:.4g}{' *' if improved else ''}")
+        except Exception:
+            _log(f"jitter {ji+1}/{n_jitters}: failed")
+            continue
+
+    if best_result is not None:
+        elapsed = _time.perf_counter() - _t_start
+        rel_rmse = np.sqrt(best_rss / N) / z_max if z_max > 0 else 0.0
+        n_sig = int(np.sum(best_result[1][0::3] > 0.01 * best_result[1][0::3].max()))
+        _log(f"done — rel_RMSE={rel_rmse:.4f}, {n_sig} significant components, {elapsed:.3f}s total")
+        return best_result
+
+    # ── differential evolution fallback ─────────────────────────────
+    _log("local fits failed — trying differential evolution (global)...")
+    try:
+        de_bounds = list(zip(lower, upper))
+        z_scale = float(np.max(np.abs(z_vals))) if np.any(z_vals) else 1.0
+        for i in range(n):
+            if not np.isfinite(de_bounds[3*i][1]):
+                de_bounds[3*i] = (de_bounds[3*i][0], 10.0 * z_scale * max_s)
+
+        result = differential_evolution(
+            _rss, bounds=de_bounds,
+            seed=0, maxiter=600, tol=1e-8,
+            x0=theta0, polish=True,
+        )
+        popt = result.x
+        fit_full = _sum_n_gauss1d(y_vals, *popt)
+        if np.all(np.isfinite(fit_full)) and np.any(fit_full > 0):
+            elapsed = _time.perf_counter() - _t_start
+            rel_rmse = np.sqrt(_rss(popt) / N) / z_max if z_max > 0 else 0.0
+            _log(f"DE converged — RSS={result.fun:.4g}, rel_RMSE={rel_rmse:.4f}, {elapsed:.3f}s total")
+            return fit_full, popt
+        _log("DE result invalid (non-finite or all-zero)")
+    except Exception as e:
+        _log(f"DE failed ({type(e).__name__}: {e})")
+
+    # ── ultimate fallback ───────────────────────────────────────────
+    elapsed = _time.perf_counter() - _t_start
+    _log(f"WARNING: all strategies failed — returning greedy init as-is ({elapsed:.3f}s total)")
+    popt = theta0
+    fit_full = _sum_n_gauss1d(y_vals, *popt)
     return fit_full, popt
 
 def spectrum_fun(A,om0,s,om):
@@ -902,6 +988,18 @@ def normalize_params(gauss_params, om):
     d_om = om[1] - om[0]
     integral = np.sum(total_spectrum) * d_om
     
+    if integral == 0.0 or not np.isfinite(integral):
+        # Spectrum has no overlap with the grid — return unmodified params
+        import warnings
+        warnings.warn(
+            "normalize_params: integral is zero or non-finite "
+            "(Gaussian centers likely outside the provided grid). "
+            "Returning un-normalised parameters.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+        return gauss_params
+
     # Scale all amplitudes by the normalization factor
     norm_factor = 1.0 / integral
     normalized = tuple(
@@ -1004,37 +1102,102 @@ def downsample(sig, p):
     k = m // p
     return sig.reshape(n, k, p).mean(axis=2)
 
-def project_to_density_matrix(M):
+def project_to_density_matrix(M, smooth_sigma=1.0, diag_smooth_sigma=1.5):
     """
-    Project a measured matrix to the nearest valid density matrix 
-    (Hermitian, PSD, trace 1) using eigenvalue thresholding.
+    Project a noisy measured matrix onto the set of valid density matrices
+    (Hermitian, PSD, trace 1) using diagonal-guided coherence smoothing.
+
+    The diagonal (populations) is the most trustworthy part of the measured
+    matrix.  Off-diagonal artifacts are grid-aligned because eigenvectors
+    of a noisy matrix are jagged.  This method bypasses eigendecomposition
+    for regularization entirely:
+
+    1. Extract & lightly smooth the diagonal → population envelope p(E).
+    2. Compute the normalized degree of coherence:
+           g(E₁, E₂) = M(E₁,E₂) / √(p(E₁)·p(E₂))
+       For a valid ρ, |g| ≤ 1 everywhere.  Grid artifacts live here but
+       are now scale-free, so smoothing is meaningful and isotropic.
+    3. Smooth g in 2D — removes grid noise without distorting the population
+       envelope.
+    4. Clamp |g| ≤ 1 — necessary condition for PSD.
+    5. Reconstruct: ρ̂(E₁,E₂) = g_smooth(E₁,E₂) · √(p(E₁)·p(E₂))
+    6. Light simplex projection of eigenvalues as final PSD + trace 1
+       guarantee (small correction on an already near-physical matrix).
+
+    The diagonal controls the spatial shape of features; the coherence
+    controls structure within that envelope.  Grid artifacts cannot survive
+    step 3 because they are high-frequency noise in the coherence domain.
 
     Parameters:
-        M (np.ndarray): Measured matrix (complex)
+        M                (np.ndarray): Measured matrix (complex)
+        smooth_sigma     (float):      Gaussian σ for coherence smoothing
+                                       (grid pixels).  Default 1.5.
+        diag_smooth_sigma (float):     Gaussian σ for diagonal (population)
+                                       smoothing.  Default 2.0.
 
     Returns:
         np.ndarray: Valid density matrix
     """
+    d = M.shape[0]
+    eps = 1e-20  # numerical floor to avoid division by zero
+
     # Step 1: Hermitize
-    M = (M + M.conj().T) / 2
+    H = (M + M.conj().T) / 2
 
-    # Step 2: Eigen-decomposition
-    eigvals, eigvecs = np.linalg.eigh(M)
+    # Step 2: Extract diagonal, smooth it, clip ≥ 0 → population envelope
+    p = np.real(np.diag(H)).copy()
+    if diag_smooth_sigma > 0:
+        p = gaussian_filter(p, sigma=diag_smooth_sigma)
+    # p = np.maximum(p, 0.0)
+    p = np.abs(p)
 
-    # Step 3: Threshold negative eigenvalues
-    eigvals_clipped = np.clip(eigvals, 0, None)
+    # Normalize populations to sum to 1
+    p_sum = np.sum(p)
+    if p_sum <= 0:
+        return np.eye(d, dtype=complex) / d
+    p = p / p_sum
 
-    # If all eigenvalues are zero (extreme noise), avoid division by zero
-    if np.sum(eigvals_clipped) == 0:
-        # Return maximally mixed state
-        d = M.shape[0]
-        return np.eye(d) / d
+    # Step 3: Build the population envelope matrix √(pᵢ·pⱼ)
+    sqrt_p = np.sqrt(p)
+    envelope = np.outer(sqrt_p, sqrt_p)  # shape (d, d), all ≥ 0
 
-    # Step 4: Renormalize eigenvalues to trace = 1
-    eigvals_normalized = eigvals_clipped / np.sum(eigvals_clipped)
+    # Step 4: Normalize to degree-of-coherence: g = H / envelope
+    #   Where envelope is tiny, coherence is undefined → set to 0
+    H_norm = H / p_sum  # scale H to match normalized populations
+    safe_envelope = np.where(envelope > eps, envelope, 1.0)
+    g = np.where(envelope > eps, H_norm / safe_envelope, 0.0)
 
-    # Step 5: Reconstruct density matrix
-    rho = eigvecs @ np.diag(eigvals_normalized) @ eigvecs.conj().T
+    # Step 5: Smooth the coherence matrix (real & imag independently)
+    if smooth_sigma > 0:
+        g = (gaussian_filter(np.real(g), sigma=smooth_sigma)
+             + 1j * gaussian_filter(np.imag(g), sigma=smooth_sigma))
+        # Re-Hermitize
+        g = (g + g.conj().T) / 2
+
+    # Step 6: Clamp |g| ≤ 1  (necessary for PSD, preserves phase)
+    g_abs = np.abs(g)
+    excess = g_abs > 1.0
+    g[excess] = g[excess] / g_abs[excess]
+
+    # Force diagonal of g to exactly 1 (populations are handled by envelope)
+    np.fill_diagonal(g, 1.0)
+
+    # Step 7: Reconstruct  ρ̂ = g ⊙ envelope  (Hadamard product)
+    rho = g * envelope
+
+    # Step 8: Light simplex projection for strict PSD + trace 1
+    eigvals, eigvecs = np.linalg.eigh(rho)
+    n = len(eigvals)
+    u = np.sort(eigvals)[::-1]
+    cssv = np.cumsum(u)
+    rho_idx = np.nonzero(u * np.arange(1, n + 1) > (cssv - 1))[0]
+    if len(rho_idx) == 0:
+        return np.eye(d, dtype=complex) / d
+    rho_idx = rho_idx[-1]
+    tau = (cssv[rho_idx] - 1.0) / (rho_idx + 1.0)
+    eigvals_proj = np.maximum(eigvals - tau, 0.0)
+
+    rho = eigvecs @ np.diag(eigvals_proj) @ eigvecs.conj().T
 
     return rho
 
