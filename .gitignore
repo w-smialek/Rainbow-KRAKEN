@@ -2,5 +2,6 @@
 /single_output/
 /single_output_temp/
 /single_output_naive/
+/WF_gif/
 # Keep the directory itself by tracking a .gitkeep file (create it if needed)
 !/ims/.gitkeep

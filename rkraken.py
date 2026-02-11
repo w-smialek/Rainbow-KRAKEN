@@ -1,6 +1,7 @@
 import numpy as np
 from numpy import pi
 import matplotlib.pyplot as plt
+import matplotlib.ticker as ticker
 from math import floor
 from scipy.optimize import curve_fit, differential_evolution
 from scipy.signal import fftconvolve, find_peaks, peak_widths
@@ -11,6 +12,9 @@ from scipy.special import i0e, i1e
 from scipy.optimize import brentq
 from scipy.interpolate import RectBivariateSpline
 from scipy.linalg import sqrtm
+import glob
+from PIL import Image
+
 
 # Reduced Planck constant in eV*fs (approx CODATA): ħ = 6.582119569e-16 eV·s
 hbar = 6.582119569e-1
@@ -123,30 +127,49 @@ def CFT(T_range, signal, use_window=True, inverse=False, zero_pad=0):
 
     return spec_shift, OM_T, energy_axis_shift[0], energy_axis_shift[-1]
 
+def _style_ax(ax):
+    """Apply professional tick styling to an axes object."""
+    _tick_kw = dict(fontsize=9)
+    ax.tick_params(axis='both', which='major', direction='in', length=5, width=0.4,
+                   top=True, right=True, labelsize=_tick_kw['fontsize'])
+    # ax.tick_params(axis='both', which='minor', direction='in', length=2.5, width=0.5,
+    #                top=True, right=True)
+    # ax.xaxis.set_minor_locator(ticker.AutoMinorLocator())
+    # ax.yaxis.set_minor_locator(ticker.AutoMinorLocator())
+    for spine in ax.spines.values():
+        spine.set_linewidth(0.8)
+
 def plot_mat(mat,extent=[0,1,0,1],cmap='plasma',mode='phase',show=True,saveloc=None,caption=None,xlabel='x',ylabel='y',title=None):
+
+    _label_kw = dict(fontsize=10,)
+    _title_kw = dict(fontsize=11, fontweight='semibold')
 
     if mode == 'abs':
         plt.figure()
         im = plt.imshow(np.abs(mat), extent=extent, origin='lower', aspect='auto', cmap=cmap)
-        plt.xlabel(xlabel)
-        plt.ylabel(ylabel)
+        plt.xlabel(xlabel, **_label_kw)
+        plt.ylabel(ylabel, **_label_kw)
         if title:
-            plt.title(title)
+            plt.title(title, **_title_kw)
         else:
-            plt.title('|M|')
+            plt.title('|M|', **_title_kw)
         plt.colorbar(im)
         if caption is not None:
             plt.text(0.02, 0.98, caption, transform=plt.gca().transAxes, 
                     fontsize=10, verticalalignment='top', horizontalalignment='left',
                     color='white', weight='bold',
                     path_effects=[pe.withStroke(linewidth=2, foreground='black')])
+        _style_ax(plt.gca())
 
     elif mode == 'phase':
         fig, axes = plt.subplots(1, 2, figsize=(10, 4), sharex=True, sharey=True)
         im0 = axes[0].imshow(np.abs(mat), extent=extent, origin='lower', aspect='auto', cmap=cmap)
-        axes[0].set_title('|M|')
-        axes[0].set_xlabel(xlabel)
-        axes[0].set_ylabel(ylabel)
+        if title:
+            axes[0].set_title(title, **_title_kw)
+        else:
+            axes[0].set_title('|M|', **_title_kw)
+        axes[0].set_xlabel(xlabel, **_label_kw)
+        axes[0].set_ylabel(ylabel, **_label_kw)
         fig.colorbar(im0, ax=axes[0])
         if caption is not None:
             axes[0].text(0.02, 0.98, caption, transform=axes[0].transAxes, 
@@ -155,21 +178,23 @@ def plot_mat(mat,extent=[0,1,0,1],cmap='plasma',mode='phase',show=True,saveloc=N
                         path_effects=[pe.withStroke(linewidth=2, foreground='black')])
 
         im1 = axes[1].imshow(np.angle(mat), extent=extent, origin='lower', aspect='auto', cmap='hsv', vmin=-np.pi, vmax=np.pi)
-        axes[1].set_title('arg(M)')
-        axes[1].set_xlabel(xlabel)
+        axes[1].set_title('arg(M)', **_title_kw)
+        axes[1].set_xlabel(xlabel, **_label_kw)
         fig.colorbar(im1, ax=axes[1])
 
         if title:
-            fig.suptitle(title)
+            fig.suptitle(title, **_title_kw)
 
+        for ax in axes:
+            _style_ax(ax)
         plt.tight_layout()
 
     elif mode == 'reim':
         fig, axes = plt.subplots(1, 2, figsize=(10, 4), sharex=True, sharey=True)
         im0 = axes[0].imshow(np.real(mat), extent=extent, origin='lower', aspect='auto', cmap=cmap)
-        axes[0].set_title('Re{M}')
-        axes[0].set_xlabel(xlabel)
-        axes[0].set_ylabel(ylabel)
+        axes[0].set_title('Re{M}', **_title_kw)
+        axes[0].set_xlabel(xlabel, **_label_kw)
+        axes[0].set_ylabel(ylabel, **_label_kw)
         fig.colorbar(im0, ax=axes[0])
         if caption is not None:
             axes[0].text(0.02, 0.98, caption, transform=axes[0].transAxes, 
@@ -178,17 +203,19 @@ def plot_mat(mat,extent=[0,1,0,1],cmap='plasma',mode='phase',show=True,saveloc=N
                         path_effects=[pe.withStroke(linewidth=2, foreground='black')])
 
         im1 = axes[1].imshow(np.imag(mat), extent=extent, origin='lower', aspect='auto', cmap=cmap)
-        axes[1].set_title('Im{M}')
-        axes[1].set_xlabel(xlabel)
+        axes[1].set_title('Im{M}', **_title_kw)
+        axes[1].set_xlabel(xlabel, **_label_kw)
         fig.colorbar(im1, ax=axes[1])
 
         if title:
-            fig.suptitle(title)
+            fig.suptitle(title, **_title_kw)
 
+        for ax in axes:
+            _style_ax(ax)
         plt.tight_layout()
 
     if saveloc:
-        plt.savefig(saveloc,dpi=400)
+        plt.savefig(saveloc,dpi=400,bbox_inches='tight')
     if show:
         plt.show()
     plt.close()
@@ -594,17 +621,34 @@ def sp_tot(gausses,om):
         retval += spectrum_fun(a0,om0,s0,om)
     return retval
 
-def extract_midslice(sig_full,slice_fracts,sliced_range):
-    n_t, n_e = sig_full.shape
-    mid_emrange_lo, mid_emrange_hi = slice_fracts
+def extract_midslice(sig_full,slice_fracts,sliced_range,e_slice_fracts=None,e_sliced_range=None):
+    if e_slice_fracts is None:
+        n_t, n_e = sig_full.shape
+        mid_emrange_lo, mid_emrange_hi = slice_fracts
 
-    i0 = floor(n_t*mid_emrange_lo)
-    i1 = floor(n_t*mid_emrange_hi)+1
+        i0 = floor(n_t*mid_emrange_lo)
+        i1 = floor(n_t*mid_emrange_hi)+1
 
-    axis_mid = sliced_range[i0:i1]
-    sig_mid = sig_full[i0:i1,:]
+        axis_mid = sliced_range[i0:i1]
+        sig_mid = sig_full[i0:i1,:]
 
-    return sig_mid, axis_mid, i0, i1
+        return sig_mid, axis_mid, i0, i1
+    else:
+        n_t, n_e = sig_full.shape
+        mid_emrange_lo, mid_emrange_hi = slice_fracts
+        mid_erange_lo, mid_erange_hi = e_slice_fracts
+
+        i0 = floor(n_t*mid_emrange_lo)
+        i1 = floor(n_t*mid_emrange_hi)+1
+
+        e_i0 = floor(n_e*mid_erange_lo)
+        e_i1 = floor(n_e*mid_erange_hi)+1
+
+        axis_mid = sliced_range[i0:i1]
+        e_axis_mid = e_sliced_range[e_i0:e_i1]
+        sig_mid = sig_full[i0:i1, e_i0:e_i1]
+
+        return sig_mid, axis_mid, i0, i1, e_axis_mid, e_i0, e_i1
 
 def detrend_spike(sig_mid,row_axis,n_spike_buffer,n_fitting_buffer,N_E=None,above_thresh_mask=False,plot=False):
 
@@ -697,7 +741,8 @@ def synth_baseline(sp_pr,sp_x,om_pr,om_x,T):
     f2 = sp_x * phase0
     conv2 = fftconvolve(f1,f2,mode='same',axes=1)*d_om
 
-    return conv1 + conv2
+    # return conv1 + conv2
+    return conv2
 
 def synth_baseline_hermit(input,sp_x,om_pr,om_x,T):
     d_om = om_x[1]-om_x[0]
@@ -715,7 +760,8 @@ def synth_baseline_hermit(input,sp_x,om_pr,om_x,T):
     conv2 = fftconvolve(f1,f2[:,::-1],mode='same',axes=1)*d_om
     conv2 = -conv2/om_pr * np.conjugate(phase1)
 
-    return np.sum(conv1 + conv2, axis=0)
+    # return np.sum(conv1 + conv2, axis=0)
+    return np.sum(conv2, axis=0)
 
 def plotc(ar):
     plt.plot(np.abs(ar))
@@ -770,6 +816,7 @@ def reconstruct_WirtFlow(sig_measrd,sp_probe,sp_xuv,om_probe,om_xuv,T,b_est,
     mus = []
     diffs = []
     coarse_bin = 10
+    gif_frame_idx = 0
 
     for i_iter in range(n_main_iter):
 
@@ -796,48 +843,113 @@ def reconstruct_WirtFlow(sig_measrd,sp_probe,sp_xuv,om_probe,om_xuv,T,b_est,
 
         print(i_iter)
 
-        if i_iter%int(ifplot)==ifplot-1 and bool(ifplot):
-            # fig, axes = plt.subplots(2, 1, figsize=(8, 6))
+        # if i_iter%int(ifplot)==ifplot-1 and bool(ifplot):
+        #     # fig, axes = plt.subplots(2, 1, figsize=(8, 6))
             
-            fig, axes = plt.subplots(3, 1, figsize=(8, 10))
-            axes[2].plot(diffs)
-            axes[2].set_yscale('log')
+        #     fig, axes = plt.subplots(3, 1, figsize=(8, 10))
+        #     axes[2].plot(diffs)
+        #     axes[2].set_yscale('log')
 
-            # axes[0].plot(np.real(z), label='Re(z)')
-            # axes[0].plot(np.imag(z), label='Im(z)')
-            # axes[0].plot(np.real(sp_probe), label='Re(sp_probe)')
-            # axes[0].plot(np.imag(sp_probe), label='Im(sp_probe)')
+        #     # axes[0].plot(np.real(z), label='Re(z)')
+        #     # axes[0].plot(np.imag(z), label='Im(z)')
+        #     # axes[0].plot(np.real(sp_probe), label='Re(sp_probe)')
+        #     # axes[0].plot(np.imag(sp_probe), label='Im(sp_probe)')
 
-            axes[0].plot(normalize_abs(np.abs(z)), label='Abs(z)')
-            axes[0].plot(normalize_abs(np.abs(sp_probe)), label='Abs(sp_probe)')
-            # axes[0].plot(np.angle(z), label='Abs(z)')
-            # axes[0].plot(np.angle(sp_probe), label='Abs(sp_probe)')
+        #     axes[0].plot(normalize_abs(np.abs(z)), label='Abs(z)')
+        #     axes[0].plot(normalize_abs(np.abs(sp_probe)), label='Abs(sp_probe)')
+        #     # axes[0].plot(np.angle(z), label='Abs(z)')
+        #     # axes[0].plot(np.angle(sp_probe), label='Abs(sp_probe)')
 
-            axes[0].set_title('Current spectrum estimate')
-            axes[0].legend()
+        #     axes[0].set_title('Current spectrum estimate')
+        #     axes[0].legend()
 
-            axes[1].plot(ers, label='Relative MSE')
-            axes[1].set_yscale('log')
-            axes[1].set_title('Error history')
-            axes[1].set_xlabel('Recorded iteration')
-            axes[1].legend()
-            if ers:
-                last_val = ers[-1]
-                axes[1].text(
-                    0.02, 0.1,
-                    f'Iter {i_iter}: {last_val:.5f}',
-                    transform=axes[1].transAxes,
-                    fontsize=10,
-                    color='white',
-                    weight='bold',
-                    ha='left',
-                    va='top',
-                    path_effects=[pe.withStroke(linewidth=1, foreground='black')]
-                )
+        #     axes[1].plot(ers, label='Relative MSE')
+        #     axes[1].set_yscale('log')
+        #     axes[1].set_title('Error history')
+        #     axes[1].set_xlabel('Recorded iteration')
+        #     axes[1].legend()
+        #     if ers:
+        #         last_val = ers[-1]
+        #         axes[1].text(
+        #             0.02, 0.1,
+        #             f'Iter {i_iter}: {last_val:.5f}',
+        #             transform=axes[1].transAxes,
+        #             fontsize=10,
+        #             color='white',
+        #             weight='bold',
+        #             ha='left',
+        #             va='top',
+        #             path_effects=[pe.withStroke(linewidth=1, foreground='black')]
+        #         )
+
+        #     plt.tight_layout()
+        #     plt.savefig('single_output_temp/WF_diag/spectrum_convergence_iter%.3f_%i.png'%(alph,nt))
+        #     plt.close()
+        if i_iter%int(ifplot)==ifplot-1 and bool(ifplot):
+            fig = plt.figure(figsize=(12, 8))
+            ax_tl = fig.add_subplot(2, 2, 1)
+            ax_tr = fig.add_subplot(2, 2, 2)
+            ax_bot = fig.add_subplot(2, 1, 2)
+
+            # Top-left: measured signal (2D image)
+            ax_tl.imshow(np.abs(sig_measrd), aspect='auto', origin='lower', cmap='plasma')
+            ax_tl.set_title('Measured signal',fontsize=10, fontweight='semibold')
+            ax_tl.set_xlabel('Energy index')
+            ax_tl.set_ylabel('Time index')
+
+            # Top-right: current sbforward (2D image)
+            ax_tr.imshow(np.abs(sbforward)**2 + b_est, aspect='auto', origin='lower', cmap='plasma')
+            ax_tr.set_title('Current forward model',fontsize=10, fontweight='semibold')
+            ax_tr.set_xlabel('Energy index')
+            ax_tr.set_ylabel('Time index')
+
+            # Bottom: reconstructed vs true spectrum (abs + phase)
+            # Align global phase of z to sp_probe: find phi that minimizes ||z*e^{i*phi} - sp_probe||
+            global_phase = np.angle(np.sum(np.conj(z) * sp_probe))
+            z_aligned = z * np.exp(1j * global_phase)
+
+            abs_z = normalize_abs(np.abs(z_aligned))
+            abs_sp = normalize_abs(np.abs(sp_probe))
+            ax_bot.plot(abs_z, label='Reconstructed (abs)', linewidth = 1.2)
+            ax_bot.plot(abs_sp, label='True (abs)', alpha=0.7, linewidth = 1.8)
+
+            # Phase masked where magnitude < 5% of peak
+            phase_z = np.angle(z_aligned).copy()
+            phase_sp = np.angle(sp_probe).copy()
+            thresh_z = 0.05 * np.max(np.abs(z_aligned))
+            thresh_sp = 0.05 * np.max(np.abs(sp_probe))
+            phase_z[np.abs(z) < thresh_z] = np.nan
+            phase_sp[np.abs(sp_probe) < thresh_sp] = np.nan
+
+            ax_phase = ax_bot.twinx()
+            ax_phase.plot(phase_z+np.pi, '--', label='Reconstructed (phase)', color='C0', alpha=0.6)
+            ax_phase.plot(phase_sp+np.pi, '--', label='True (phase)', color='C1', alpha=0.6)
+            ax_phase.set_ylabel('Phase [rad]')
+            ax_phase.set_ylim(-0.2,2*np.pi)
+
+            # Combine legends from both axes
+            lines1, labels1 = ax_bot.get_legend_handles_labels()
+            lines2, labels2 = ax_phase.get_legend_handles_labels()
+            ax_bot.legend(lines1 + lines2, labels1 + labels2, loc='upper right', fontsize=8)
+
+            ax_bot.set_title('Spectrum estimate',fontsize=10, fontweight='semibold')
+            ax_bot.text(
+                0.02, 0.06,
+                f'Iter {i_iter+1}',
+                transform=ax_bot.transAxes,
+                fontsize=14,
+                color='white',
+                weight='bold',
+                ha='left',
+                va='bottom',
+                path_effects=[pe.withStroke(linewidth=2, foreground='black')]
+            )
 
             plt.tight_layout()
             plt.savefig('single_output_temp/WF_diag/spectrum_convergence_iter%.3f_%i.png'%(alph,nt))
+            plt.savefig('WF_gif/frame_%04d.png' % gif_frame_idx, dpi=100)
             plt.close()
+            gif_frame_idx += 1
 
             if diffs[-1] < eps:
                 break
@@ -847,6 +959,20 @@ def reconstruct_WirtFlow(sig_measrd,sp_probe,sp_xuv,om_probe,om_xuv,T,b_est,
             # if i_iter - np.argmax(avgs)*10 > lastmax_margin and avgs[-1] < avgs[-2] and (not ifwait or avgs[-1] > avgs[0]) :
             #     break
 
+
+    # Assemble GIF from saved frames
+    frame_files = sorted(glob.glob('WF_gif/frame_*.png'))
+    if frame_files:
+        frames = [Image.open(f) for f in frame_files]
+        frames[0].save(
+            'WF_gif/convergence.gif',
+            save_all=True,
+            append_images=frames[1:],
+            duration=200,
+            loop=0
+        )
+        for f in frames:
+            f.close()
 
     return z, ers[-1]
 
@@ -944,29 +1070,31 @@ def modulating_function_multi(om_t,ene_Eg,pulse_params_x,probes,big_sigma=0):
     ###
     ### MODULATING FUNCTION NEEDS TO TAKE INTO ACCOUNT FT WINDOW IF USED (not done)
 
-    tau_x,A_x,om0_x,s_x,phi_x = pulse_params_x
-
     retval = 0
     A_tot = 0
 
-    for probe in probes:
-        tau_p,A_p,om0_p,s_p,phi_p = probe
-        s_pp = s_p+big_sigma
+    for xuv_now in pulse_params_x:
+        for probe in probes:
 
-        # Frequency-domain widths combine as s = sqrt(s_x^2 + s_p^2)
-        s = np.sqrt(s_x**2 + s_pp**2)
-        # Time-domain width for the cross term (amplitude-level) combines as
-        # s_t = sqrt(1/s_x^2 + 1/s_p^2)
-        s_t = np.sqrt(1/s_x**2 + 1/s_pp**2)
+            tau_x,A_x,om0_x,s_x,phi_x = xuv_now
 
-        delta_p = om0_x + om0_p - ene_Eg/hbar
-        # Center of the ω_t Gaussian for the cross term in the amplitude model
-        # Derived form: om_t center at -delta_E, where
-        # delta_E = om0_x - ene_Eg/hbar - (s_x^2/s^2) * delta_p
-        delta_E = om0_x - ene_Eg/hbar - (s_x**2/s**2) * delta_p
+            tau_p,A_p,om0_p,s_p,phi_p = probe
+            s_pp = s_p+big_sigma
 
-        # Use amplitude detuning factor (delta_p/s)^2, and ω_t Gaussian centered at -delta_E
-        retval += A_p/(s_pp) * np.exp(-0.5*((delta_p/s)**2 + (s_t * (om_t + delta_E))**2))
+            # Frequency-domain widths combine as s = sqrt(s_x^2 + s_p^2)
+            s = np.sqrt(s_x**2 + s_pp**2)
+            # Time-domain width for the cross term (amplitude-level) combines as
+            # s_t = sqrt(1/s_x^2 + 1/s_p^2)
+            s_t = np.sqrt(1/s_x**2 + 1/s_pp**2)
+
+            delta_p = om0_x + om0_p - ene_Eg/hbar
+            # Center of the ω_t Gaussian for the cross term in the amplitude model
+            # Derived form: om_t center at -delta_E, where
+            # delta_E = om0_x - ene_Eg/hbar - (s_x^2/s^2) * delta_p
+            delta_E = om0_x - ene_Eg/hbar - (s_x**2/s**2) * delta_p
+
+            # Use amplitude detuning factor (delta_p/s)^2, and ω_t Gaussian centered at -delta_E
+            retval += A_x * A_p/(s_pp) * np.exp(-0.5*((delta_p/s)**2 + (s_t * (om_t + delta_E))**2))
 
     return retval
 
@@ -1018,7 +1146,105 @@ def correcting_function_multi(om_t,ene_Eg,pulse_params_x,probes,dzeta=1e-6,theta
     correction_plus = om_t*mod2_plus/mod_plus
     correction_plus[correction_plus>theta] = 0
     correction_plus[err_area_plus] = 0
+
+    plot_mat(correction_plus,saveloc='bbs_gauss.png')
+
     return correction_plus
+
+def correcting_function_synth(T_range, T_grid,
+                               sp_probe, sp_xuv, om_probe, om_xuv,
+                               sp_ref=None,
+                               p_E=1,
+                               dzeta=1e-6, theta=1, use_window=True):
+    """
+    Compute correction function from the ratio of synthetic signal FTs.
+
+    Instead of relying on a Gaussian decomposition of the probe, this function
+    generates clean (noise-free, high-resolution) synthetic signals using
+    ``synth_baseline`` with the *actual* probe spectrum and with a *flat*
+    (constant-amplitude) probe, FTs both along time, and returns the
+    regularised magnitude ratio:
+
+        correction = |FT(sig_flat)| / |FT(sig_actual)|
+
+    The ratio undoes the probe spectral-shape modulation imprinted on the
+    measured sideband signal, without assuming any parametric form for the
+    probe.
+
+    Parameters
+    ----------
+    T_range : 1-D array (N_T,)
+        Uniformly spaced time sample points.
+    T_grid : 2-D array (N_T, N_E_up)
+        Time meshgrid matching the spectral arrays (e.g. ``self.T_up``).
+    sp_probe : 1-D array (N_E_up,)
+        Probe spectrum evaluated on *om_probe*.
+    sp_xuv : 1-D array (N_E_up,)
+        XUV spectrum evaluated on *om_xuv*.
+    om_probe : 1-D array (N_E_up,)
+        Probe frequency grid.
+    om_xuv : 1-D array (N_E_up,)
+        XUV frequency grid.
+    sp_ref : 1-D array (N_E_up,), optional
+        Reference-arm spectrum on *om_probe*.  When given, the ref
+        cross-term (at T = 0) is added to both synthetic signals so that
+        probe–ref interference is properly accounted for.
+    p_E : int
+        Energy down-sampling factor (> 1 when spectra are upsampled).
+    dzeta : float
+        Where |FT_actual| < dzeta the correction is set to zero.
+    theta : float
+        Where the correction exceeds theta it is set to zero.
+    use_window : bool
+        Apply a Hann window in the CFT (should match the data processing).
+
+    Returns
+    -------
+    correction : 2-D array (N_T, N_E)
+        Multiplicative real correction in the (omega_t, E) domain.
+    """
+    om_probe_reg = regularize_omega(om_probe)
+    om_xuv_reg = regularize_omega(om_xuv)
+
+    # --- synthetic signal with actual probe ---
+    amplit_actual = synth_baseline(sp_probe, sp_xuv,
+                                   om_probe_reg, om_xuv_reg, T_grid)
+    if sp_ref is not None:
+        amplit_actual += synth_baseline(sp_ref, sp_xuv,
+                                        om_probe_reg, om_xuv_reg, 0 * T_grid)
+    if p_E > 1:
+        amplit_actual = downsample(amplit_actual, p_E)
+    sig_actual = np.abs(amplit_actual) ** 2
+
+    # --- synthetic signal with flat (constant) probe ---
+    sp_flat = np.ones_like(sp_probe)
+    amplit_flat = synth_baseline(sp_flat, sp_xuv,
+                                 om_probe_reg, om_xuv_reg, T_grid)
+    if sp_ref is not None:
+        amplit_flat += synth_baseline(sp_ref, sp_xuv,
+                                      om_probe_reg, om_xuv_reg, 0 * T_grid)
+    if p_E > 1:
+        amplit_flat = downsample(amplit_flat, p_E)
+    sig_flat = np.abs(amplit_flat) ** 2
+
+    # --- FT both along the time axis ---
+    FT_actual, _, _, _ = CFT(T_range, sig_actual, use_window=use_window)
+    FT_flat,   _, _, _ = CFT(T_range, sig_flat,   use_window=use_window)
+
+    # --- regularised ratio ---
+    abs_actual = np.abs(FT_actual)
+    abs_flat   = np.abs(FT_flat)
+
+    err_area = np.where(abs_actual < dzeta)
+    abs_actual[err_area] = 1.0            # safe denominator
+
+    correction = abs_flat / abs_actual
+    correction[correction > theta] = 0.0
+    correction[err_area] = 0.0
+
+    plot_mat(correction,saveloc='bbs.png')
+
+    return correction
 
 def new_Sig_cc_interp(re_spline, im_spline, om_t_vals, Ef_vals, grid=None):
     """

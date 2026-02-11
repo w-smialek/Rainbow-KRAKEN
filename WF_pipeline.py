@@ -47,7 +47,7 @@ hbar = 6.582119569e-1
 class RK_experiment:
     """Rainbow-KRAKEN experiment class for full pipeline processing."""
     
-    def __init__(self,E_lo=60.0,E_hi=63.5,T_reach=50,E_res=0.025,N_T=240,p_E=4,alpha=0.05,b=1,sb_lo=24.7,sb_hi=28,harmq_lo=22):
+    def __init__(self,E_lo=60.0,E_hi=63.5,T_reach=50,E_res=0.025,N_T=240,p_E=4,alpha=0.05,b=1,sb_lo=24.7,sb_hi=28,harmq_lo=22,if_coherent=True):
         # Field parameters
         self.E_lo = E_lo
         self.E_hi = E_hi
@@ -64,8 +64,11 @@ class RK_experiment:
         self.alpha = alpha
         self.b = b
         
+        # Coherence flag
+        self.if_coherent = if_coherent
+        
         # Noise and processing parameters
-        self.ifnoise = False
+        self.ifnoise = True
         # self.noise_area_Elo = 0.0  NOISE FLOOR SHOULD BE QUITE PRECISELY MEASURED BY CAPTURING WITH LASER OFF
         # self.noise_area_Ehi = 0.1
         self.sb_lo = sb_lo
@@ -139,14 +142,14 @@ class RK_experiment:
         self.om_xuv = (self.E/hbar - self.om_ref)[0,:]
         
         self.sp_xuv = rk.sp_tot(self.xuvs, self.om_xuv)
-        self.sp_probe = rk.sp_tot(self.probes, self.om_probe)
+        self.sp_probe = rk.sp_tot(self.probes, self.om_probe) #* np.exp(1j*(np.linspace(-np.pi,np.pi,np.size(self.om_probe)))**2)
         self.sp_ref = rk.sp_tot(self.refs, self.om_probe)
         
         self.om_probe_up = (self.E_up/hbar - ((self.E_lo/hbar+self.E_hi/hbar)/2-self.om_ref) + self.E_span/hbar/self.N_E_up/2 * ((self.N_E_up-1) % 2))[0,:]
         self.om_xuv_up = (self.E_up/hbar - self.om_ref)[0,:]
 
         self.sp_xuv_up = rk.sp_tot(self.xuvs, self.om_xuv_up)
-        self.sp_probe_up = rk.sp_tot(self.probes, self.om_probe_up)
+        self.sp_probe_up = rk.sp_tot(self.probes, self.om_probe_up) #* np.exp(1j*(np.linspace(-np.pi,np.pi,np.size(self.om_probe_up)))**2)
         self.sp_ref_up = rk.sp_tot(self.refs, self.om_probe_up)
         
         om_probe_up_emit = (self.E_up/hbar - ((self.E_lo/hbar+self.E_hi/hbar)/2+self.om_ref) + self.E_span/hbar/self.N_E_up/2 * ((self.N_E_up-1) % 2))[0,:]
@@ -185,25 +188,49 @@ class RK_experiment:
         plt.close()
         
         # Probe only for reference
-        self.synth_bsln = np.abs(rk.downsample(rk.synth_baseline(self.sp_probe_up, self.sp_xuv_up, 
-                                                          rk.regularize_omega(self.om_probe_up), rk.regularize_omega(self.om_xuv_up), self.T_up), self.p_E))**2
+        om_probe_reg = rk.regularize_omega(self.om_probe_up)
+        om_xuv_reg = rk.regularize_omega(self.om_xuv_up)
+        
+        if self.if_coherent:
+            self.synth_bsln = np.abs(rk.downsample(rk.synth_baseline(self.sp_probe_up, self.sp_xuv_up, 
+                                                              om_probe_reg, om_xuv_reg, self.T_up), self.p_E))**2
+        else:
+            # Incoherent: sum intensities from each XUV component separately
+            self.synth_bsln = np.zeros((self.N_T, self.N_E))
+            for xuv_i in self.xuvs:
+                sp_xuv_i = rk.sp_tot((xuv_i,), self.om_xuv_up)
+                self.synth_bsln += np.abs(rk.downsample(rk.synth_baseline(self.sp_probe_up, sp_xuv_i, 
+                                                              om_probe_reg, om_xuv_reg, self.T_up), self.p_E))**2
+        
         self.synth_bsln = self.rng.poisson(self.alpha*(self.synth_bsln)+self.b).astype(float) - self.b
         self.synth_bsln_FT, _, el, eh = rk.CFT(self.T_range, self.synth_bsln, use_window=False)
         
         # Synthetic full signal
-        sp_xuv_E = rk.sp_tot(self.xuvs,self.E_up/hbar)
-        amplit_tot_0 = rk.downsample(
-                                rk.synth_baseline(self.sp_probe_up, self.sp_xuv_up, 
-                                            rk.regularize_omega(self.om_probe_up), rk.regularize_omega(self.om_xuv_up), self.T_up)
-                                + rk.synth_baseline(self.sp_ref_up, self.sp_xuv_up, 
-                                            rk.regularize_omega(self.om_probe_up), rk.regularize_omega(self.om_xuv_up), self.T_up*0)
-                                # + rk.synth_baseline(sp_probe_up_emit, sp_xuv_up_emit, 
-                                #             rk.regularize_omega(om_probe_up_emit), rk.regularize_omega(om_xuv_up_emit), self.T_up) 
-                                # + rk.synth_baseline(sp_ref_up_emit, sp_xuv_up_emit, 
-                                #             rk.regularize_omega(om_probe_up_emit), rk.regularize_omega(om_xuv_up_emit), self.T_up*0)
-                                + sp_xuv_E
-                                ,self.p_E)
-        signal_clean = np.abs(amplit_tot_0)**2
+        if self.if_coherent:
+            sp_xuv_E = rk.sp_tot(self.xuvs, self.E_up/hbar)
+            amplit_tot_0 = rk.downsample(
+                                    rk.synth_baseline(self.sp_probe_up, self.sp_xuv_up, 
+                                                om_probe_reg, om_xuv_reg, self.T_up)
+                                    + rk.synth_baseline(self.sp_ref_up, self.sp_xuv_up, 
+                                                om_probe_reg, om_xuv_reg, self.T_up*0)
+                                    + sp_xuv_E
+                                    , self.p_E)
+            signal_clean = np.abs(amplit_tot_0)**2
+        else:
+            # Incoherent: sum |amplitude|^2 from each XUV component
+            signal_clean = np.zeros((self.N_T, self.N_E))
+            for xuv_i in self.xuvs:
+                sp_xuv_i = rk.sp_tot((xuv_i,), self.om_xuv_up)
+                sp_xuv_i_E = rk.sp_tot((xuv_i,), self.E_up/hbar)
+                amplit_i = rk.downsample(
+                                    rk.synth_baseline(self.sp_probe_up, sp_xuv_i, 
+                                                om_probe_reg, om_xuv_reg, self.T_up)
+                                    + rk.synth_baseline(self.sp_ref_up, sp_xuv_i, 
+                                                om_probe_reg, om_xuv_reg, self.T_up*0)
+                                    + sp_xuv_i_E
+                                    , self.p_E)
+                signal_clean += np.abs(amplit_i)**2
+        
         signal_clean *= self.alpha
         signal_clean += self.b
         
@@ -214,12 +241,6 @@ class RK_experiment:
             self.signal = self.rng.poisson(signal_clean).astype(float)
         
         print("N Total = %.2e"%np.sum(self.signal))
-    
-    def process_and_detrend(self):
-        """Process signal, estimate background, and perform detrending."""
-        # Processing starts here
-        # self.b_est = np.mean(self.signal[:,floor(self.noise_area_Elo*self.N_E):floor(self.noise_area_Ehi*self.N_E)])
-        # self.signal -= self.b_est
 
         self.signal -= self.b # NOISE FLOOR SHOULD BE QUITE PRECISELY MEASURED BY CAPTURING WITH LASER OFF
 
@@ -233,31 +254,64 @@ class RK_experiment:
         self.signal_harmq = np.zeros_like(self.signal)
         self.signal_harmq[:, harmq_lo_idx:sb_lo_idx+1] = self.signal[:, harmq_lo_idx:sb_lo_idx+1]
 
+        peak_sb_counts = int(np.max(self.signal_sb))
+        self.peak_sb_counts = peak_sb_counts
+    
+    def process_and_detrend(self):
+        """Process signal, estimate background, and perform detrending."""
+        # Processing starts here
+        # self.b_est = np.mean(self.signal[:,floor(self.noise_area_Elo*self.N_E):floor(self.noise_area_Ehi*self.N_E)])
+        # self.signal -= self.b_est
+
+
+
         # self.signal = self.signal_sb
         
-        peak_row_counts = np.max(np.sum(self.signal, axis=1))
-        print(peak_row_counts/self.alpha)
+
         
         rk.plot_mat(self.signal, extent=[self.E_lo,self.E_hi,-self.T_reach,self.T_reach],
-                caption='peak row counts: %.2e\nN_T: %i\nN_E: %i\nT_res: %.2f fs\nE_res: %.3f eV'%(
-                    peak_row_counts,self.N_T,self.N_E,2*self.T_reach/self.N_T,self.E_res),
-                saveloc='single_output_temp/pipeline_diag/measured_signal.png')
+                caption='Peak sb counts: %i\nN_T: %i\nN_E: %i\nT_res: %.2f fs\nE_res: %.3f eV'%(
+                    self.peak_sb_counts,self.N_T,self.N_E,2*self.T_reach/self.N_T,self.E_res),
+                saveloc='single_output_temp/pipeline_diag/measured_signal.png',xlabel='Kinetic energy (eV)',ylabel='Time (fs)')
         
         rk.plot_mat(self.signal_sb, extent=[self.E_lo,self.E_hi,-self.T_reach,self.T_reach],
-                caption='peak row counts: %.2e\nN_T: %i\nN_E: %i\nT_res: %.2f fs\nE_res: %.3f eV'%(
-                    peak_row_counts,self.N_T,self.N_E,2*self.T_reach/self.N_T,self.E_res),
-                saveloc='single_output_temp/pipeline_diag/measured_signal_sb.png')
+                # caption='Peak sb counts: %i\nN_T: %i\nN_E: %i\nT_res: %.2f fs\nE_res: %.3f eV'%(
+                #     self.peak_sb_counts,self.N_T,self.N_E,2*self.T_reach/self.N_T,self.E_res),
+                saveloc='single_output_temp/pipeline_diag/measured_signal_sb.png',xlabel='Kinetic energy (eV)',ylabel='Time (fs)',title='Sideband signal')
         
         rk.plot_mat(self.signal_harmq, extent=[self.E_lo,self.E_hi,-self.T_reach,self.T_reach],
-                caption='peak row counts: %.2e\nN_T: %i\nN_E: %i\nT_res: %.2f fs\nE_res: %.3f eV'%(
-                    peak_row_counts,self.N_T,self.N_E,2*self.T_reach/self.N_T,self.E_res),
-                saveloc='single_output_temp/pipeline_diag/measured_signal_harmq.png')
+                caption='Peak sb counts: %i\nN_T: %i\nN_E: %i\nT_res: %.2f fs\nE_res: %.3f eV'%(
+                    self.peak_sb_counts,self.N_T,self.N_E,2*self.T_reach/self.N_T,self.E_res),
+                saveloc='single_output_temp/pipeline_diag/measured_signal_harmq.png',xlabel='Kinetic energy (eV)',ylabel='Time (fs)')
         
         self.amplit_tot_FT, self.OM_T, em_lo, em_hi = rk.CFT(self.T_range, self.signal_sb, use_window=False)
         self.amplit_tot_FT_wndw, self.OM_T, em_lo, em_hi = rk.CFT(self.T_range, self.signal_sb, use_window=True)
         
         rk.plot_mat(self.amplit_tot_FT_wndw, extent=[self.E_lo,self.E_hi,em_lo,em_hi],
                 saveloc='single_output_temp/pipeline_diag/raw_signal_FT.png', show=False)
+        
+        ROI_reach = 2.3
+        slice_fracts = (0.5*(1 - ROI_reach/em_hi), 0.5*(1 + ROI_reach/em_hi))
+        
+        amplit_tot_FT_ROI, em_axis_mid, i0, i1 = rk.extract_midslice(self.amplit_tot_FT, slice_fracts, hbar*self.OM_T[:,0])
+        
+        rk.plot_mat(np.minimum(amplit_tot_FT_ROI,4*self.peak_sb_counts), extent=[self.E_lo,self.E_hi,-ROI_reach,ROI_reach],
+                saveloc='single_output_temp/pipeline_diag/raw_signal_FT_ROI.png',xlabel='Kinetic energy (eV)',ylabel='Indirect energy (eV)', show=False,title='FT of the sideband signal')
+        
+        ROI_reach_lo = 1.0
+        ROI_reach_hi = 2.2
+        slice_fracts = (0.5*(1 + ROI_reach_lo/em_hi), 0.5*(1 + ROI_reach_hi/em_hi))
+        ROI_e_reach_lo = 25.0
+        ROI_e_reach_hi = 26.25
+        slice_e_fracts = ((ROI_e_reach_lo - self.E_lo) / (self.E_hi - self.E_lo), 
+                          (ROI_e_reach_hi - self.E_lo) / (self.E_hi - self.E_lo))
+        
+        amplit_tot_FT_ROI, em_axis_mid, i0, i1, e_axis_mid, e_i0, e_i1 = rk.extract_midslice(self.amplit_tot_FT, slice_fracts, hbar*self.OM_T[:,0],
+                                                                                             e_slice_fracts=slice_e_fracts, e_sliced_range=self.E[0,:])
+        
+        rk.plot_mat(np.minimum(amplit_tot_FT_ROI,4*self.peak_sb_counts), extent=[ROI_e_reach_lo,ROI_e_reach_hi,ROI_reach_lo,ROI_reach_hi],
+                saveloc='single_output_temp/pipeline_diag/raw_signal_FT_ROI2.png', show=False)
+        
         
         # Detrending - separating probe and ref zero freq component
         slice_fracts = (0.5*(1 - self.em_axis_mid_reach/em_hi), 0.5*(1 + self.em_axis_mid_reach/em_hi))
@@ -401,7 +455,7 @@ class RK_experiment:
         sp_rec, lasterr = rk.reconstruct_WirtFlow(sig_probe_reconstructed, self.sp_probe, 
                                              self.sp_xuv_meas_sig_fit, self.om_probe, self.om_xuv, 
                                              self.T, self.b, n_power_iter=50,
-                                             n_main_iter=3000, ifplot=50, median_regval=4, 
+                                             n_main_iter=3000, ifplot=250, median_regval=4, 
                                              lastmax_margin=np.sqrt(self.alpha)*700*np.sqrt(self.N_T/350), eps=1e-9,
                                              ifwait=False, alph=self.alpha, nt=self.N_T)
         
@@ -452,26 +506,59 @@ class RK_experiment:
         plt.savefig('single_output_temp/reconstructions/final_sp_probe_rec.png',dpi=300)
         plt.close()
         
-        # Apply corrections using various probe configurations
-        correction = rk.correcting_function_multi(self.OM_T, self.E, rk.normalize_params(self.xuvs, self.om_xuv)[0], 
+        # === Analytic Gaussian correction (correcting_function_multi) ===
+        correction = rk.correcting_function_multi(self.OM_T, self.E, rk.normalize_params(self.xuvs, self.om_xuv), 
                                              rk.normalize_params(self.probes, self.om_probe), 
                                              dzeta=self.dzeta_val, theta=self.theta_val)
+        rk.plot_mat(correction,saveloc='bbs_fin.png')
         self.amplit_tot_FT_corrected = correction*self.amplit_tot_FT_wndw
         self.amplit_tot_FT_corrected = median_filter(np.abs(self.amplit_tot_FT_corrected), size=(3,3))*np.exp(1j*np.angle(self.amplit_tot_FT_corrected))
         
-        correction_x = rk.correcting_function_multi(self.OM_T, self.E, rk.normalize_params(self.xuvs_rec, self.om_xuv)[0], 
-                                               rk.normalize_params(self.probes, self.om_probe), 
-                                               dzeta=self.dzeta_val, theta=self.theta_val)
+        correction_x = rk.correcting_function_multi(self.OM_T, self.E, rk.normalize_params(self.xuvs_rec, self.om_xuv), 
+                                             rk.normalize_params(self.probes, self.om_probe), 
+                                             dzeta=self.dzeta_val, theta=self.theta_val)
         self.amplit_tot_FT_corrected_x = correction_x*self.amplit_tot_FT_wndw
         self.amplit_tot_FT_corrected_x = median_filter(np.abs(self.amplit_tot_FT_corrected_x), size=(3,3))*np.exp(1j*np.angle(self.amplit_tot_FT_corrected_x))
         
-        correction_rec_x = rk.correcting_function_multi(self.OM_T, self.E, rk.normalize_params(self.xuvs_rec, self.om_xuv)[0], 
-                                                   rk.normalize_params(self.probes_reconstructed, self.om_probe), 
-                                                   dzeta=self.dzeta_val, theta=self.theta_val)
+        correction_rec_x = rk.correcting_function_multi(self.OM_T, self.E, rk.normalize_params(self.xuvs_rec, self.om_xuv), 
+                                             rk.normalize_params(self.probes_reconstructed, self.om_probe), 
+                                             dzeta=self.dzeta_val, theta=self.theta_val)
         self.amplit_tot_FT_corrected_rec_x_nomedian = correction_rec_x*self.amplit_tot_FT_wndw
         self.amplit_tot_FT_corrected_rec_x = median_filter(np.abs(self.amplit_tot_FT_corrected_rec_x_nomedian), size=(3,3))*np.exp(1j*np.angle(self.amplit_tot_FT_corrected_rec_x_nomedian))
 
+        # # === Synthetic signal ratio correction (correcting_function_synth) ===
+        # sp_ref_corr = rk.sp_tot(self.refs, self.om_probe_up)
 
+        # # --- Correction 1: true XUV + true probe ---
+        # sp_xuv_corr = rk.sp_tot(self.xuvs, self.om_xuv_up)
+        # sp_probe_corr = rk.sp_tot(self.probes, self.om_probe_up)
+        # correction = rk.correcting_function_synth(
+        #     self.T_range, self.T_up,
+        #     sp_probe_corr, sp_xuv_corr, self.om_probe_up, self.om_xuv_up,
+        #     sp_ref=sp_ref_corr, p_E=self.p_E,
+        #     dzeta=self.dzeta_val, theta=self.theta_val)
+        # self.amplit_tot_FT_corrected = correction * self.amplit_tot_FT_wndw
+        # self.amplit_tot_FT_corrected = median_filter(np.abs(self.amplit_tot_FT_corrected), size=(3,3)) * np.exp(1j*np.angle(self.amplit_tot_FT_corrected))
+
+        # # --- Correction 2: reconstructed XUV + true probe ---
+        # sp_xuv_rec = rk.sp_tot(self.xuvs_rec, self.om_xuv_up)
+        # correction_x = rk.correcting_function_synth(
+        #     self.T_range, self.T_up,
+        #     sp_probe_corr, sp_xuv_rec, self.om_probe_up, self.om_xuv_up,
+        #     sp_ref=sp_ref_corr, p_E=self.p_E,
+        #     dzeta=self.dzeta_val, theta=self.theta_val)
+        # self.amplit_tot_FT_corrected_x = correction_x * self.amplit_tot_FT_wndw
+        # self.amplit_tot_FT_corrected_x = median_filter(np.abs(self.amplit_tot_FT_corrected_x), size=(3,3)) * np.exp(1j*np.angle(self.amplit_tot_FT_corrected_x))
+
+        # # --- Correction 3: reconstructed XUV + reconstructed probe ---
+        # sp_probe_rec = rk.sp_tot(self.probes_reconstructed, self.om_probe_up)
+        # correction_rec_x = rk.correcting_function_synth(
+        #     self.T_range, self.T_up,
+        #     sp_probe_rec, sp_xuv_rec, self.om_probe_up, self.om_xuv_up,
+        #     sp_ref=sp_ref_corr, p_E=self.p_E,
+        #     dzeta=self.dzeta_val, theta=self.theta_val)
+        # self.amplit_tot_FT_corrected_rec_x_nomedian = correction_rec_x * self.amplit_tot_FT_wndw
+        # self.amplit_tot_FT_corrected_rec_x = median_filter(np.abs(self.amplit_tot_FT_corrected_rec_x_nomedian), size=(3,3)) * np.exp(1j*np.angle(self.amplit_tot_FT_corrected_rec_x_nomedian))
     
     def resample_analyze(self):
         """Resample and analyze results to produce final density matrices."""
@@ -504,10 +591,18 @@ class RK_experiment:
         
         # Comparison with a ground truth
 
-        ### Ground truth - coherent sum
-        xuv_gt = rk.sp_tot(self.xuvs, E1[:,0]/hbar)
-        ideal_rho = xuv_gt[:,np.newaxis]@np.conjugate(xuv_gt[np.newaxis,:])
-        ideal_rho = rk.project_to_density_matrix(ideal_rho, smooth_sigma=0.1, diag_smooth_sigma=0.1)
+        if self.if_coherent:
+            ### Ground truth - coherent sum
+            xuv_gt = rk.sp_tot(self.xuvs, E1[:,0]/hbar)
+            ideal_rho = xuv_gt[:,np.newaxis]@np.conjugate(xuv_gt[np.newaxis,:])
+            ideal_rho = rk.project_to_density_matrix(ideal_rho, smooth_sigma=0.1, diag_smooth_sigma=0.1)
+        else:
+            ### Ground truth - incoherent sum of individual XUV component density matrices
+            ideal_rho = np.zeros((len(E1[:,0]), len(E1[:,0])), dtype=complex)
+            for xuv_i in self.xuvs:
+                xuv_gt_i = rk.sp_tot((xuv_i,), E1[:,0]/hbar)
+                ideal_rho += xuv_gt_i[:,np.newaxis]@np.conjugate(xuv_gt_i[np.newaxis,:])
+            ideal_rho = rk.project_to_density_matrix(ideal_rho, smooth_sigma=0.1, diag_smooth_sigma=0.1)
 
         ### Ground truth - arbitrary shape
         # ideal_rho =  np.exp(-((E1 - self.om0_xuv*hbar)/self.s_xuv)**2 - ((E2 - self.om0_xuv*hbar)/self.s_xuv)**2)
@@ -538,13 +633,13 @@ class RK_experiment:
                  title='Rho rec xuv and ideally corrected for the probe spectrum', show=False, caption='F=%.3f'%fid2)
         
         rk.plot_mat(rho_reconstructed_rec_x, extent=[self.rho_lo,self.rho_hi,self.rho_lo,self.rho_hi], cmap='plasma',
-                 mode='abs', saveloc='single_output_temp/rhos/rec_corr_x.png', xlabel='Energy [eV]', ylabel='Energy [eV]',
+                 mode='phase', saveloc='single_output_temp/rhos/rec_corr_x.png', xlabel='Energy [eV]', ylabel='Energy [eV]',
                  title='Rho rec xuv and WF rec probe', show=False, caption='F=%.3f'%fid3)
         
         rk.plot_mat(rho_reconstructed_rec_x_nomedian, extent=[self.rho_lo,self.rho_hi,self.rho_lo,self.rho_hi], cmap='plasma',
                  mode='abs', saveloc='single_output_temp/rhos/rec_corr_x_nomedian.png', xlabel='Energy [eV]', ylabel='Energy [eV]',
                  title='Rho rec xuv and WF rec probe', show=False, caption='F=%.3f'%fid4)
-        
+
         # Store results as instance attributes
         self.rho_uncorrected = rho_uncorrected
         self.rho_reconstructed = rho_reconstructed
@@ -554,56 +649,111 @@ class RK_experiment:
         self.ideal_rho = ideal_rho
         self.fidelities = [fid0, fid1, fid2, fid3, fid4]
 
+N_T_range = np.linspace(200,1000,10)
+# alpha_range = 10000*400/N_T_range
+alpha_range = np.linspace(10000*4/10,10000*4/2,10)
 
-# Example usage of the RK_experiment class
-if __name__ == "__main__":
+# Create meshgrids for 3D surface plots
+ALPHA, N_T_ar = np.meshgrid(alpha_range, N_T_range)
 
-    E_lo = 23.0
-    E_hi = 29
-    T_reach = 50
-    E_res = 0.025    
-    N_T = 330
-    p_E = 4  # N_E upsampling integer
-    alpha = 6000
-    b = 1
 
-    sideband_lo = 24.7
-    sideband_hi = 26.6
-    harmq_lo = 23.3
+fid1s = np.zeros_like(ALPHA)
+fid2s = np.zeros_like(ALPHA)
+fid3s = np.zeros_like(ALPHA)
+fid4s = np.zeros_like(ALPHA)
+PSBC = np.zeros_like(ALPHA)
 
-    # Create experiment instance
-    experiment = RK_experiment(E_lo=E_lo,E_hi=E_hi,T_reach=T_reach,E_res=E_res,N_T=N_T,p_E=p_E,alpha=alpha,b=b,sb_lo=sideband_lo,sb_hi=sideband_hi,harmq_lo=harmq_lo)
-    
-    # Define pulses
-    # A_xuv = 1.0
-    # a_xuvs = [1.0,1.0]
-    # om_xuvs = [10.65/hbar,(10.65+2*1.55)/hbar]
-    # s_xuvs = [0.15/hbar,0.18/hbar]
-    A_xuv = 0.1
-    a_xuvs = [0.6,0.01]
-    om_xuvs = [(25.65-1*1.75)/hbar,(25.65-1*1.73)/hbar]
-    s_xuvs = [0.20/hbar,0.10/hbar]
-    A_xuv = 0.1
-    a_xuvs = [1.0]
-    om_xuvs = [(25.65-1*1.55)/hbar]
-    s_xuvs = [0.15/hbar]
+for i_nt in range(len(N_T_range)):
+    for i_alpha in range(len(alpha_range)):
 
-    A_probe = 1.2
-    a_probes = [1.0,0.2,0.2,0.3]
-    om_probes = [1.55/hbar,1.20/hbar,2.00/hbar,1.85/hbar]
-    s_probes = [0.15/hbar,0.04/hbar,0.07/hbar,0.17/hbar]
+        alpha = ALPHA[i_alpha,i_nt]
+        N_T = int(N_T_ar[i_alpha,i_nt])
+        print(i_alpha,i_nt)
 
-    A_ref = 0.6
-    a_refs = [1.0,0.1]
-    om_refs = [1.55/hbar,1.55/hbar]
-    s_refs = [0.07/hbar,0.15/hbar]
+        # Example usage of the RK_experiment class
+        if __name__ == "__main__":
 
-    experiment.define_pulses(A_xuv,A_probe,A_ref,a_xuvs,a_probes,a_refs,om_xuvs,om_probes,om_refs,s_xuvs,s_probes,s_refs)
-    
-    # Run the full pipeline
-    experiment.generate_signal()
-    experiment.process_and_detrend()
-    experiment.kb_correct()
-    experiment.xuv_peak()
-    experiment.WF_reconstruct()
-    experiment.resample_analyze()
+            E_lo = 23.0
+            # E_hi = 29
+            E_hi = 26.7
+            T_reach = 50
+            # T_reach = 250
+            E_res = 0.025    
+            # E_res = 0.005    
+            # N_T = 430
+            # N_T = 1430
+            p_E = 4  # N_E upsampling integer
+            # alpha = 10000
+            # alpha = 10000
+            b = 1
+
+            sideband_lo = 24.7
+            sideband_hi = 26.6
+            harmq_lo = 23.3
+
+            if_coherent = True
+
+            # Create experiment instance
+            experiment = RK_experiment(E_lo=E_lo,E_hi=E_hi,T_reach=T_reach,E_res=E_res,N_T=N_T,p_E=p_E,alpha=alpha,b=b,
+                                    sb_lo=sideband_lo,sb_hi=sideband_hi,harmq_lo=harmq_lo,if_coherent=if_coherent)
+            
+            # Define pulses
+            # A_xuv = 1.0
+            # a_xuvs = [1.0,1.0]
+            # om_xuvs = [10.65/hbar,(10.65+2*1.55)/hbar]
+            # s_xuvs = [0.15/hbar,0.18/hbar]
+            A_xuv = 0.1
+            a_xuvs = [0.8,0.8]
+            om_xuvs = [(25.65-1*1.75)/hbar,(25.65-1*1.45)/hbar]
+            s_xuvs = [0.10/hbar,0.10/hbar]
+            # A_xuv = 0.1
+            # a_xuvs = [1.0]
+            # om_xuvs = [(25.65-1*1.40)/hbar]
+            # s_xuvs = [0.15/hbar]
+
+            A_probe = 1.2
+            a_probes = [1.0,0.2,0.2,0.3]
+            om_probes = [1.55/hbar,1.20/hbar,2.00/hbar,1.85/hbar]
+            s_probes = [0.15/hbar,0.04/hbar,0.07/hbar,0.17/hbar]
+
+            # # Flat-top probe (similar total width and avg amplitude)
+            # A_probe = 1.2
+            # a_probes = [0.35, 0.35, 0.35, 0.35, 0.35, 0.35]
+            # om_probes = [1.25/hbar, 1.39/hbar, 1.53/hbar, 1.67/hbar, 1.81/hbar, 1.95/hbar, 2.09/hbar]
+            # s_probes = [0.10/hbar, 0.10/hbar, 0.10/hbar, 0.10/hbar, 0.10/hbar, 0.10/hbar, 0.10/hbar]
+
+            A_ref = 0.6
+            a_refs = [1.0,0.01]
+            om_refs = [1.55/hbar,1.55/hbar]
+            s_refs = [0.07/hbar,0.15/hbar]
+
+            experiment.define_pulses(A_xuv,A_probe,A_ref,a_xuvs,a_probes,a_refs,om_xuvs,om_probes,om_refs,s_xuvs,s_probes,s_refs)
+            
+            # Run the full pipeline
+            experiment.generate_signal()
+            PSBC[i_alpha,i_nt] = experiment.peak_sb_counts
+
+            try:
+
+                experiment.process_and_detrend()
+                experiment.kb_correct()
+                experiment.xuv_peak()
+                experiment.WF_reconstruct()
+                experiment.resample_analyze()
+
+                fid1s[i_alpha,i_nt] = experiment.fidelities[1]
+                fid2s[i_alpha,i_nt] = experiment.fidelities[2]
+                fid3s[i_alpha,i_nt] = experiment.fidelities[3]
+                fid4s[i_alpha,i_nt] = experiment.fidelities[4]
+
+            except:
+                fid1s[i_alpha,i_nt] = 0
+                fid2s[i_alpha,i_nt] = 0
+                fid3s[i_alpha,i_nt] = 0
+                fid4s[i_alpha,i_nt] = 0
+            
+            # np.save('scans/newscan/fid1s400incoh.npy',fid1s)
+            # np.save('scans/newscan/fid2s400incoh.npy',fid2s)
+            # np.save('scans/newscan/fid3s400incoh.npy',fid3s)
+            # np.save('scans/newscan/fid4s400incoh.npy',fid4s)
+            # np.save('scans/newscan/PSBCincoh.npy',PSBC)

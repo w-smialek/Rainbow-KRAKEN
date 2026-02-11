@@ -467,7 +467,7 @@ class RK_experiment:
         # plt.close()
         
         # Apply corrections using various probe configurations
-        correction = rk.correcting_function_multi(self.OM_T, self.E, rk.normalize_params(self.xuvs, self.om_xuv)[0], 
+        correction = rk.correcting_function_multi(self.OM_T, self.E, rk.normalize_params(self.xuvs, self.om_xuv), 
                                              rk.normalize_params(self.probes, self.om_probe), 
                                              dzeta=self.dzeta_val, theta=self.theta_val)
         self.amplit_tot_FT_corrected = correction*self.amplit_tot_FT_wndw
@@ -492,8 +492,8 @@ class RK_experiment:
         # Resample and analyze
         rho_reconstructed, amplit_tot_FT_corrected_small, extent_small, idxs_small, E1, E2 = rk.resample(
             self.amplit_tot_FT_corrected, self.rho_hi, self.rho_lo, self.om_ref, self.E, self.OM_T, self.N_T)
-        # rho_reconstructed = rk.project_to_density_matrix(rho_reconstructed)
-        rho_reconstructed = 1/2*(rho_reconstructed + np.conjugate(np.transpose(rho_reconstructed)))
+        rho_reconstructed = rk.project_to_density_matrix(rho_reconstructed)
+        # rho_reconstructed = 1/2*(rho_reconstructed + np.conjugate(np.transpose(rho_reconstructed)))
 
         
         # rho_reconstructed_x, amplit_tot_FT_corrected_small, extent_small, idxs_small, _, _ = rk.resample(
@@ -582,6 +582,11 @@ if __name__ == "__main__":
     a_xuvs = [0.6,0.6]
     om_xuvs = [(25.65-1*1.55)/hbar,(25.65-1*1.87)/hbar]
     s_xuvs = [0.10/hbar,0.10/hbar]
+
+    A_xuv = 0.1
+    a_xuvs = [1.0]
+    om_xuvs = [(25.65-1*1.55)/hbar]
+    s_xuvs = [0.15/hbar]
 
     A_probe = 1.2
     a_probes = [1.0,0.2,0.2,0.3]
