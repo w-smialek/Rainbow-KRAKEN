@@ -118,6 +118,13 @@ def CFT(T_range, signal, use_window=True, inverse=False, zero_pad=0):
     energy_axis = hbar * omega
     energy_axis_shift = np.fft.fftshift(energy_axis)
 
+    # Trim back to original NT_local size (keep central frequency bins)
+    if zp > 0:
+        trim_lo = (N_eff - NT_local) // 2
+        trim_hi = trim_lo + NT_local
+        spec_shift = spec_shift[trim_lo:trim_hi, :]
+        energy_axis_shift = energy_axis_shift[trim_lo:trim_hi]
+
     OM_T = (energy_axis_shift / hbar)  # back to angular frequency ω
     OM_T = np.tile(OM_T, (NE_local, 1)).T
 

@@ -47,7 +47,7 @@ hbar = 6.582119569e-1
 class RK_experiment:
     """Rainbow-KRAKEN experiment class for full pipeline processing."""
     
-    def __init__(self,E_lo=60.0,E_hi=63.5,T_reach=50,E_res=0.025,N_T=240,p_E=4,alpha=0.05,b=1,sb_lo=24.7,sb_hi=28,harmq_lo=22,if_coherent=True):
+    def __init__(self,E_lo=60.0,E_hi=63.5,T_reach=50,E_res=0.025,N_T=240,p_E=4,alpha=0.05,b=1,sb_lo=24.7,sb_hi=28,harmq_lo=22,if_coherent=True,E_range=None):
         # Field parameters
         self.E_lo = E_lo
         self.E_hi = E_hi
@@ -92,11 +92,14 @@ class RK_experiment:
         self.rng = np.random.default_rng()
         
         # Initialize grids and pulses
-        self.prepare_grid()
+        self.prepare_grid(E_range=None)
     
-    def prepare_grid(self):
+    def prepare_grid(self,E_range=None):
         """Initialize energy and time grids and pulse configurations."""
-        self.E_range = np.linspace(self.E_lo, self.E_hi, self.N_E)
+        if E_range is None:
+            self.E_range = np.linspace(self.E_lo, self.E_hi, self.N_E)
+        else:
+            self.E_range = E_range
         self.T_range = np.linspace(-self.T_reach, self.T_reach, self.N_T)
         self.E, self.T = np.meshgrid(self.E_range, self.T_range)
         
@@ -135,7 +138,7 @@ class RK_experiment:
         
         self.refprobes = tuple(list(self.refs) + list(self.probes))
     
-    def generate_signal(self):
+    def generate_signal(self,exp_signal=None):
         """Generate synthetic baseline and full signal with optional noise."""
         # Synthetic baseline with known spectra
         self.om_probe = (self.E/hbar - ((self.E_lo/hbar+self.E_hi/hbar)/2-self.om_ref) + self.E_span/hbar/self.N_E/2 * ((self.N_E-1) % 2))[0,:]
@@ -162,26 +165,24 @@ class RK_experiment:
         test_conv = fftconvolve(self.sp_xuv_up,self.sp_probe_up,mode="same")
 
         # Plot the upsampled spectra with probe/ref on one axis, xuv on another
-        fig, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(10, 10))
+        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(8, 10))
         
         # Top subplot: Probe and Reference spectra
-        ax1.plot(om_probe_up_emit * hbar, sp_probe_up_emit, label='Probe spectrum', linewidth=2)
-        ax1.plot(om_probe_up_emit * hbar, sp_ref_up_emit, label='Reference spectrum', linewidth=2)
-        ax1.set_xlabel('Energy [eV]')
-        ax1.set_ylabel('Amplitude [arb. u.]')
-        ax1.set_title('Probe and Reference Spectra')
+        ax1.plot(self.om_probe_up * hbar, self.sp_probe_up, label='Probe spectrum', linewidth=2)
+        ax1.plot(self.om_probe_up * hbar, self.sp_ref_up, label='Reference spectrum', linewidth=2)
+        ax1.set_xlabel('Energy [eV]',fontweight='bold')
+        ax1.set_ylabel('Amplitude [arb. u.]',fontweight='bold')
+        ax1.set_title('Probe and Reference Spectra',fontweight='bold',fontsize=12)
         ax1.legend()
         ax1.grid(True, alpha=0.3)
         
         # Bottom subplot: XUV spectrum
-        ax2.plot(self.om_xuv_up * hbar, self.sp_xuv_up, label='XUV spectrum', linewidth=2, color='orange')
-        ax2.set_xlabel('Energy [eV]')
-        ax2.set_ylabel('Amplitude [arb. u.]')
-        ax2.set_title('XUV Spectrum')
-        ax2.legend()
+        ax2.plot(self.om_xuv_up * hbar, self.sp_xuv_up, label='XUV spectrum', linewidth=2, color='purple')
+        ax2.set_xlabel('Energy [eV]',fontweight='bold')
+        ax2.set_ylabel('Amplitude [arb. u.]',fontweight='bold')
+        ax2.set_title('XUV Spectrum',fontweight='bold',fontsize=12)
+        # ax2.legend()
         ax2.grid(True, alpha=0.3)
-
-        ax3.plot(test_conv)
         
         plt.tight_layout()
         plt.savefig('single_output_temp/spectra/input_spectra.png', dpi=300)
@@ -205,44 +206,49 @@ class RK_experiment:
         self.synth_bsln = self.rng.poisson(self.alpha*(self.synth_bsln)+self.b).astype(float) - self.b
         self.synth_bsln_FT, _, el, eh = rk.CFT(self.T_range, self.synth_bsln, use_window=False)
         
-        # Synthetic full signal
-        if self.if_coherent:
-            sp_xuv_E = rk.sp_tot(self.xuvs, self.E_up/hbar)
-            amplit_tot_0 = rk.downsample(
-                                    rk.synth_baseline(self.sp_probe_up, self.sp_xuv_up, 
-                                                om_probe_reg, om_xuv_reg, self.T_up)
-                                    + rk.synth_baseline(self.sp_ref_up, self.sp_xuv_up, 
-                                                om_probe_reg, om_xuv_reg, self.T_up*0)
-                                    + sp_xuv_E
-                                    , self.p_E)
-            signal_clean = np.abs(amplit_tot_0)**2
-        else:
-            # Incoherent: sum |amplitude|^2 from each XUV component
-            signal_clean = np.zeros((self.N_T, self.N_E))
-            for xuv_i in self.xuvs:
-                sp_xuv_i = rk.sp_tot((xuv_i,), self.om_xuv_up)
-                sp_xuv_i_E = rk.sp_tot((xuv_i,), self.E_up/hbar)
-                amplit_i = rk.downsample(
-                                    rk.synth_baseline(self.sp_probe_up, sp_xuv_i, 
-                                                om_probe_reg, om_xuv_reg, self.T_up)
-                                    + rk.synth_baseline(self.sp_ref_up, sp_xuv_i, 
-                                                om_probe_reg, om_xuv_reg, self.T_up*0)
-                                    + sp_xuv_i_E
-                                    , self.p_E)
-                signal_clean += np.abs(amplit_i)**2
+        if exp_signal is None:
         
-        signal_clean *= self.alpha
-        signal_clean += self.b
+            # Synthetic full signal
+            if self.if_coherent:
+                sp_xuv_E = rk.sp_tot(self.xuvs, self.E_up/hbar)
+                amplit_tot_0 = rk.downsample(
+                                        rk.synth_baseline(self.sp_probe_up, self.sp_xuv_up, 
+                                                    om_probe_reg, om_xuv_reg, self.T_up)
+                                        + rk.synth_baseline(self.sp_ref_up, self.sp_xuv_up, 
+                                                    om_probe_reg, om_xuv_reg, self.T_up*0)
+                                        + sp_xuv_E
+                                        , self.p_E)
+                signal_clean = np.abs(amplit_tot_0)**2
+            else:
+                # Incoherent: sum |amplitude|^2 from each XUV component
+                signal_clean = np.zeros((self.N_T, self.N_E))
+                for xuv_i in self.xuvs:
+                    sp_xuv_i = rk.sp_tot((xuv_i,), self.om_xuv_up)
+                    sp_xuv_i_E = rk.sp_tot((xuv_i,), self.E_up/hbar)
+                    amplit_i = rk.downsample(
+                                        rk.synth_baseline(self.sp_probe_up, sp_xuv_i, 
+                                                    om_probe_reg, om_xuv_reg, self.T_up)
+                                        + rk.synth_baseline(self.sp_ref_up, sp_xuv_i, 
+                                                    om_probe_reg, om_xuv_reg, self.T_up*0)
+                                        + sp_xuv_i_E
+                                        , self.p_E)
+                    signal_clean += np.abs(amplit_i)**2
+            
+            signal_clean *= self.alpha
+            signal_clean += self.b
+            
+            if not self.ifnoise:
+                self.signal = signal_clean.copy()
+            else:
+                # Apply Poisson noise assuming signal_clean contains expected values (means)
+                self.signal = self.rng.poisson(signal_clean).astype(float)
+            
+            print("N Total = %.2e"%np.sum(self.signal))
         
-        if not self.ifnoise:
-            self.signal = signal_clean.copy()
-        else:
-            # Apply Poisson noise assuming signal_clean contains expected values (means)
-            self.signal = self.rng.poisson(signal_clean).astype(float)
-        
-        print("N Total = %.2e"%np.sum(self.signal))
+            self.signal -= self.b # NOISE FLOOR SHOULD BE QUITE PRECISELY MEASURED BY CAPTURING WITH LASER OFF
 
-        self.signal -= self.b # NOISE FLOOR SHOULD BE QUITE PRECISELY MEASURED BY CAPTURING WITH LASER OFF
+        else:
+            self.signal = exp_signal
 
         # Zero out signal outside the sideband range [sb_lo, sb_hi]
         sb_lo_idx = np.argmin(np.abs(self.E_range - self.sb_lo))
@@ -284,8 +290,8 @@ class RK_experiment:
                     self.peak_sb_counts,self.N_T,self.N_E,2*self.T_reach/self.N_T,self.E_res),
                 saveloc='single_output_temp/pipeline_diag/measured_signal_harmq.png',xlabel='Kinetic energy (eV)',ylabel='Time (fs)')
         
-        self.amplit_tot_FT, self.OM_T, em_lo, em_hi = rk.CFT(self.T_range, self.signal_sb, use_window=False)
-        self.amplit_tot_FT_wndw, self.OM_T, em_lo, em_hi = rk.CFT(self.T_range, self.signal_sb, use_window=True)
+        self.amplit_tot_FT, self.OM_T, em_lo, em_hi = rk.CFT(self.T_range, self.signal_sb, use_window=True, zero_pad=150)
+        self.amplit_tot_FT_wndw, self.OM_T, em_lo, em_hi = rk.CFT(self.T_range, self.signal_sb, use_window=True, zero_pad=150)
         
         rk.plot_mat(self.amplit_tot_FT_wndw, extent=[self.E_lo,self.E_hi,em_lo,em_hi],
                 saveloc='single_output_temp/pipeline_diag/raw_signal_FT.png', show=False)
@@ -301,8 +307,8 @@ class RK_experiment:
         ROI_reach_lo = 1.0
         ROI_reach_hi = 2.2
         slice_fracts = (0.5*(1 + ROI_reach_lo/em_hi), 0.5*(1 + ROI_reach_hi/em_hi))
-        ROI_e_reach_lo = 25.0
-        ROI_e_reach_hi = 26.25
+        ROI_e_reach_lo = self.sb_lo
+        ROI_e_reach_hi = self.sb_hi
         slice_e_fracts = ((ROI_e_reach_lo - self.E_lo) / (self.E_hi - self.E_lo), 
                           (ROI_e_reach_hi - self.E_lo) / (self.E_hi - self.E_lo))
         
@@ -357,7 +363,7 @@ class RK_experiment:
         for j in range(self.N_E):
             col_now = np.abs(self.amplit_tot_FT_wndw[:,j])
             bias_now = tot_rician_full_fit[j]
-            amp_corr_now = rk.koay_basser_correction(col_now, bias_now, lambda_thresh=1)
+            amp_corr_now = rk.koay_basser_correction(col_now, bias_now, lambda_thresh=0.8)
             amp_corr[:,j] = amp_corr_now
             if j%100==0:
                 print(j)
@@ -455,8 +461,8 @@ class RK_experiment:
         sp_rec, lasterr = rk.reconstruct_WirtFlow(sig_probe_reconstructed, self.sp_probe, 
                                              self.sp_xuv_meas_sig_fit, self.om_probe, self.om_xuv, 
                                              self.T, self.b, n_power_iter=50,
-                                             n_main_iter=3000, ifplot=250, median_regval=4, 
-                                             lastmax_margin=np.sqrt(self.alpha)*700*np.sqrt(self.N_T/350), eps=1e-9,
+                                             n_main_iter=3000, ifplot=50, median_regval=4, 
+                                             lastmax_margin=np.sqrt(self.alpha)*700*np.sqrt(self.N_T/350), eps=3e-9,
                                              ifwait=False, alph=self.alpha, nt=self.N_T)
         
         # Decompose RL reconstruction as a sum of n Gaussians and plot
@@ -565,7 +571,7 @@ class RK_experiment:
         # Resample and analyze
 
         rho_uncorrected, amplit_tot_FT_corrected_small, extent_small, idxs_small, _, _ = rk.resample(
-            self.amplit_tot_FT_wndw, self.rho_hi, self.rho_lo, self.om_ref, self.E, self.OM_T, self.N_T)
+            median_filter(np.abs(self.amplit_tot_FT_wndw),size=(3,3))*np.exp(1j*np.angle(self.amplit_tot_FT_wndw)), self.rho_hi, self.rho_lo, self.om_ref, self.E, self.OM_T, self.N_T)
         
         rk.plot_mat(rho_uncorrected, extent=[self.rho_lo,self.rho_hi,self.rho_lo,self.rho_hi], cmap='plasma',
                  mode='abs', saveloc='single_output_temp/rhos/synth_uncorr_unproj.png', xlabel='Energy [eV]', ylabel='Energy [eV]',
@@ -595,14 +601,14 @@ class RK_experiment:
             ### Ground truth - coherent sum
             xuv_gt = rk.sp_tot(self.xuvs, E1[:,0]/hbar)
             ideal_rho = xuv_gt[:,np.newaxis]@np.conjugate(xuv_gt[np.newaxis,:])
-            ideal_rho = rk.project_to_density_matrix(ideal_rho, smooth_sigma=0.1, diag_smooth_sigma=0.1)
+            ideal_rho = rk.project_to_density_matrix(ideal_rho, smooth_sigma=0.1)
         else:
             ### Ground truth - incoherent sum of individual XUV component density matrices
             ideal_rho = np.zeros((len(E1[:,0]), len(E1[:,0])), dtype=complex)
             for xuv_i in self.xuvs:
                 xuv_gt_i = rk.sp_tot((xuv_i,), E1[:,0]/hbar)
                 ideal_rho += xuv_gt_i[:,np.newaxis]@np.conjugate(xuv_gt_i[np.newaxis,:])
-            ideal_rho = rk.project_to_density_matrix(ideal_rho, smooth_sigma=0.1, diag_smooth_sigma=0.1)
+            ideal_rho = rk.project_to_density_matrix(ideal_rho, smooth_sigma=0.1)
 
         ### Ground truth - arbitrary shape
         # ideal_rho =  np.exp(-((E1 - self.om0_xuv*hbar)/self.s_xuv)**2 - ((E2 - self.om0_xuv*hbar)/self.s_xuv)**2)
@@ -649,29 +655,31 @@ class RK_experiment:
         self.ideal_rho = ideal_rho
         self.fidelities = [fid0, fid1, fid2, fid3, fid4]
 
-N_T_range = np.linspace(200,1000,10)
-# alpha_range = 10000*400/N_T_range
-alpha_range = np.linspace(10000*4/10,10000*4/2,10)
 
-# Create meshgrids for 3D surface plots
-ALPHA, N_T_ar = np.meshgrid(alpha_range, N_T_range)
+if __name__ == "__main__":
+
+    N_T_range = np.linspace(200,1000,10)
+    # alpha_range = 10000*400/N_T_range
+    alpha_range = np.linspace(10000*4/10,10000*4/2,10)
+
+    # Create meshgrids for 3D surface plots
+    ALPHA, N_T_ar = np.meshgrid(alpha_range, N_T_range)
 
 
-fid1s = np.zeros_like(ALPHA)
-fid2s = np.zeros_like(ALPHA)
-fid3s = np.zeros_like(ALPHA)
-fid4s = np.zeros_like(ALPHA)
-PSBC = np.zeros_like(ALPHA)
+    fid1s = np.zeros_like(ALPHA)
+    fid2s = np.zeros_like(ALPHA)
+    fid3s = np.zeros_like(ALPHA)
+    fid4s = np.zeros_like(ALPHA)
+    PSBC = np.zeros_like(ALPHA)
 
-for i_nt in range(len(N_T_range)):
-    for i_alpha in range(len(alpha_range)):
+    for i_nt in range(len(N_T_range)):
+        for i_alpha in range(len(alpha_range)):
 
-        alpha = ALPHA[i_alpha,i_nt]
-        N_T = int(N_T_ar[i_alpha,i_nt])
-        print(i_alpha,i_nt)
+            alpha = ALPHA[i_alpha,i_nt]
+            N_T = int(N_T_ar[i_alpha,i_nt])
+            print(i_alpha,i_nt)
 
-        # Example usage of the RK_experiment class
-        if __name__ == "__main__":
+            # Example usage of the RK_experiment class
 
             E_lo = 23.0
             # E_hi = 29
@@ -680,10 +688,10 @@ for i_nt in range(len(N_T_range)):
             # T_reach = 250
             E_res = 0.025    
             # E_res = 0.005    
-            # N_T = 430
+            N_T = 160
             # N_T = 1430
             p_E = 4  # N_E upsampling integer
-            # alpha = 10000
+            alpha = 10000
             # alpha = 10000
             b = 1
 
@@ -751,6 +759,8 @@ for i_nt in range(len(N_T_range)):
                 fid2s[i_alpha,i_nt] = 0
                 fid3s[i_alpha,i_nt] = 0
                 fid4s[i_alpha,i_nt] = 0
+
+            exit()
             
             # np.save('scans/newscan/fid1s400incoh.npy',fid1s)
             # np.save('scans/newscan/fid2s400incoh.npy',fid2s)

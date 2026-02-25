@@ -122,6 +122,13 @@ def CFT(T_range, signal, use_window=True, inverse=False, zero_pad=0):
     energy_axis = hbar * omega
     energy_axis_shift = np.fft.fftshift(energy_axis)
 
+    # Trim back to original NT_local size (keep central frequency bins)
+    if zp > 0:
+        trim_lo = (N_eff - NT_local) // 2
+        trim_hi = trim_lo + NT_local
+        spec_shift = spec_shift[trim_lo:trim_hi, :]
+        energy_axis_shift = energy_axis_shift[trim_lo:trim_hi]
+
     OM_T = (energy_axis_shift / hbar)  # back to angular frequency ω
     OM_T = np.tile(OM_T, (NE_local, 1)).T
 
@@ -741,8 +748,8 @@ def synth_baseline(sp_pr,sp_x,om_pr,om_x,T):
     f2 = sp_x * phase0
     conv2 = fftconvolve(f1,f2,mode='same',axes=1)*d_om
 
-    # return conv1 + conv2
-    return conv2
+    return conv1 + conv2
+    # return conv2
 
 def synth_baseline_hermit(input,sp_x,om_pr,om_x,T):
     d_om = om_x[1]-om_x[0]
@@ -760,8 +767,8 @@ def synth_baseline_hermit(input,sp_x,om_pr,om_x,T):
     conv2 = fftconvolve(f1,f2[:,::-1],mode='same',axes=1)*d_om
     conv2 = -conv2/om_pr * np.conjugate(phase1)
 
-    # return np.sum(conv1 + conv2, axis=0)
-    return np.sum(conv2, axis=0)
+    return np.sum(conv1 + conv2, axis=0)
+    # return np.sum(conv2, axis=0)
 
 def plotc(ar):
     plt.plot(np.abs(ar))
@@ -843,48 +850,49 @@ def reconstruct_WirtFlow(sig_measrd,sp_probe,sp_xuv,om_probe,om_xuv,T,b_est,
 
         print(i_iter)
 
-        # if i_iter%int(ifplot)==ifplot-1 and bool(ifplot):
-        #     # fig, axes = plt.subplots(2, 1, figsize=(8, 6))
+        if i_iter%int(ifplot)==ifplot-1 and bool(ifplot):
+            # fig, axes = plt.subplots(2, 1, figsize=(8, 6))
             
-        #     fig, axes = plt.subplots(3, 1, figsize=(8, 10))
-        #     axes[2].plot(diffs)
-        #     axes[2].set_yscale('log')
+            fig1, axes1 = plt.subplots(3, 1, figsize=(8, 10))
+            axes1[2].plot(diffs)
+            axes1[2].set_yscale('log')
 
-        #     # axes[0].plot(np.real(z), label='Re(z)')
-        #     # axes[0].plot(np.imag(z), label='Im(z)')
-        #     # axes[0].plot(np.real(sp_probe), label='Re(sp_probe)')
-        #     # axes[0].plot(np.imag(sp_probe), label='Im(sp_probe)')
+            # axes1[0].plot(np.real(z), label='Re(z)')
+            # axes1[0].plot(np.imag(z), label='Im(z)')
+            # axes1[0].plot(np.real(sp_probe), label='Re(sp_probe)')
+            # axes1[0].plot(np.imag(sp_probe), label='Im(sp_probe)')
 
-        #     axes[0].plot(normalize_abs(np.abs(z)), label='Abs(z)')
-        #     axes[0].plot(normalize_abs(np.abs(sp_probe)), label='Abs(sp_probe)')
-        #     # axes[0].plot(np.angle(z), label='Abs(z)')
-        #     # axes[0].plot(np.angle(sp_probe), label='Abs(sp_probe)')
+            axes1[0].plot(normalize_abs(np.abs(z)), label='Abs(z)')
+            axes1[0].plot(normalize_abs(np.abs(sp_probe)), label='Abs(sp_probe)')
+            # axes1[0].plot(np.angle(z), label='Abs(z)')
+            # axes1[0].plot(np.angle(sp_probe), label='Abs(sp_probe)')
 
-        #     axes[0].set_title('Current spectrum estimate')
-        #     axes[0].legend()
+            axes1[0].set_title('Current spectrum estimate')
+            axes1[0].legend()
 
-        #     axes[1].plot(ers, label='Relative MSE')
-        #     axes[1].set_yscale('log')
-        #     axes[1].set_title('Error history')
-        #     axes[1].set_xlabel('Recorded iteration')
-        #     axes[1].legend()
-        #     if ers:
-        #         last_val = ers[-1]
-        #         axes[1].text(
-        #             0.02, 0.1,
-        #             f'Iter {i_iter}: {last_val:.5f}',
-        #             transform=axes[1].transAxes,
-        #             fontsize=10,
-        #             color='white',
-        #             weight='bold',
-        #             ha='left',
-        #             va='top',
-        #             path_effects=[pe.withStroke(linewidth=1, foreground='black')]
-        #         )
+            axes1[1].plot(ers, label='Relative MSE')
+            axes1[1].set_yscale('log')
+            axes1[1].set_title('Error history')
+            axes1[1].set_xlabel('Recorded iteration')
+            axes1[1].legend()
+            if ers:
+                last_val = ers[-1]
+                axes1[1].text(
+                    0.02, 0.1,
+                    f'Iter {i_iter}: {last_val:.5f}',
+                    transform=axes1[1].transAxes,
+                    fontsize=10,
+                    color='white',
+                    weight='bold',
+                    ha='left',
+                    va='top',
+                    path_effects=[pe.withStroke(linewidth=1, foreground='black')]
+                )
 
-        #     plt.tight_layout()
-        #     plt.savefig('single_output_temp/WF_diag/spectrum_convergence_iter%.3f_%i.png'%(alph,nt))
-        #     plt.close()
+            plt.tight_layout()
+            plt.savefig('single_output_temp/WF_diag/spectrum_convergence_iter%.3f_%i.png'%(alph,nt))
+            plt.close()
+
         if i_iter%int(ifplot)==ifplot-1 and bool(ifplot):
             fig = plt.figure(figsize=(12, 8))
             ax_tl = fig.add_subplot(2, 2, 1)
@@ -911,7 +919,7 @@ def reconstruct_WirtFlow(sig_measrd,sp_probe,sp_xuv,om_probe,om_xuv,T,b_est,
             abs_z = normalize_abs(np.abs(z_aligned))
             abs_sp = normalize_abs(np.abs(sp_probe))
             ax_bot.plot(abs_z, label='Reconstructed (abs)', linewidth = 1.2)
-            ax_bot.plot(abs_sp, label='True (abs)', alpha=0.7, linewidth = 1.8)
+            ax_bot.plot(abs_sp, label='Reference (abs)', alpha=0.7, linewidth = 1.8)
 
             # Phase masked where magnitude < 5% of peak
             phase_z = np.angle(z_aligned).copy()
@@ -923,7 +931,7 @@ def reconstruct_WirtFlow(sig_measrd,sp_probe,sp_xuv,om_probe,om_xuv,T,b_est,
 
             ax_phase = ax_bot.twinx()
             ax_phase.plot(phase_z+np.pi, '--', label='Reconstructed (phase)', color='C0', alpha=0.6)
-            ax_phase.plot(phase_sp+np.pi, '--', label='True (phase)', color='C1', alpha=0.6)
+            ax_phase.plot(phase_sp+np.pi, '--', label='Reference (phase)', color='C1', alpha=0.6)
             ax_phase.set_ylabel('Phase [rad]')
             ax_phase.set_ylim(-0.2,2*np.pi)
 
@@ -946,7 +954,7 @@ def reconstruct_WirtFlow(sig_measrd,sp_probe,sp_xuv,om_probe,om_xuv,T,b_est,
             )
 
             plt.tight_layout()
-            plt.savefig('single_output_temp/WF_diag/spectrum_convergence_iter%.3f_%i.png'%(alph,nt))
+            # plt.savefig('single_output_temp/WF_diag/spectrum_convergence_iter%.3f_%i.png'%(alph,nt))
             plt.savefig('WF_gif/frame_%04d.png' % gif_frame_idx, dpi=100)
             plt.close()
             gif_frame_idx += 1
@@ -1328,102 +1336,54 @@ def downsample(sig, p):
     k = m // p
     return sig.reshape(n, k, p).mean(axis=2)
 
-def project_to_density_matrix(M, smooth_sigma=1.0, diag_smooth_sigma=1.5):
+def project_to_density_matrix(M, smooth_sigma=1.5):
     """
     Project a noisy measured matrix onto the set of valid density matrices
-    (Hermitian, PSD, trace 1) using diagonal-guided coherence smoothing.
+    (Hermitian, PSD, trace 1).
 
-    The diagonal (populations) is the most trustworthy part of the measured
-    matrix.  Off-diagonal artifacts are grid-aligned because eigenvectors
-    of a noisy matrix are jagged.  This method bypasses eigendecomposition
-    for regularization entirely:
+    Simple and robust approach for experimental data:
 
-    1. Extract & lightly smooth the diagonal → population envelope p(E).
-    2. Compute the normalized degree of coherence:
-           g(E₁, E₂) = M(E₁,E₂) / √(p(E₁)·p(E₂))
-       For a valid ρ, |g| ≤ 1 everywhere.  Grid artifacts live here but
-       are now scale-free, so smoothing is meaningful and isotropic.
-    3. Smooth g in 2D — removes grid noise without distorting the population
-       envelope.
-    4. Clamp |g| ≤ 1 — necessary condition for PSD.
-    5. Reconstruct: ρ̂(E₁,E₂) = g_smooth(E₁,E₂) · √(p(E₁)·p(E₂))
-    6. Light simplex projection of eigenvalues as final PSD + trace 1
-       guarantee (small correction on an already near-physical matrix).
+    1.  Hermitize.
+    2.  Gaussian-smooth the full matrix (real & imag independently).
+        Smoothing *before* eigendecomposition is the key: the eigenvectors
+        of a smooth matrix are themselves smooth, so the reconstruction
+        ``V diag(λ) V†`` cannot produce row/column line artifacts.
+    3.  Eigendecompose, clip negative eigenvalues to zero, normalise to
+        trace 1, reconstruct.
 
-    The diagonal controls the spatial shape of features; the coherence
-    controls structure within that envelope.  Grid artifacts cannot survive
-    step 3 because they are high-frequency noise in the coherence domain.
+    Parameters
+    ----------
+    M : np.ndarray
+        Measured matrix (complex, shape d×d).
+    smooth_sigma : float
+        Gaussian σ (pixels) for 2-D smoothing of the matrix.  Default 1.5.
 
-    Parameters:
-        M                (np.ndarray): Measured matrix (complex)
-        smooth_sigma     (float):      Gaussian σ for coherence smoothing
-                                       (grid pixels).  Default 1.5.
-        diag_smooth_sigma (float):     Gaussian σ for diagonal (population)
-                                       smoothing.  Default 2.0.
-
-    Returns:
-        np.ndarray: Valid density matrix
+    Returns
+    -------
+    np.ndarray
+        Valid density matrix (Hermitian, PSD, trace 1).
     """
     d = M.shape[0]
-    eps = 1e-20  # numerical floor to avoid division by zero
 
-    # Step 1: Hermitize
+    # 1. Hermitize
     H = (M + M.conj().T) / 2
 
-    # Step 2: Extract diagonal, smooth it, clip ≥ 0 → population envelope
-    p = np.real(np.diag(H)).copy()
-    if diag_smooth_sigma > 0:
-        p = gaussian_filter(p, sigma=diag_smooth_sigma)
-    # p = np.maximum(p, 0.0)
-    p = np.abs(p)
-
-    # Normalize populations to sum to 1
-    p_sum = np.sum(p)
-    if p_sum <= 0:
-        return np.eye(d, dtype=complex) / d
-    p = p / p_sum
-
-    # Step 3: Build the population envelope matrix √(pᵢ·pⱼ)
-    sqrt_p = np.sqrt(p)
-    envelope = np.outer(sqrt_p, sqrt_p)  # shape (d, d), all ≥ 0
-
-    # Step 4: Normalize to degree-of-coherence: g = H / envelope
-    #   Where envelope is tiny, coherence is undefined → set to 0
-    H_norm = H / p_sum  # scale H to match normalized populations
-    safe_envelope = np.where(envelope > eps, envelope, 1.0)
-    g = np.where(envelope > eps, H_norm / safe_envelope, 0.0)
-
-    # Step 5: Smooth the coherence matrix (real & imag independently)
+    # 2. Gaussian smooth (real & imag independently), then re-Hermitize
     if smooth_sigma > 0:
-        g = (gaussian_filter(np.real(g), sigma=smooth_sigma)
-             + 1j * gaussian_filter(np.imag(g), sigma=smooth_sigma))
-        # Re-Hermitize
-        g = (g + g.conj().T) / 2
+        H = (gaussian_filter(np.real(H), sigma=smooth_sigma)
+             + 1j * gaussian_filter(np.imag(H), sigma=smooth_sigma))
+        H = (H + H.conj().T) / 2
 
-    # Step 6: Clamp |g| ≤ 1  (necessary for PSD, preserves phase)
-    g_abs = np.abs(g)
-    excess = g_abs > 1.0
-    g[excess] = g[excess] / g_abs[excess]
+    # 3. Eigendecompose, clip negative eigenvalues, normalise trace
+    eigvals, eigvecs = np.linalg.eigh(H)
+    eigvals = np.maximum(eigvals, 0.0)
 
-    # Force diagonal of g to exactly 1 (populations are handled by envelope)
-    np.fill_diagonal(g, 1.0)
-
-    # Step 7: Reconstruct  ρ̂ = g ⊙ envelope  (Hadamard product)
-    rho = g * envelope
-
-    # Step 8: Light simplex projection for strict PSD + trace 1
-    eigvals, eigvecs = np.linalg.eigh(rho)
-    n = len(eigvals)
-    u = np.sort(eigvals)[::-1]
-    cssv = np.cumsum(u)
-    rho_idx = np.nonzero(u * np.arange(1, n + 1) > (cssv - 1))[0]
-    if len(rho_idx) == 0:
+    eig_sum = np.sum(eigvals)
+    if eig_sum <= 0:
         return np.eye(d, dtype=complex) / d
-    rho_idx = rho_idx[-1]
-    tau = (cssv[rho_idx] - 1.0) / (rho_idx + 1.0)
-    eigvals_proj = np.maximum(eigvals - tau, 0.0)
+    eigvals = eigvals / eig_sum
 
-    rho = eigvecs @ np.diag(eigvals_proj) @ eigvecs.conj().T
+    rho = eigvecs @ np.diag(eigvals) @ eigvecs.conj().T
 
     return rho
 
