@@ -912,26 +912,33 @@ def reconstruct_WirtFlow(sig_measrd,sp_probe,sp_xuv,om_probe,om_xuv,T,b_est,
             ax_tr.set_ylabel('Time index')
 
             # Bottom: reconstructed vs true spectrum (abs + phase)
+            # Cut omega to [om_lo, om_hi] and convert to wavelength (nm)
+            om_lo = 1.5   # lower omega cutoff [rad/fs]
+            om_hi = 4   # upper omega cutoff [rad/fs]
+            cut_mask = (om_probe >= om_lo) & (om_probe <= om_hi)
+            c_nm_fs = 299.792458  # speed of light in nm/fs
+            lambda_nm = 2 * np.pi * c_nm_fs / om_probe[cut_mask]
+
             # Align global phase of z to sp_probe: find phi that minimizes ||z*e^{i*phi} - sp_probe||
             global_phase = np.angle(np.sum(np.conj(z) * sp_probe))
             z_aligned = z * np.exp(1j * global_phase)
 
-            abs_z = normalize_abs(np.abs(z_aligned))
-            abs_sp = normalize_abs(np.abs(sp_probe))
-            ax_bot.plot(abs_z, label='Reconstructed (abs)', linewidth = 1.2)
-            ax_bot.plot(abs_sp, label='Reference (abs)', alpha=0.7, linewidth = 1.8)
+            abs_z = normalize_abs(np.abs(z_aligned[cut_mask]))
+            abs_sp = normalize_abs(np.abs(sp_probe[cut_mask]))
+            ax_bot.plot(lambda_nm, abs_z, label='Reconstructed (abs)', linewidth = 1.2)
+            ax_bot.plot(lambda_nm, abs_sp, label='Reference (abs)', alpha=0.7, linewidth = 1.8)
 
             # Phase masked where magnitude < 5% of peak
-            phase_z = np.angle(z_aligned).copy()
-            phase_sp = np.angle(sp_probe).copy()
+            phase_z = np.angle(z_aligned[cut_mask]).copy()
+            phase_sp = np.angle(sp_probe[cut_mask]).copy()
             thresh_z = 0.05 * np.max(np.abs(z_aligned))
             thresh_sp = 0.05 * np.max(np.abs(sp_probe))
-            phase_z[np.abs(z) < thresh_z] = np.nan
-            phase_sp[np.abs(sp_probe) < thresh_sp] = np.nan
+            phase_z[np.abs(z[cut_mask]) < thresh_z] = np.nan
+            phase_sp[np.abs(sp_probe[cut_mask]) < thresh_sp] = np.nan
 
             ax_phase = ax_bot.twinx()
-            ax_phase.plot(phase_z+np.pi, '--', label='Reconstructed (phase)', color='C0', alpha=0.6)
-            ax_phase.plot(phase_sp+np.pi, '--', label='Reference (phase)', color='C1', alpha=0.6)
+            ax_phase.plot(lambda_nm, phase_z+np.pi, '--', label='Reconstructed (phase)', color='C0', alpha=0.6)
+            ax_phase.plot(lambda_nm, phase_sp+np.pi, '--', label='Reference (phase)', color='C1', alpha=0.6)
             ax_phase.set_ylabel('Phase [rad]')
             ax_phase.set_ylim(-0.2,2*np.pi)
 
@@ -940,6 +947,7 @@ def reconstruct_WirtFlow(sig_measrd,sp_probe,sp_xuv,om_probe,om_xuv,T,b_est,
             lines2, labels2 = ax_phase.get_legend_handles_labels()
             ax_bot.legend(lines1 + lines2, labels1 + labels2, loc='upper right', fontsize=8)
 
+            ax_bot.set_xlabel('Wavelength [nm]')
             ax_bot.set_title('Spectrum estimate',fontsize=10, fontweight='semibold')
             ax_bot.text(
                 0.02, 0.06,
@@ -1155,8 +1163,6 @@ def correcting_function_multi(om_t,ene_Eg,pulse_params_x,probes,dzeta=1e-6,theta
     correction_plus[correction_plus>theta] = 0
     correction_plus[err_area_plus] = 0
 
-    plot_mat(correction_plus,saveloc='bbs_gauss.png')
-
     return correction_plus
 
 def correcting_function_synth(T_range, T_grid,
@@ -1249,8 +1255,6 @@ def correcting_function_synth(T_range, T_grid,
     correction = abs_flat / abs_actual
     correction[correction > theta] = 0.0
     correction[err_area] = 0.0
-
-    plot_mat(correction,saveloc='bbs.png')
 
     return correction
 

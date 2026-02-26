@@ -4,6 +4,7 @@ import matplotlib.pyplot as plt
 from matplotlib import patheffects as pe
 import rkraken as rk
 from WF_pipeline import RK_experiment
+from scipy.ndimage import gaussian_filter1d
 
 # Reduced Planck constant in eV*fs (approx CODATA): ħ = 6.582119569e-16 eV·s
 hbar = 6.582119569e-1
@@ -20,6 +21,12 @@ S = (Ecounts - b) / np.sum(Ecounts, axis=1, keepdims=True)
 S = np.astype(S*500,int)
 
 S = Ecounts - b
+
+row_sums = np.sum(S, axis=1)
+sigma = len(row_sums) / 50
+row_sums = gaussian_filter1d(row_sums, sigma=sigma)
+avg_row_sum = np.mean(row_sums)
+S = np.astype(S / row_sums[:, np.newaxis] * avg_row_sum, int)
 
 E_bins = E_bins[200:600]
 S = S[:,200:600]
@@ -61,12 +68,14 @@ if __name__ == "__main__":
     experiment = RK_experiment(E_lo=E_lo,E_hi=E_hi,T_reach=T_reach,E_res=E_res,N_T=N_T,p_E=p_E,alpha=alpha,b=b,
                             sb_lo=sideband_lo,sb_hi=sideband_hi,harmq_lo=harmq_lo,if_coherent=if_coherent,E_range=E_bins)
     
+    experiment.zero_pad = 200
+    
     # Define pulses
 
     A_xuv = 0.1
-    a_xuvs = [1.0]
-    om_xuvs = [(10.0-1*1.55)/hbar]
-    s_xuvs = [0.15/hbar]
+    a_xuvs = [np.sqrt(0.5),np.sqrt(1.0)]
+    om_xuvs = [(10.0-1*1.63)/hbar,(10.0-1*1.63 + 0.17)/hbar]
+    s_xuvs = [0.17/hbar,0.17/hbar]
 
     A_probe = 1.2
     a_probes = [1.0]
@@ -85,6 +94,6 @@ if __name__ == "__main__":
 
     experiment.process_and_detrend()
     experiment.kb_correct()
-    experiment.xuv_peak()
+    # experiment.xuv_peak()
     experiment.WF_reconstruct()
     experiment.resample_analyze()

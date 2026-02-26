@@ -74,11 +74,14 @@ class RK_experiment:
         self.sb_lo = sb_lo
         self.sb_hi = sb_hi
         self.harmq_lo = harmq_lo
+        self.zero_pad = 0
         
         # Detrending parameters
         self.em_axis_mid_reach = 1.00
         self.T_mix_reach = 40
-        self.sidebands_reach = 2.15
+        self.mask_lo = 1.35   # indirect-energy lower edge of the feature band (eV)
+        self.mask_hi = 1.75   # indirect-energy upper edge of the feature band (eV)
+        self.donor_lo = 0.60  # lower edge of the feature-free donor band (eV)
         
         # Correction parameters
         self.dzeta_val = 1e-3
@@ -145,6 +148,11 @@ class RK_experiment:
         self.om_xuv = (self.E/hbar - self.om_ref)[0,:]
         
         self.sp_xuv = rk.sp_tot(self.xuvs, self.om_xuv)
+
+        plt.plot(self.om_xuv*hbar,self.sp_xuv)
+        plt.savefig('figg.png')
+        plt.close()
+
         self.sp_probe = rk.sp_tot(self.probes, self.om_probe) #* np.exp(1j*(np.linspace(-np.pi,np.pi,np.size(self.om_probe)))**2)
         self.sp_ref = rk.sp_tot(self.refs, self.om_probe)
         
@@ -161,8 +169,6 @@ class RK_experiment:
         sp_xuv_up_emit = rk.sp_tot(self.xuvs, om_xuv_up_emit)
         sp_probe_up_emit = rk.sp_tot(rk.pulse_emit(self.probes), om_probe_up_emit)
         sp_ref_up_emit = rk.sp_tot(rk.pulse_emit(self.refs), om_probe_up_emit)
-
-        test_conv = fftconvolve(self.sp_xuv_up,self.sp_probe_up,mode="same")
 
         # Plot the upsampled spectra with probe/ref on one axis, xuv on another
         fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(8, 10))
@@ -188,25 +194,26 @@ class RK_experiment:
         plt.savefig('single_output_temp/spectra/input_spectra.png', dpi=300)
         plt.close()
         
-        # Probe only for reference
         om_probe_reg = rk.regularize_omega(self.om_probe_up)
         om_xuv_reg = rk.regularize_omega(self.om_xuv_up)
         
-        if self.if_coherent:
-            self.synth_bsln = np.abs(rk.downsample(rk.synth_baseline(self.sp_probe_up, self.sp_xuv_up, 
-                                                              om_probe_reg, om_xuv_reg, self.T_up), self.p_E))**2
-        else:
-            # Incoherent: sum intensities from each XUV component separately
-            self.synth_bsln = np.zeros((self.N_T, self.N_E))
-            for xuv_i in self.xuvs:
-                sp_xuv_i = rk.sp_tot((xuv_i,), self.om_xuv_up)
-                self.synth_bsln += np.abs(rk.downsample(rk.synth_baseline(self.sp_probe_up, sp_xuv_i, 
-                                                              om_probe_reg, om_xuv_reg, self.T_up), self.p_E))**2
-        
-        self.synth_bsln = self.rng.poisson(self.alpha*(self.synth_bsln)+self.b).astype(float) - self.b
-        self.synth_bsln_FT, _, el, eh = rk.CFT(self.T_range, self.synth_bsln, use_window=False)
-        
         if exp_signal is None:
+
+            # Probe only for reference
+            if self.if_coherent:
+                self.synth_bsln = np.abs(rk.downsample(rk.synth_baseline(self.sp_probe_up, self.sp_xuv_up, 
+                                                                om_probe_reg, om_xuv_reg, self.T_up), self.p_E))**2
+            else:
+                # Incoherent: sum intensities from each XUV component separately
+                self.synth_bsln = np.zeros((self.N_T, self.N_E))
+                for xuv_i in self.xuvs:
+                    sp_xuv_i = rk.sp_tot((xuv_i,), self.om_xuv_up)
+                    self.synth_bsln += np.abs(rk.downsample(rk.synth_baseline(self.sp_probe_up, sp_xuv_i, 
+                                                                om_probe_reg, om_xuv_reg, self.T_up), self.p_E))**2
+            
+            self.synth_bsln = self.rng.poisson(self.alpha*(self.synth_bsln)+self.b).astype(float) - self.b
+            self.synth_bsln_FT, _, el, eh = rk.CFT(self.T_range, self.synth_bsln, use_window=False)
+            
         
             # Synthetic full signal
             if self.if_coherent:
@@ -247,21 +254,56 @@ class RK_experiment:
         
             self.signal -= self.b # NOISE FLOOR SHOULD BE QUITE PRECISELY MEASURED BY CAPTURING WITH LASER OFF
 
+            # Zero out signal outside the sideband range [sb_lo, sb_hi]
+            sb_lo_idx = np.argmin(np.abs(self.E_range - self.sb_lo))
+            sb_hi_idx = np.argmin(np.abs(self.E_range - self.sb_hi))
+            self.signal_sb = np.zeros_like(self.signal)
+            self.signal_sb[:, sb_lo_idx:sb_hi_idx+1] = self.signal[:, sb_lo_idx:sb_hi_idx+1]
+
+            harmq_lo_idx = np.argmin(np.abs(self.E_range - self.harmq_lo))
+            self.signal_harmq = np.zeros_like(self.signal)
+            self.signal_harmq[:, harmq_lo_idx:sb_lo_idx+1] = self.signal[:, harmq_lo_idx:sb_lo_idx+1]
+
+            peak_sb_counts = int(np.max(self.signal_sb))
+            self.peak_sb_counts = peak_sb_counts
+
+            self.xuv_peak()
+
         else:
             self.signal = exp_signal
 
-        # Zero out signal outside the sideband range [sb_lo, sb_hi]
-        sb_lo_idx = np.argmin(np.abs(self.E_range - self.sb_lo))
-        sb_hi_idx = np.argmin(np.abs(self.E_range - self.sb_hi))
-        self.signal_sb = np.zeros_like(self.signal)
-        self.signal_sb[:, sb_lo_idx:sb_hi_idx+1] = self.signal[:, sb_lo_idx:sb_hi_idx+1]
+            # Zero out signal outside the sideband range [sb_lo, sb_hi]
+            sb_lo_idx = np.argmin(np.abs(self.E_range - self.sb_lo))
+            sb_hi_idx = np.argmin(np.abs(self.E_range - self.sb_hi))
+            self.signal_sb = np.zeros_like(self.signal)
+            self.signal_sb[:, sb_lo_idx:sb_hi_idx+1] = self.signal[:, sb_lo_idx:sb_hi_idx+1]
 
-        harmq_lo_idx = np.argmin(np.abs(self.E_range - self.harmq_lo))
-        self.signal_harmq = np.zeros_like(self.signal)
-        self.signal_harmq[:, harmq_lo_idx:sb_lo_idx+1] = self.signal[:, harmq_lo_idx:sb_lo_idx+1]
+            harmq_lo_idx = np.argmin(np.abs(self.E_range - self.harmq_lo))
+            self.signal_harmq = np.zeros_like(self.signal)
+            self.signal_harmq[:, harmq_lo_idx:sb_lo_idx+1] = self.signal[:, harmq_lo_idx:sb_lo_idx+1]
 
-        peak_sb_counts = int(np.max(self.signal_sb))
-        self.peak_sb_counts = peak_sb_counts
+            peak_sb_counts = int(np.max(self.signal_sb))
+            self.peak_sb_counts = peak_sb_counts
+
+            self.xuv_peak()
+
+            # self.xuvs = self.xuvs_rec
+
+            # Probe only for reference
+            if self.if_coherent:
+                self.synth_bsln = np.abs(rk.downsample(rk.synth_baseline(self.sp_probe_up, rk.sp_tot(self.xuv, self.om_xuv_up), 
+                                                                om_probe_reg, om_xuv_reg, self.T_up), self.p_E))**2
+            else:
+                # Incoherent: sum intensities from each XUV component separately
+                self.synth_bsln = np.zeros((self.N_T, self.N_E))
+                for xuv_i in self.xuvs:
+                    sp_xuv_i = rk.sp_tot((xuv_i,), self.om_xuv_up)
+                    self.synth_bsln += np.abs(rk.downsample(rk.synth_baseline(self.sp_probe_up, sp_xuv_i, 
+                                                                om_probe_reg, om_xuv_reg, self.T_up), self.p_E))**2
+            
+            self.synth_bsln = self.rng.poisson(self.alpha*(self.synth_bsln)+self.b).astype(float) - self.b
+            self.synth_bsln_FT, _, el, eh = rk.CFT(self.T_range, self.synth_bsln, use_window=False)
+            
     
     def process_and_detrend(self):
         """Process signal, estimate background, and perform detrending."""
@@ -290,8 +332,8 @@ class RK_experiment:
                     self.peak_sb_counts,self.N_T,self.N_E,2*self.T_reach/self.N_T,self.E_res),
                 saveloc='single_output_temp/pipeline_diag/measured_signal_harmq.png',xlabel='Kinetic energy (eV)',ylabel='Time (fs)')
         
-        self.amplit_tot_FT, self.OM_T, em_lo, em_hi = rk.CFT(self.T_range, self.signal_sb, use_window=True, zero_pad=150)
-        self.amplit_tot_FT_wndw, self.OM_T, em_lo, em_hi = rk.CFT(self.T_range, self.signal_sb, use_window=True, zero_pad=150)
+        self.amplit_tot_FT, self.OM_T, em_lo, em_hi = rk.CFT(self.T_range, self.signal_sb, use_window=True, zero_pad=self.zero_pad)
+        self.amplit_tot_FT_wndw, self.OM_T, em_lo, em_hi = rk.CFT(self.T_range, self.signal_sb, use_window=True, zero_pad=self.zero_pad)
         
         rk.plot_mat(self.amplit_tot_FT_wndw, extent=[self.E_lo,self.E_hi,em_lo,em_hi],
                 saveloc='single_output_temp/pipeline_diag/raw_signal_FT.png', show=False)
@@ -336,10 +378,42 @@ class RK_experiment:
         self.amplit_tot_FT_detrended_full = np.copy(self.amplit_tot_FT)
         self.amplit_tot_FT_detrended_full[i0:i1, :] = amplit_tot_FT_mid_detrended
         
-        # Extent the poissonian noise with rician bias
-        sideband_lo, sideband_hi = floor(0.5*(1 - self.sidebands_reach/em_hi)*self.N_T), floor(0.5*(1 + self.sidebands_reach/em_hi)*self.N_T)
-        self.amplit_tot_FT_detrended_full[sideband_lo:i0,:] = self.amplit_tot_FT[0:i0-sideband_lo,:]
-        self.amplit_tot_FT_detrended_full[i1:sideband_hi,:] = self.amplit_tot_FT[self.N_T-sideband_hi+i1:,:]
+        # Replace the omega-oscillation feature (positive & negative bands)
+        # with uniform Rician bias from a feature-free donor band.
+        #   mask_lo/mask_hi : indirect-energy band (eV) of the feature (positive side)
+        #   donor_lo        : lower edge (eV) of a feature-free donor band of equal width
+        om_t_eV = hbar * self.OM_T[:, 0]  # indirect energy axis in eV
+
+        mask_lo_eV  = self.mask_lo           # e.g. 1.35
+        mask_hi_eV  = self.mask_hi           # e.g. 1.75
+        donor_lo_eV = self.donor_lo          # e.g. 0.60
+
+        # --- positive band ---
+        mask_i0_pos = np.argmin(np.abs(om_t_eV - mask_lo_eV))
+        mask_i1_pos = np.argmin(np.abs(om_t_eV - mask_hi_eV))
+        if mask_i0_pos > mask_i1_pos:
+            mask_i0_pos, mask_i1_pos = mask_i1_pos, mask_i0_pos
+        band_width = mask_i1_pos - mask_i0_pos
+
+        donor_i0_pos = np.argmin(np.abs(om_t_eV - donor_lo_eV))
+        donor_i1_pos = donor_i0_pos + band_width
+
+        self.amplit_tot_FT_detrended_full[mask_i0_pos:mask_i1_pos, :] = \
+            self.amplit_tot_FT[donor_i0_pos:donor_i1_pos, :]
+
+        # --- negative band (mirror about 0 eV) ---
+        mask_i0_neg = np.argmin(np.abs(om_t_eV - (-mask_hi_eV)))
+        mask_i1_neg = np.argmin(np.abs(om_t_eV - (-mask_lo_eV)))
+        if mask_i0_neg > mask_i1_neg:
+            mask_i0_neg, mask_i1_neg = mask_i1_neg, mask_i0_neg
+
+        donor_i0_neg = np.argmin(np.abs(om_t_eV - (-donor_lo_eV)))
+        donor_i1_neg = donor_i0_neg - band_width
+        if donor_i1_neg > donor_i0_neg:
+            donor_i0_neg, donor_i1_neg = donor_i1_neg, donor_i0_neg
+
+        self.amplit_tot_FT_detrended_full[mask_i0_neg:mask_i1_neg, :] = \
+            self.amplit_tot_FT[donor_i0_neg:donor_i0_neg + band_width, :]
 
     
     def kb_correct(self):
@@ -436,14 +510,22 @@ class RK_experiment:
         
         self.xuvs_rec = rk.nfit_params_to_probes(sp_xuv_meas_sig_fit_params, self.T)
         self.sp_xuv_meas_sig_fit = rk.sp_tot(self.xuvs_rec,self.om_xuv)
+
+        self.xuvs_rec = self.xuvs
+        self.sp_xuv_meas_sig_fit = self.sp_xuv
         
         # Convert energy (ħ·ω in eV) to wavelength in nm and sort ascending
         E_eV = self.om_xuv * hbar
         lambda_nm = 1239.84197386209 / E_eV
         idx = np.argsort(lambda_nm)
+
+        print(self.xuvs_rec[0][2]*hbar - self.xuvs_rec[1][2]*hbar)
         
-        plt.plot(lambda_nm[idx],self.sp_xuv[idx],label='true xuv spectrum')
-        plt.plot(lambda_nm[idx],self.sp_xuv_meas_sig_fit[idx],linewidth=0.65,linestyle='--',label='reconstructed xuv sp.')
+        # plt.plot(lambda_nm[idx],self.sp_xuv[idx],label='true xuv spectrum')
+        # plt.plot(lambda_nm[idx],self.sp_xuv_meas_sig_fit[idx],linewidth=0.65,linestyle='--',label='reconstructed xuv sp.')
+        
+        plt.plot(self.E[0,:],xuv_sigq_avg,label='true xuv spectrum')
+        plt.plot(self.om_xuv*hbar,self.sp_xuv_meas_sig_fit,linewidth=0.65,linestyle='--',label='reconstructed xuv sp.')
         plt.xlabel('lambda [nm]')
         plt.ylabel('Amplitude (normalized)')
         plt.title('XUV spectrum rec, single gaussian fit')
@@ -451,7 +533,6 @@ class RK_experiment:
         plt.tight_layout()
         plt.savefig('single_output_temp/reconstructions/sp_xuv_rec.png',dpi=300)
         plt.close()
-
     
     def WF_reconstruct(self):
         """Retrieve probe spectrum using Wirtinger Flow."""
@@ -471,10 +552,6 @@ class RK_experiment:
         # Use non-negative target for Gaussian fit
         
         z_target = np.abs(sp_rec)
-
-        plt.plot(om_grid,z_target)
-        plt.savefig('./sb.png')
-        plt.close()
         
         fit_gauss, fit_params = rk.fit_n_gaussians_1d(
             y_vals=om_grid,
@@ -482,11 +559,6 @@ class RK_experiment:
             n=n_comp
         )
 
-        plt.plot(om_grid,z_target)
-        plt.plot(om_grid,fit_gauss)
-        plt.savefig('./sb.png')
-        plt.close()
-        
         self.probes_reconstructed = rk.nfit_params_to_probes(fit_params, self.T)
         
         plt.figure()
@@ -516,7 +588,6 @@ class RK_experiment:
         correction = rk.correcting_function_multi(self.OM_T, self.E, rk.normalize_params(self.xuvs, self.om_xuv), 
                                              rk.normalize_params(self.probes, self.om_probe), 
                                              dzeta=self.dzeta_val, theta=self.theta_val)
-        rk.plot_mat(correction,saveloc='bbs_fin.png')
         self.amplit_tot_FT_corrected = correction*self.amplit_tot_FT_wndw
         self.amplit_tot_FT_corrected = median_filter(np.abs(self.amplit_tot_FT_corrected), size=(3,3))*np.exp(1j*np.angle(self.amplit_tot_FT_corrected))
         
@@ -596,6 +667,10 @@ class RK_experiment:
         rho_reconstructed_rec_x_nomedian = rk.project_to_density_matrix(rho_reconstructed_rec_x_nomedian)
         
         # Comparison with a ground truth
+
+        plt.plot(E1[:,0],rk.sp_tot(self.xuvs, E1[:,0]/hbar))
+        plt.savefig('fig1.png')
+        plt.close()
 
         if self.if_coherent:
             ### Ground truth - coherent sum
@@ -688,7 +763,7 @@ if __name__ == "__main__":
             # T_reach = 250
             E_res = 0.025    
             # E_res = 0.005    
-            N_T = 160
+            N_T = 260
             # N_T = 1430
             p_E = 4  # N_E upsampling integer
             alpha = 10000
@@ -699,7 +774,7 @@ if __name__ == "__main__":
             sideband_hi = 26.6
             harmq_lo = 23.3
 
-            if_coherent = True
+            if_coherent = False
 
             # Create experiment instance
             experiment = RK_experiment(E_lo=E_lo,E_hi=E_hi,T_reach=T_reach,E_res=E_res,N_T=N_T,p_E=p_E,alpha=alpha,b=b,
@@ -710,14 +785,16 @@ if __name__ == "__main__":
             # a_xuvs = [1.0,1.0]
             # om_xuvs = [10.65/hbar,(10.65+2*1.55)/hbar]
             # s_xuvs = [0.15/hbar,0.18/hbar]
-            A_xuv = 0.1
-            a_xuvs = [0.8,0.8]
-            om_xuvs = [(25.65-1*1.75)/hbar,(25.65-1*1.45)/hbar]
-            s_xuvs = [0.10/hbar,0.10/hbar]
+
             # A_xuv = 0.1
             # a_xuvs = [1.0]
             # om_xuvs = [(25.65-1*1.40)/hbar]
             # s_xuvs = [0.15/hbar]
+
+            A_xuv = 0.1
+            a_xuvs = [np.sqrt(0.4),np.sqrt(0.8)]
+            om_xuvs = [(25.65-1*1.75)/hbar,(25.65-1*1.75+0.27)/hbar]
+            s_xuvs = [0.10/hbar,0.10/hbar]
 
             A_probe = 1.2
             a_probes = [1.0,0.2,0.2,0.3]
@@ -745,7 +822,7 @@ if __name__ == "__main__":
 
                 experiment.process_and_detrend()
                 experiment.kb_correct()
-                experiment.xuv_peak()
+                # experiment.xuv_peak()
                 experiment.WF_reconstruct()
                 experiment.resample_analyze()
 
