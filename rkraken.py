@@ -13,6 +13,7 @@ from scipy.optimize import brentq
 from scipy.interpolate import RectBivariateSpline
 from scipy.linalg import sqrtm
 import glob
+import os
 from PIL import Image
 
 
@@ -346,7 +347,8 @@ def fit_n_gaussians_1d(
     use_weights=False,
     width_frac_bounds=(0.01, 0.6),   # min/max sigma as fraction of span_y
     amp_min=0.0,                     # amplitude lower bound
-    verbose=True                     # print status to terminal
+    verbose=True,                    # print status to terminal
+    prune_insignificant=True         # collapse negligible components before refinement
 ):
     """
     Fit a sum of n 1D Gaussians to a 1D signal.
@@ -498,17 +500,15 @@ def fit_n_gaussians_1d(
     # of detected peaks) capture almost nothing.  Collapse them to tiny
     # amplitudes so curve_fit effectively ignores them, reducing the
     # effective dimensionality of the problem.
-    amps_greedy = theta0[0::3].copy()
-    total_amp = amps_greedy.sum()
-    if total_amp > 0:
-        pruned = 0
-        for k in range(n):
-            if amps_greedy[k] / total_amp < 0.005:     # < 0.5 % of total
-                theta0[3*k + 0] = lower[3*k + 0] + 1e-14  # A → ~0
-                # leave mu, s at their greedy values (harmless)
-                pruned += 1
-        if pruned > 0:
-            _log(f"pruned {pruned}/{n} negligible components")
+    if not prune_insignificant:
+        # Force only the top 2 components to survive; zero out the rest
+        amps_greedy = theta0[0::3].copy()
+        if n > 2:
+            top2 = np.argsort(amps_greedy)[-2:]
+            for k in range(n):
+                if k not in top2:
+                    theta0[3*k + 0] = lower[3*k + 0] + 1e-14  # A → ~0
+            _log(f"forced 2-Gaussian mode: kept components {sorted(top2.tolist())}")
 
     greedy_rss = float(np.sum((_sum_n_gauss1d(y_vals, *theta0) - z_vals) ** 2))
     _log(f"greedy done — RSS={greedy_rss:.4g}")
@@ -733,7 +733,23 @@ def detrend_spike(sig_mid,row_axis,n_spike_buffer,n_fitting_buffer,N_E=None,abov
 
     return amplit_tot_FT_mid_detrended, spike_only, spike_row_mid
 
-def synth_baseline(sp_pr,sp_x,om_pr,om_x,T):
+def synth_baseline_n(sp_pr,sp_x,om_pr,om_x,T,mode='same'):
+    d_om = om_pr[1]-om_pr[0]
+
+    phase_pr = np.exp(1j*om_pr*T)
+    phase_x = np.exp(1j*0*T)
+
+    f1 = sp_pr*phase_pr
+    f2 = -sp_x*phase_x/om_x
+    conv1 = fftconvolve(f1,f2,mode=mode,axes=1)*d_om
+
+    f1 = sp_x*phase_x
+    f2 = -sp_pr*phase_pr/om_pr
+    conv2 = fftconvolve(f1,f2,mode=mode,axes=1)*d_om
+
+    return conv1 + conv2
+
+def synth_baseline(sp_pr,sp_x,om_pr,om_x,T,mode='same'):
     d_om = om_x[1]-om_x[0]
 
     phase0 = np.exp(1j*0*T)
@@ -742,14 +758,14 @@ def synth_baseline(sp_pr,sp_x,om_pr,om_x,T):
 
     f1 = sp_pr * phase0
     f2 = -sp_x/om_x * phase2
-    conv1 = fftconvolve(f1,f2,mode='same',axes=1)*d_om
+    conv1 = fftconvolve(f1,f2,mode=mode,axes=1)*d_om
 
     f1 = -sp_pr/om_pr * phase1
     f2 = sp_x * phase0
-    conv2 = fftconvolve(f1,f2,mode='same',axes=1)*d_om
+    conv2 = fftconvolve(f1,f2,mode=mode,axes=1)*d_om
 
-    return conv1 + conv2
-    # return conv2
+    # return conv1 + conv2
+    return conv2
 
 def synth_baseline_hermit(input,sp_x,om_pr,om_x,T):
     d_om = om_x[1]-om_x[0]
@@ -767,8 +783,8 @@ def synth_baseline_hermit(input,sp_x,om_pr,om_x,T):
     conv2 = fftconvolve(f1,f2[:,::-1],mode='same',axes=1)*d_om
     conv2 = -conv2/om_pr * np.conjugate(phase1)
 
-    return np.sum(conv1 + conv2, axis=0)
-    # return np.sum(conv2, axis=0)
+    # return np.sum(conv1 + conv2, axis=0)
+    return np.sum(conv2, axis=0)
 
 def plotc(ar):
     plt.plot(np.abs(ar))
@@ -824,6 +840,10 @@ def reconstruct_WirtFlow(sig_measrd,sp_probe,sp_xuv,om_probe,om_xuv,T,b_est,
     diffs = []
     coarse_bin = 10
     gif_frame_idx = 0
+
+    # Clear WF_gif folder before saving new frames
+    for _old in glob.glob('WF_gif/*'):
+        os.remove(_old)
 
     for i_iter in range(n_main_iter):
 
@@ -1476,3 +1496,39 @@ def pulse_emit(probes):
         flipped_probes.append(flipped_probe)
     
     return tuple(flipped_probes)
+
+    
+def conv_bounds(result_lo, result_hi, N, s1_center):
+    """Compute signal axis bounds so that fftconvolve(sig_1, sig_2, mode='same')
+    corresponds to np.linspace(result_lo, result_hi, N).
+
+    Both signals are sampled with N points at the same spacing
+    dx = (result_hi - result_lo) / (N - 1), so each axis spans
+    (result_hi - result_lo).  The free parameter `s1_center` sets
+    the centre of the first signal's axis; the second signal's
+    axis is fully determined by the convolution alignment constraint.
+
+    Parameters
+    ----------
+    result_lo, result_hi : float
+        Desired lower / upper bounds of the convolution result axis.
+    N : int
+        Number of sample points (same for both signals and the result).
+    s1_center : float
+        Centre of sig_1's axis.
+
+    Returns
+    -------
+    s1_lo, s2_lo, s1_hi, s2_hi : float
+    """
+    L  = result_hi - result_lo          # span of each signal axis
+    dx = L / (N - 1)
+    # 'same' starts at index (N-1)//2 of the full (2N-1)-point result,
+    # so the required sum of the two lower bounds is:
+    sum_lo = result_lo - ((N - 1) // 2) * dx
+
+    s1_lo = s1_center - L / 2
+    s2_lo = sum_lo - s1_lo
+    s1_hi = s1_lo + L
+    s2_hi = s2_lo + L
+    return s1_lo, s2_lo, s1_hi, s2_hi
