@@ -70,32 +70,34 @@ if __name__ == "__main__":
 
     if_coherent = False
 
-    # Create experiment instance
-    experiment = RK_experiment(E_lo=E_lo,E_hi=E_hi,T_reach=T_reach,E_res=E_res,N_T=N_T,p_E=p_E,alpha=alpha,b=b,
-                            sb_lo=sideband_lo,sb_hi=sideband_hi,harmq_lo=harmq_lo,harmq_hi=harmq_hi,if_coherent=if_coherent,mask_lo=mask_lo,mask_hi=mask_hi,donor_lo=donor_lo,E_range=E_bins)
-    
-    experiment.zero_pad = 0
-    experiment.window_zerocomp = False
-    experiment.WF_eps = 1e-8
-    
     # Define pulses
 
     A_xuv = 0.1
     a_xuvs = [np.sqrt(0.5),np.sqrt(1.0)]
-    om_xuvs = [(10.0+I_p-1*1.63)/hbar,(10.0+I_p-1*1.63 + 0.17)/hbar]
-    s_xuvs = [0.17/hbar,0.17/hbar]
+    om_xuvs = [(10.0+I_p-1*1.625)/hbar,(10.0+I_p-1*1.625 + 0.17)/hbar]
+    s_xuvs = [0.1/hbar,0.1/hbar]
 
     A_probe = 1.2
     a_probes = [1.0]
     om_probes = [1.55/hbar]
-    s_probes = [0.10/hbar]
+    s_probes = [0.07/hbar]
 
     A_ref = 0.6
     a_refs = [1.0]
     om_refs = [1.534/hbar]
-    s_refs = [0.05/hbar]
+    s_refs = [0.03/hbar]
 
-    experiment.define_pulses(A_xuv,A_probe,A_ref,a_xuvs,a_probes,a_refs,om_xuvs,om_probes,om_refs,s_xuvs,s_probes,s_refs)
+    # Create experiment instance
+    experiment = RK_experiment(E_lo=E_lo,E_hi=E_hi,T_reach=T_reach,E_res=E_res,N_T=N_T,p_E=p_E,alpha=alpha,b=b,
+                            sb_lo=sideband_lo,sb_hi=sideband_hi,harmq_lo=harmq_lo,harmq_hi=harmq_hi,if_coherent=if_coherent,mask_lo=mask_lo,
+                            mask_hi=mask_hi,donor_lo=donor_lo,E_range=E_bins,A_ref=A_ref,om_ref=om_refs[0],s_ref=s_refs[0])
+    
+    experiment.zero_pad = 0
+    experiment.window_zerocomp = False
+    experiment.WF_eps = 1e-8
+    experiment.ifexp = True
+
+    experiment.define_pulses(A_xuv,A_probe,a_xuvs,a_probes,om_xuvs,om_probes,s_xuvs,s_probes)
     
     # Run the full pipeline
     experiment.generate_signal(exp_signal=S)

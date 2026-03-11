@@ -669,21 +669,38 @@ def synth_baseline_n(sp_pr,sp_x,om_pr,om_x,T,mode='same'):
 
     return conv1 + conv2
 
-def synth_baseline_WF(sp_pr,sp_x,om_pr,om_x,T,ref_mask,A_ref,mode='same'):
+def synth_baseline_WF(sp_pr_ref,sp_x,om_pr,om_x,T,i_chi,is_om_r,mode='same'):
     d_om = om_pr[1]-om_pr[0]
 
-    phase_pr = np.exp(1j*om_pr*T) + A_ref*ref_mask
+    phase_pr = np.exp(1j*om_pr*T)
     phase_x = np.exp(1j*0*T)
 
-    f1 = sp_pr*phase_pr
-    f2 = -sp_x*phase_x/om_x
-    conv1 = fftconvolve(f1,f2,mode=mode,axes=1)*d_om
+    f1 = sp_pr_ref[:i_chi]*phase_pr
+    f1[is_om_r[0]:is_om_r[1]] += sp_pr_ref[i_chi:]
+    f2 = sp_x*phase_x
 
-    f1 = sp_x*phase_x
-    f2 = -sp_pr*phase_pr/om_pr
-    conv2 = fftconvolve(f1,f2,mode=mode,axes=1)*d_om
+    conv1 = fftconvolve(f1,f2/(-om_x),mode=mode,axes=1)*d_om
+    conv2 = fftconvolve(f2,f1/(-om_pr),mode=mode,axes=1)*d_om
 
     return conv1 + conv2
+
+# def synth_baseline_WF_hermit(input,sp_x,om_pr,om_x,T):
+#     d_om = om_x[1]-om_x[0]
+
+#     phase_pr = np.exp(1j*om_pr*T)
+#     phase_x = np.exp(1j*0*T)
+
+#     f1 = input
+#     f2 = -sp_x/om_x * np.conjugate(phase2)
+#     conv1 = fftconvolve(f1,f2[:,::-1],mode='same',axes=1)*d_om
+
+#     f1 = input
+#     f2 = sp_x * phase0
+#     conv2 = fftconvolve(f1,f2[:,::-1],mode='same',axes=1)*d_om
+#     conv2 = -conv2/om_pr * np.conjugate(phase1)
+
+#     # return np.sum(conv1 + conv2, axis=0)
+#     return np.sum(conv2, axis=0)
 
 def synth_baseline(sp_pr,sp_x,om_pr,om_x,T,mode='same'):
     d_om = om_x[1]-om_x[0]
@@ -736,7 +753,7 @@ def nfit_params_to_probes(params, T):
 
 def reconstruct_WirtFlow(sig_measrd,sp_probe,sp_xuv,om_probe,om_xuv,T,b_est,
                          n_power_iter=50,n_main_iter=10000,ifplot=50,naive_init=None,
-                         median_regval=2,lastmax_margin=200,ifwait=True,eps=1e-8,alph=0,nt=0):
+                         median_regval=2,eps=1e-8,alph=0,nt=0):
 
     om_probe_reg = regularize_omega(om_probe)
     om_xuv_reg = regularize_omega(om_xuv)
@@ -849,7 +866,6 @@ def reconstruct_WirtFlow(sig_measrd,sp_probe,sp_xuv,om_probe,om_xuv,T,b_est,
             plt.savefig('single_output_temp/WF_diag/spectrum_convergence_iter%.3f_%i.png'%(alph,nt))
             plt.close()
 
-        if i_iter%int(ifplot)==ifplot-1 and bool(ifplot):
             fig = plt.figure(figsize=(12, 8))
             ax_tl = fig.add_subplot(2, 2, 1)
             ax_tr = fig.add_subplot(2, 2, 2)
@@ -925,12 +941,6 @@ def reconstruct_WirtFlow(sig_measrd,sp_probe,sp_xuv,om_probe,om_xuv,T,b_est,
 
             if diffs[-1] < eps:
                 break
-
-        # if i_iter%coarse_bin == coarse_bin-1:
-            # avgs = np.mean(np.abs(mus).reshape(-1, coarse_bin), axis=1)
-            # if i_iter - np.argmax(avgs)*10 > lastmax_margin and avgs[-1] < avgs[-2] and (not ifwait or avgs[-1] > avgs[0]) :
-            #     break
-
 
     # Assemble GIF from saved frames
     frame_files = sorted(glob.glob('WF_gif/frame_*.png'))
