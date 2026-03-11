@@ -48,7 +48,7 @@ class RK_experiment:
     """Rainbow-KRAKEN experiment class for full pipeline processing."""
     
     def __init__(self,E_lo=60.0,E_hi=63.5,T_reach=50,E_res=0.025,N_T=240,p_E=4,alpha=0.05,b=1,sb_lo=24.7,sb_hi=28,harmq_lo=22,harmq_hi=24.7,
-                 if_coherent=True,mask_lo=0.8,mask_hi=2.2,donor_lo=2.5,E_range=None):
+                 if_coherent=True,mask_lo=0.8,mask_hi=2.2,donor_lo=2.5,E_range=None,A_ref=1,om_ref=1.55/hbar,s_ref=0.02/hbar):
         # Field parameters
         self.E_lo = E_lo
         self.E_hi = E_hi
@@ -68,7 +68,7 @@ class RK_experiment:
         self.if_coherent = if_coherent
         
         # Noise and processing parameters
-        self.ifnoise = False
+        self.ifnoise = True
         self.sb_lo = sb_lo
         self.sb_hi = sb_hi
         self.harmq_lo = harmq_lo
@@ -91,6 +91,11 @@ class RK_experiment:
         # Band parameters
         self.rho_lo = harmq_lo
         self.rho_hi = sb_lo
+
+        # filter parameters
+        self.A_ref = A_ref
+        self.om_ref = om_ref
+        self.s_ref = s_ref
         
         # Random number generator
         self.rng = np.random.default_rng()
@@ -111,7 +116,7 @@ class RK_experiment:
         self.E_up_range = np.linspace(self.E_lo, self.E_hi, self.N_E_up)
         self.E_up, self.T_up = np.meshgrid(self.E_up_range, self.T_range)
 
-    def define_pulses(self,A_xuv,A_probe,A_ref,a_xuvs,a_probes,a_refs,om_xuvs,om_probes,om_refs,s_xuvs,s_probes,s_refs):
+    def define_pulses(self,A_xuv,A_probe,a_xuvs,a_probes,om_xuvs,om_probes,s_xuvs,s_probes):
         # Define XUV pulse configurations (stationary, tau=0)
         xuvs_list = []
         for i in range(len(a_xuvs)):
@@ -126,15 +131,15 @@ class RK_experiment:
             probes_list.append(probe_pulse)
         self.probes = tuple(probes_list)
         
-        # Define reference pulse configurations (stationary, tau=0)
-        refs_list = []
-        for i in range(len(a_refs)):
-            ref_pulse = (0*self.T, A_ref*a_refs[i], om_refs[i], s_refs[i], 0)
-            refs_list.append(ref_pulse)
-        self.refs = tuple(refs_list)
+        # # Define reference pulse configurations (stationary, tau=0)
+        # refs_list = []
+        # for i in range(len(a_refs)):
+        #     ref_pulse = (0*self.T, A_ref*a_refs[i], om_refs[i], s_refs[i], 0)
+        #     refs_list.append(ref_pulse)
+        # self.refs = tuple(refs_list)
         
         # Store reference frequency for later use
-        self.om0_ref = om_refs[0]  # Use first reference frequency
+        # self.om_ref = om_refs[0]  # Use first reference frequency
         
         # Store XUV parameters for ground truth comparison
         self.om0_xuv = om_xuvs[0]
@@ -202,38 +207,29 @@ class RK_experiment:
 
         #########
 
-        ir_lo,xuv_lo,ir_hi,xuv_hi = rk.conv_bounds(self.E_lo/hbar,self.E_hi/hbar,self.N_E,self.om0_ref)
+
+
+        ir_lo,xuv_lo,ir_hi,xuv_hi = rk.conv_bounds(self.E_lo/hbar,self.E_hi/hbar,self.N_E,self.om_ref)
         self.om_probe = np.linspace(ir_lo,ir_hi,self.N_E)
         self.om_xuv = np.linspace(xuv_lo,xuv_hi,self.N_E)
-        
-        ir_lo,xuv_lo,ir_hi,xuv_hi = rk.conv_bounds(self.E_lo/hbar,self.E_hi/hbar,self.N_E_up,self.om0_ref)
+
+        ir_lo,xuv_lo,ir_hi,xuv_hi = rk.conv_bounds(self.E_lo/hbar,self.E_hi/hbar,self.N_E_up,self.om_ref)
         self.om_probe_up = np.linspace(ir_lo,ir_hi,self.N_E_up)
         self.om_xuv_up = np.linspace(xuv_lo,xuv_hi,self.N_E_up)
 
+        ref_mask = self.A_ref*((self.om_probe >= self.om_ref - self.s_ref) & (self.om_probe <= self.om_ref + self.s_ref)).astype(float)
+        ref_mask_up = self.A_ref*((self.om_probe_up >= self.om_ref - self.s_ref) & (self.om_probe_up <= self.om_ref + self.s_ref)).astype(float)        
+
         self.sp_probe = rk.sp_tot(self.probes, self.om_probe)
-        self.sp_ref = rk.sp_tot(self.refs, self.om_probe)
+        self.sp_ref = self.sp_probe*ref_mask
         self.sp_xuv = rk.sp_tot(self.xuvs, self.om_xuv)
 
         self.sp_probe_up = rk.sp_tot(self.probes, self.om_probe_up)
-        self.sp_ref_up = rk.sp_tot(self.refs, self.om_probe_up)
+        self.sp_ref_up = self.sp_probe_up*ref_mask_up
         self.sp_xuv_up = rk.sp_tot(self.xuvs, self.om_xuv_up)
-
-        ## Emit
-
-        ir_lo,xuv_lo,ir_hi,xuv_hi = rk.conv_bounds(self.E_lo/hbar,self.E_hi/hbar,self.N_E_up,-self.om0_ref)
-
-        self.om_probe_up_emit = np.linspace(ir_lo,ir_hi,self.N_E_up)
-        self.om_xuv_up_emit = np.linspace(xuv_lo,xuv_hi,self.N_E_up)
-
-        self.sp_xuv_up_emit = rk.sp_tot(self.xuvs, self.om_xuv_up_emit)
-        self.sp_probe_up_emit = rk.sp_tot(rk.pulse_emit(self.probes), self.om_probe_up_emit)
-        self.sp_ref_up_emit = rk.sp_tot(rk.pulse_emit(self.refs), self.om_probe_up_emit)
 
         om_probe_reg = rk.regularize_omega(self.om_probe_up)
         om_xuv_reg = rk.regularize_omega(self.om_xuv_up)
-        
-        om_probe_emit_reg = rk.regularize_omega(self.om_probe_up_emit)
-        om_xuv_emit_reg = rk.regularize_omega(self.om_xuv_up_emit)
 
         ## Plot the upsampled spectra with probe/ref on one axis, xuv on another
 
@@ -261,22 +257,6 @@ class RK_experiment:
         plt.close()
         
         if exp_signal is None:
-
-            # Probe only for reference
-            if self.if_coherent:
-                self.synth_bsln = np.abs(rk.downsample(rk.synth_baseline(self.sp_probe_up, self.sp_xuv_up, 
-                                                                om_probe_reg, om_xuv_reg, self.T_up), self.p_E))**2
-            else:
-                # Incoherent: sum intensities from each XUV component separately
-                self.synth_bsln = np.zeros((self.N_T, self.N_E))
-                for xuv_i in self.xuvs:
-                    sp_xuv_i = rk.sp_tot((xuv_i,), self.om_xuv_up)
-                    self.synth_bsln += np.abs(rk.downsample(rk.synth_baseline(self.sp_probe_up, sp_xuv_i, 
-                                                                om_probe_reg, om_xuv_reg, self.T_up), self.p_E))**2
-            
-            self.synth_bsln = self.rng.poisson(self.alpha*(self.synth_bsln)+self.b).astype(float) - self.b
-            self.synth_bsln_FT, _, el, eh = rk.CFT(self.T_range, self.synth_bsln, use_window=False)
-            
         
             # Synthetic full signal
             if self.if_coherent:
@@ -286,54 +266,17 @@ class RK_experiment:
                                              om_probe_reg, om_xuv_reg, self.T_up)
                 A2_ref = rk.synth_baseline_n(self.sp_ref_up, self.sp_xuv_up, 
                                            om_probe_reg, om_xuv_reg, self.T_up*0)
-                A2_probe_emit = rk.synth_baseline_n(self.sp_probe_up_emit, self.sp_xuv_up_emit, 
-                                             om_probe_emit_reg, om_xuv_emit_reg, self.T_up)
-                A2_ref_emit = rk.synth_baseline_n(self.sp_ref_up_emit, self.sp_xuv_up_emit, 
-                                           om_probe_emit_reg, om_xuv_emit_reg, self.T_up*0)
-                A2_total = A2_probe + A2_ref + A2_probe_emit + A2_ref_emit
 
-                # Third-order: convolve total second-order with each IR field
-
-                phase0 = np.exp(1j*0*self.T_up)
-                
-                phase1 = np.exp(1j*self.om_probe_up*self.T_up)
-
-                sp_tau_ref = self.sp_ref_up * phase0
-                sp_tau_probe = self.sp_probe_up * phase1
-
-                phase1 = np.exp(1j*self.om_probe_up_emit*self.T_up)
-                sp_tau_ref_emit = self.sp_ref_up_emit * phase0
-                sp_tau_probe_emit = self.sp_probe_up_emit * phase1
-
-                prop = -1/(om_probe_reg*phase0)
-                prop_emit = -1/(om_probe_emit_reg*phase0)
-
-                # Slice the full convolution so A3 lives on the same
-                # frequency grid as A2_total (analogous to mode='same' in
-                # synth_baseline, but with the correct offset for the
-                # probe frequency axis).
-                d_om = self.om_probe_up[1] - self.om_probe_up[0]
-                n0 = round(-self.om_probe_up[0] / d_om)
-                N_up = self.N_E_up
-
-                A3_probe = rk.synth_baseline_n(self.sp_probe_up,A2_total,om_probe_reg,self.E_up[0,:]/hbar,self.T_up,mode='full')[:, n0:n0+N_up] #fftconvolve(sp_tau_probe, A2_total*prop, axes=1)[:, n0:n0+N_up]*d_om
-                A3_ref = rk.synth_baseline_n(self.sp_ref_up,A2_total,om_probe_reg,self.E_up[0,:]/hbar,self.T_up*0,mode='full')[:, n0:n0+N_up] #fftconvolve(sp_tau_ref, A2_total*prop, axes=1)[:, n0:n0+N_up]*d_om
-
-                n0_emit = round(-self.om_probe_up_emit[0] / d_om)
-                A3_probe_emit = rk.synth_baseline_n(self.sp_probe_up_emit,A2_total,om_probe_reg,self.E_up[0,:]/hbar,self.T_up,mode='full')[:, n0_emit:n0_emit+N_up] #fftconvolve(sp_tau_probe_emit, A2_total*prop_emit, axes=1)[:, n0_emit:n0_emit+N_up]*d_om
-                A3_ref_emit = rk.synth_baseline_n(self.sp_ref_up_emit,A2_total,om_probe_reg,self.E_up[0,:]/hbar,self.T_up*0,mode='full')[:, n0_emit:n0_emit+N_up] #fftconvolve(sp_tau_ref_emit, A2_total*prop_emit, axes=1)[:, n0_emit:n0_emit+N_up]*d_om
-
-                A3_total = A3_probe + A3_ref + A3_probe_emit + A3_ref_emit
-
-                rk.plot_mat(A3_probe,saveloc='figg.png')
-                rk.plot_mat(A3_probe_emit,saveloc='figg1.png')
+                A2_total = A2_probe + A2_ref
 
                 amplit_tot_0 = rk.downsample(
                                         A2_total
                                         + sp_xuv_E
-                                        + A3_total
                                         , self.p_E)
                 signal_clean = np.abs(amplit_tot_0)**2
+
+                self.signal_zerocomp = np.abs(rk.downsample(A2_probe, self.p_E))**2 + np.abs(rk.downsample(A2_ref, self.p_E))**2
+
             else:
                 # Incoherent: sum |amplitude|^2 from each XUV component
                 signal_clean = np.zeros((self.N_T, self.N_E))
@@ -341,19 +284,15 @@ class RK_experiment:
                     sp_xuv_i = rk.sp_tot((xuv_i,), self.om_xuv_up)
                     sp_xuv_i_E = rk.sp_tot((xuv_i,), self.E_up/hbar)
                     # Second-order amplitudes
-                    A2_probe_i = rk.synth_baseline(self.sp_probe_up, sp_xuv_i, 
+                    A2_probe_i = rk.synth_baseline_n(self.sp_probe_up, sp_xuv_i, 
                                                    om_probe_reg, om_xuv_reg, self.T_up)
-                    A2_ref_i = rk.synth_baseline(self.sp_ref_up, sp_xuv_i, 
+                    A2_ref_i = rk.synth_baseline_n(self.sp_ref_up, sp_xuv_i, 
                                                  om_probe_reg, om_xuv_reg, self.T_up*0)
+                    
                     A2_total_i = A2_probe_i + A2_ref_i
-                    # Third-order: convolve total second-order with each IR field
-                    A3_probe_i = rk.synth_baseline(self.sp_probe_up, A2_total_i, 
-                                                   om_probe_reg, om_xuv_reg, self.T_up)
-                    A3_ref_i = rk.synth_baseline(self.sp_ref_up, A2_total_i, 
-                                                 om_probe_reg, om_xuv_reg, self.T_up*0)
+
                     amplit_i = rk.downsample(
                                         A2_total_i
-                                        + A3_probe_i + A3_ref_i
                                         + sp_xuv_i_E
                                         , self.p_E)
                     signal_clean += np.abs(amplit_i)**2
@@ -368,24 +307,6 @@ class RK_experiment:
                 self.signal = self.rng.poisson(signal_clean).astype(float)
                     
             self.signal -= self.b # NOISE FLOOR SHOULD BE QUITE PRECISELY MEASURED BY CAPTURING WITH LASER OFF
-
-            check = np.sum(self.signal,axis=1)
-            plt.plot(check)
-            plt.savefig('fig1.png')
-
-            # Zero out signal outside the sideband range [sb_lo, sb_hi]
-            sb_lo_idx = np.argmin(np.abs(self.E_range - self.sb_lo))
-            sb_hi_idx = np.argmin(np.abs(self.E_range - self.sb_hi))
-            self.signal_sb = np.zeros_like(self.signal)
-            self.signal_sb[:, sb_lo_idx:sb_hi_idx+1] = self.signal[:, sb_lo_idx:sb_hi_idx+1]
-
-            harmq_lo_idx = np.argmin(np.abs(self.E_range - self.harmq_lo))
-            harmq_hi_idx = np.argmin(np.abs(self.E_range - self.harmq_hi))
-            self.signal_harmq = np.zeros_like(self.signal)
-            self.signal_harmq[:, harmq_lo_idx:harmq_hi_idx+1] = self.signal[:, harmq_lo_idx:harmq_hi_idx+1]
-
-            peak_sb_counts = int(np.max(self.signal_sb))
-            self.peak_sb_counts = peak_sb_counts
 
         else:
             self.signal = exp_signal
@@ -418,38 +339,18 @@ class RK_experiment:
             # except FileNotFoundError:
             #     print(f'WARNING: kernel file {kernel_path} not found — skipping deconvolution')
 
-            # Zero out signal outside the sideband range [sb_lo, sb_hi]
-            sb_lo_idx = np.argmin(np.abs(self.E_range - self.sb_lo))
-            sb_hi_idx = np.argmin(np.abs(self.E_range - self.sb_hi))
-            self.signal_sb = np.zeros_like(self.signal)
-            self.signal_sb[:, sb_lo_idx:sb_hi_idx+1] = self.signal[:, sb_lo_idx:sb_hi_idx+1]
+        sb_lo_idx = np.argmin(np.abs(self.E_range - self.sb_lo))
+        sb_hi_idx = np.argmin(np.abs(self.E_range - self.sb_hi))
+        self.signal_sb = np.zeros_like(self.signal)
+        self.signal_sb[:, sb_lo_idx:sb_hi_idx+1] = self.signal[:, sb_lo_idx:sb_hi_idx+1]
 
-            harmq_lo_idx = np.argmin(np.abs(self.E_range - self.harmq_lo))
-            harmq_hi_idx = np.argmin(np.abs(self.E_range - self.harmq_hi))
-            self.signal_harmq = np.zeros_like(self.signal)
-            self.signal_harmq[:, harmq_lo_idx:harmq_hi_idx+1] = self.signal[:, harmq_lo_idx:harmq_hi_idx+1]
+        harmq_lo_idx = np.argmin(np.abs(self.E_range - self.harmq_lo))
+        harmq_hi_idx = np.argmin(np.abs(self.E_range - self.harmq_hi))
+        self.signal_harmq = np.zeros_like(self.signal)
+        self.signal_harmq[:, harmq_lo_idx:harmq_hi_idx+1] = self.signal[:, harmq_lo_idx:harmq_hi_idx+1]
 
-            peak_sb_counts = int(np.max(self.signal_sb))
-            self.peak_sb_counts = peak_sb_counts
-
-            # self.xuv_peak()
-
-            # self.xuvs = self.xuvs_rec
-
-            # Probe only for reference
-            if self.if_coherent:
-                self.synth_bsln = np.abs(rk.downsample(rk.synth_baseline(self.sp_probe_up, rk.sp_tot(self.xuv, self.om_xuv_up), 
-                                                                om_probe_reg, om_xuv_reg, self.T_up), self.p_E))**2
-            else:
-                # Incoherent: sum intensities from each XUV component separately
-                self.synth_bsln = np.zeros((self.N_T, self.N_E))
-                for xuv_i in self.xuvs:
-                    sp_xuv_i = rk.sp_tot((xuv_i,), self.om_xuv_up)
-                    self.synth_bsln += np.abs(rk.downsample(rk.synth_baseline(self.sp_probe_up, sp_xuv_i, 
-                                                                om_probe_reg, om_xuv_reg, self.T_up), self.p_E))**2
-            
-            self.synth_bsln = self.rng.poisson(self.alpha*(self.synth_bsln)+self.b).astype(float) - self.b
-            self.synth_bsln_FT, _, el, eh = rk.CFT(self.T_range, self.synth_bsln, use_window=False)
+        peak_sb_counts = int(np.max(self.signal_sb))
+        self.peak_sb_counts = peak_sb_counts
 
         rk.plot_mat(self.signal, extent=[self.E_lo,self.E_hi,-self.T_reach,self.T_reach],
                 caption='Peak sb counts: %i\nN_T: %i\nN_E: %i\nT_res: %.2f fs\nE_res: %.3f eV'%(
@@ -469,9 +370,8 @@ class RK_experiment:
     def process_and_detrend(self):
         
         self.signal_FT, self.OM_T, em_lo, em_hi = rk.CFT(self.T_range, self.signal, use_window=False, zero_pad=self.zero_pad)
-        self.signal_sb_FT, self.OM_T, em_lo, em_hi = rk.CFT(self.T_range, self.signal_sb, use_window=True, zero_pad=self.zero_pad)
-        self.signal_detrend_FT, self.OM_T, em_lo, em_hi = rk.CFT(self.T_range, self.signal_sb, use_window=self.window_zerocomp, zero_pad=self.zero_pad)
-        
+        self.signal_sb_FT, self.OM_T, em_lo, em_hi = rk.CFT(self.T_range, self.signal_sb, use_window=False, zero_pad=self.zero_pad)
+
         rk.plot_mat(np.minimum(np.abs(self.signal_FT),100)*np.exp(1j*np.angle(self.signal_FT)), extent=[self.E_lo,self.E_hi,em_lo,em_hi],
                 saveloc='single_output_temp/pipeline_diag/signal_FT.png', show=False)
         
@@ -482,7 +382,7 @@ class RK_experiment:
         ROI_reach = 2.3
         slice_fracts = (0.5*(1 - ROI_reach/em_hi), 0.5*(1 + ROI_reach/em_hi))
         
-        amplit_tot_FT_ROI, em_axis_mid, i0, i1 = rk.extract_midslice(self.signal_detrend_FT, slice_fracts, hbar*self.OM_T[:,0])
+        amplit_tot_FT_ROI, em_axis_mid, i0, i1 = rk.extract_midslice(self.signal_sb_FT, slice_fracts, hbar*self.OM_T[:,0])
         
         rk.plot_mat(np.minimum(amplit_tot_FT_ROI,4*self.peak_sb_counts), extent=[self.E_lo,self.E_hi,-ROI_reach,ROI_reach],
                 saveloc='single_output_temp/pipeline_diag/signal_sb_FT.png',xlabel='Kinetic energy (eV)',ylabel='Indirect energy (eV)', show=False,title='FT of the sideband signal')
@@ -495,7 +395,7 @@ class RK_experiment:
         slice_e_fracts = ((ROI_e_reach_lo - self.E_lo) / (self.E_hi - self.E_lo), 
                           (ROI_e_reach_hi - self.E_lo) / (self.E_hi - self.E_lo))
         
-        amplit_tot_FT_ROI, em_axis_mid, i0, i1, e_axis_mid, e_i0, e_i1 = rk.extract_midslice(self.signal_detrend_FT, slice_fracts, hbar*self.OM_T[:,0],
+        amplit_tot_FT_ROI, em_axis_mid, i0, i1, e_axis_mid, e_i0, e_i1 = rk.extract_midslice(self.signal_sb_FT, slice_fracts, hbar*self.OM_T[:,0],
                                                                                              e_slice_fracts=slice_e_fracts, e_sliced_range=self.E[0,:])
         
         rk.plot_mat(np.minimum(amplit_tot_FT_ROI,4*self.peak_sb_counts), extent=[ROI_e_reach_lo,ROI_e_reach_hi,ROI_reach_lo,ROI_reach_hi],
@@ -505,22 +405,8 @@ class RK_experiment:
         ###
         ###
         
-        # Detrending - separating probe and ref zero freq component
-        slice_fracts = (0.5*(1 - self.em_axis_mid_reach/em_hi), 0.5*(1 + self.em_axis_mid_reach/em_hi))
-        
-        sig_sb_FT_mid, em_axis_mid, i0, i1 = rk.extract_midslice(self.signal_detrend_FT, slice_fracts, hbar*self.OM_T[:,0])
-        
-        rk.plot_mat(sig_sb_FT_mid, extent=[self.E_lo,self.E_hi,-self.em_axis_mid_reach,self.em_axis_mid_reach],
-                saveloc='single_output_temp/pipeline_diag/signal_sb_FT_mid.png', show=False)
-        
-        sig_sb_FT_mid_detrended, spike_only, spike_row_mid = rk.detrend_spike(sig_sb_FT_mid, em_axis_mid, 0, 2, N_E=self.N_E, plot=False)
-        
-        rk.plot_mat(sig_sb_FT_mid_detrended, extent=[self.E_lo,self.E_hi,-self.em_axis_mid_reach,self.em_axis_mid_reach],
-                saveloc='single_output_temp/pipeline_diag/signal_sb_FT_mid_detrended.png', show=False)
-        
         # Zero-pad the detrended mid-band to the full (ω, E) grid
-        self.sig_sb_FT_full_detrended = np.copy(self.signal_detrend_FT)
-        self.sig_sb_FT_full_detrended[i0:i1, :] = sig_sb_FT_mid_detrended
+        self.sig_sb_FT_zerocomp = np.copy(self.signal_sb_FT)
         
         # Replace the omega-oscillation feature (positive & negative bands)
         # with uniform Rician bias from a feature-free donor band.
@@ -545,32 +431,33 @@ class RK_experiment:
         donor_i1_neg = np.argmin(np.abs(om_t_eV + self.donor_lo))
         donor_i0_neg = donor_i1_neg - band_width
 
-        self.sig_sb_FT_full_detrended[mask_i0_pos:mask_i1_pos, :] = self.signal_detrend_FT[donor_i0_pos:donor_i1_pos, :]
-        self.sig_sb_FT_full_detrended[mask_i0_neg:mask_i1_neg, :] = self.signal_detrend_FT[donor_i0_neg:donor_i1_neg, :]
+        self.sig_sb_FT_zerocomp[mask_i0_pos:mask_i1_pos, :] = self.signal_sb_FT[donor_i0_pos:donor_i1_pos, :]
+        self.sig_sb_FT_zerocomp[mask_i0_neg:mask_i1_neg, :] = self.signal_sb_FT[donor_i0_neg:donor_i1_neg, :]
 
         if (mask_i1_pos + omega_shift) <= self.N_T:
-            self.sig_sb_FT_full_detrended[mask_i0_pos+omega_shift:mask_i1_pos+omega_shift, :] = self.signal_detrend_FT[donor_i0_pos:donor_i1_pos, :]
-            self.sig_sb_FT_full_detrended[mask_i0_neg-omega_shift:mask_i1_neg-omega_shift, :] = self.signal_detrend_FT[donor_i0_neg:donor_i1_neg, :]
+            self.sig_sb_FT_zerocomp[mask_i0_pos+omega_shift:mask_i1_pos+omega_shift, :] = self.signal_sb_FT[donor_i0_pos:donor_i1_pos, :]
+            self.sig_sb_FT_zerocomp[mask_i0_neg-omega_shift:mask_i1_neg-omega_shift, :] = self.signal_sb_FT[donor_i0_neg:donor_i1_neg, :]
 
-        rk.plot_mat(self.sig_sb_FT_full_detrended, extent=[self.E_lo,self.E_hi,em_lo,em_hi],
+        rk.plot_mat(self.sig_sb_FT_zerocomp, extent=[self.E_lo,self.E_hi,em_lo,em_hi],
                 saveloc='single_output_temp/pipeline_diag/signal_sb_FT_full_detrended.png', show=False)
         
         self.xuv_peak()
-
     
     def kb_correct(self):
         """Apply Koay-Basser correction for both full and probe signals."""
         # Koay-Basser full signal correction
-        tot_rician_full = np.sum(self.signal_sb+self.b, axis=0)
+        # tot_rician_full = np.sum(self.signal_sb+self.b, axis=0)
         z_target = np.sum(self.signal_sb, axis=0)
         
         # Decompose RL reconstruction as a sum of n Gaussians and plot
-        n_comp = 8
+        n_comp = 2
         # Use non-negative target for Gaussian fit
         tot_rician_pr_fit, _ = rk.fit_n_gaussians_1d(
-            y_vals=self.om_probe,
+            y_vals=self.E[0,:]/hbar,
             z_vals=z_target,
-            n=n_comp
+            n=n_comp,
+            saveloc='kb_fullsig_fit.png'
+            # ,plotlim=[self.harmq_lo/hbar,self.harmq_hi/hbar]
         )
         tot_rician_full_fit = tot_rician_pr_fit + self.b*self.N_T
         
@@ -579,7 +466,7 @@ class RK_experiment:
         for j in range(self.N_E):
             col_now = np.abs(self.signal_sb_FT[:,j])
             bias_now = tot_rician_full_fit[j]
-            amp_corr_now = rk.koay_basser_correction(col_now, bias_now, lambda_thresh=0.8)
+            amp_corr_now = rk.koay_basser_correction(col_now, bias_now, lambda_thresh=1.0)
             amp_corr[:,j] = amp_corr_now
             if j%100==0:
                 print(j)
@@ -589,48 +476,60 @@ class RK_experiment:
         
         rk.plot_mat(self.signal_sb_FT+1e-20, extent=[self.E_lo,self.E_hi,hbar*self.OM_T[0,0],hbar*self.OM_T[-1,0]],
                 saveloc='single_output_temp/pipeline_diag/signal_FT_Koay-Basser.png', show=False)
+
+
+        ### DIAGNOSTICS
+
+        self.signal_zerocomp = self.rng.poisson(self.alpha*self.signal_zerocomp + self.b).astype(float) - self.b
+
+        self.signal_zerocomp_FT, _, _, _ = rk.CFT(self.T_range, self.signal_zerocomp, use_window=False, zero_pad=self.zero_pad)
+
+        plt.plot(np.sum(np.abs(self.signal_zerocomp_FT)[0:self.N_T//4] + np.abs(self.signal_zerocomp_FT)[3*self.N_T//4:],axis=0))
+        plt.plot(np.sum(np.abs(self.sig_sb_FT_zerocomp)[0:self.N_T//4] + np.abs(self.sig_sb_FT_zerocomp)[3*self.N_T//4:],axis=0))
+        plt.savefig('zerocomps.png')
+        plt.close()
         
-        # Koay-Basser probe signal correction
-        # mixed signal time reach
-        i_mix = floor(self.T_mix_reach/self.T_reach/2*self.N_T)
+        # # Koay-Basser probe signal correction
+        # # mixed signal time reach
+        # i_mix = floor(self.T_mix_reach/self.T_reach/2*self.N_T)
         
-        # Remove rows [N_T//2 - i_mix : N_T//2 + i_mix] along time axis
-        signal_xuv = np.delete(self.signal_sb, np.s_[self.N_T//2 - i_mix : self.N_T//2 + i_mix], axis=0)
+        # # Remove rows [N_T//2 - i_mix : N_T//2 + i_mix] along time axis
+        # signal_xuv = np.delete(self.signal_sb, np.s_[self.N_T//2 - i_mix : self.N_T//2 + i_mix], axis=0)
         
-        tot_rician = np.mean(signal_xuv, axis=0)*self.N_T*(2*self.T_reach/self.N_T)**2
+        # tot_rician = np.mean(signal_xuv, axis=0)*self.N_T*(2*self.T_reach/self.N_T)**2
         
-        # Decompose RL reconstruction as a sum of n Gaussians and plot
-        n_comp = 1
-        # Use non-negative target for Gaussian fit
-        tot_rician_fit, _ = rk.fit_n_gaussians_1d(
-            y_vals=self.om_xuv,
-            z_vals=tot_rician,
-            n=n_comp
-        )
+        # # Decompose RL reconstruction as a sum of n Gaussians and plot
+        # n_comp = 1
+        # # Use non-negative target for Gaussian fit
+        # tot_rician_fit, _ = rk.fit_n_gaussians_1d(
+        #     y_vals=self.om_xuv,
+        #     z_vals=tot_rician,
+        #     n=n_comp
+        # )
         
-        amp_corr = np.zeros_like(self.sig_sb_FT_full_detrended)
+        # amp_corr = np.zeros_like(self.sig_sb_FT_zerocomp)
         
-        for j in range(self.N_E):
-            col_now = np.abs(self.sig_sb_FT_full_detrended[:,j])
-            bias_now = tot_rician_fit[j]
-            amp_corr_now = rk.koay_basser_correction(col_now, bias_now)
-            amp_corr[:,j] = amp_corr_now
-            if j%100==0:
-                print(j)
+        # for j in range(self.N_E):
+        #     col_now = np.abs(self.sig_sb_FT_zerocomp[:,j])
+        #     bias_now = tot_rician_fit[j]
+        #     amp_corr_now = rk.koay_basser_correction(col_now, bias_now)
+        #     amp_corr[:,j] = amp_corr_now
+        #     if j%100==0:
+        #         print(j)
         
-        phase = np.angle(self.sig_sb_FT_full_detrended)
-        self.sig_sb_FT_full_detrended = amp_corr * np.exp(1j*phase)
+        # phase = np.angle(self.sig_sb_FT_zerocomp)
+        # self.sig_sb_FT_zerocomp = amp_corr * np.exp(1j*phase)
         
-        rk.plot_mat(self.sig_sb_FT_full_detrended, extent=[self.E_lo,self.E_hi,hbar*self.OM_T[0,0],hbar*self.OM_T[-1,0]],
+        rk.plot_mat(self.sig_sb_FT_zerocomp, extent=[self.E_lo,self.E_hi,hbar*self.OM_T[0,0],hbar*self.OM_T[-1,0]],
                 saveloc='single_output_temp/pipeline_diag/signal_FT_detrended_Koay-Basser.png', show=False)
         
-        self.sig_probe_reconstructed,_,_,_ = rk.CFT(self.T_range, self.sig_sb_FT_full_detrended, use_window=False, inverse=True)
+        self.sig_probe_reconstructed,_,_,_ = rk.CFT(self.T_range, self.sig_sb_FT_zerocomp, use_window=False, inverse=True)
         
         rk.plot_mat(self.sig_probe_reconstructed, extent=[self.E_lo,self.E_hi,-self.T_reach,self.T_reach],
                 saveloc='single_output_temp/pipeline_diag/sig_probe_reconstructed.png', show=False)
-        rk.plot_mat(self.synth_bsln, extent=[self.E_lo,self.E_hi,-self.T_reach,self.T_reach],
+        rk.plot_mat(self.signal_zerocomp, extent=[self.E_lo,self.E_hi,-self.T_reach,self.T_reach],
                 saveloc='single_output_temp/pipeline_diag/sig_probe_ideal.png', show=False)
-        rk.plot_mat((self.sig_probe_reconstructed - self.synth_bsln)/np.max(self.sig_probe_reconstructed),
+        rk.plot_mat((self.sig_probe_reconstructed - self.signal_zerocomp)/np.max(self.sig_probe_reconstructed),
                 extent=[self.E_lo,self.E_hi,-self.T_reach,self.T_reach],
                 saveloc='single_output_temp/pipeline_diag/sig_probe_rec-id_difference.png', show=False)
 
@@ -638,57 +537,79 @@ class RK_experiment:
         """Reconstruct XUV peak spectrum."""
 
         xuv_sigq_avg = np.sum(self.signal_harmq,axis=0)
-        xuv_sigq_avg = np.abs(xuv_sigq_avg).astype(float)
-        xuv_sigq_avg *= np.max(np.abs(self.sp_xuv)**2)/np.max(xuv_sigq_avg)
+        xuv_sigq_avg = rk.normalize_abs(np.abs(xuv_sigq_avg).astype(float))
 
+        if self.if_coherent:
+            xuv_sigq_avg_fitted, fit_params = rk.fit_n_gaussians_1d(self.E[0,:]/hbar,np.sqrt(xuv_sigq_avg),2,saveloc='single_output_temp/reconstructions/harmq_fit.png',plotlim=[self.harmq_lo/hbar,self.harmq_hi/hbar])
+            self.xuvs_rec = rk.nfit_params_to_probes(fit_params, 0*self.T)
+        else:
+            xuv_sigq_avg_fitted, fit_params = rk.fit_n_gaussians_1d(self.E[0,:]/hbar,xuv_sigq_avg,2,saveloc='single_output_temp/reconstructions/harmq_fit.png',plotlim=[self.harmq_lo/hbar,self.harmq_hi/hbar])
+            self.xuvs_rec = rk.sqrt_probes(rk.nfit_params_to_probes(fit_params, 0*self.T))
+        sp_xuv_rec = rk.sp_tot(self.xuvs_rec,self.om_xuv)
+
+        plt.plot(self.om_xuv*hbar,rk.normalize_abs(self.sp_xuv),label='measured xuv band')
+        plt.plot(self.om_xuv*hbar,rk.normalize_abs(sp_xuv_rec),label='fitted xuv band')
+        plt.xlim([self.harmq_lo-0.2,self.harmq_hi+0.2])
+        plt.xlabel('Energy [eV]')
+        plt.ylabel('Amplitude (normalized)')
+        plt.legend()
+        plt.tight_layout()
+        plt.savefig('single_output_temp/reconstructions/sp_xuv_rec.png',dpi=300)
+        plt.close()
+
+        self.sp_xuv_meas_sig_fit = rk.sp_tot(self.xuvs_rec,self.om_xuv)
 
         #### FIT
 
-        # Fit two Gaussians with same sigma, separated by 0.177 eV
-        # Model: A1/(2s)*exp(-0.5*((om-mu)/s)^2) + A2/(2s)*exp(-0.5*((om-(mu+0.177/hbar))/s)^2)
-        # Free params: A1, A2, mu (center of first peak), s (shared width)
-        om_axis = self.E[0,:] / hbar
-        delta_om = 0.177 / hbar  # fixed splitting in angular-frequency units
+        # xuv_sigq_avg = np.sum(self.signal_harmq,axis=0)
+        # xuv_sigq_avg = np.abs(xuv_sigq_avg).astype(float)
+        # xuv_sigq_avg *= np.max(np.abs(self.sp_xuv)**2)/np.max(xuv_sigq_avg)
 
-        def _two_gauss_linked(om, A1, A2, mu, s):
-            g1 = A1 / (2*s) * np.exp(-0.5 * ((om - mu) / s)**2)
-            g2 = A2 / (2*s) * np.exp(-0.5 * ((om - (mu + delta_om)) / s)**2)
-            return g1 + g2
+        # # Fit two Gaussians with same sigma, separated by 0.177 eV
+        # # Model: A1/(2s)*exp(-0.5*((om-mu)/s)^2) + A2/(2s)*exp(-0.5*((om-(mu+0.177/hbar))/s)^2)
+        # # Free params: A1, A2, mu (center of first peak), s (shared width)
+        # om_axis = self.E[0,:] / hbar
+        # delta_om = 0.177 / hbar  # fixed splitting in angular-frequency units
 
-        # Initial guesses
-        om_max = om_axis[np.argmax(xuv_sigq_avg)]
-        s0 = 0.08 / hbar
-        A0 = float(np.max(xuv_sigq_avg)) * 2 * s0
+        # def _two_gauss_linked(om, A1, A2, mu, s):
+        #     g1 = A1 / (2*s) * np.exp(-0.5 * ((om - mu) / s)**2)
+        #     g2 = A2 / (2*s) * np.exp(-0.5 * ((om - (mu + delta_om)) / s)**2)
+        #     return g1 + g2
 
-        from scipy.optimize import curve_fit as _cf
-        try:
-            popt, _ = _cf(_two_gauss_linked, om_axis, xuv_sigq_avg,
-                          p0=[A0, A0, om_max - delta_om, s0],
-                          bounds=([0, 0, om_axis[0], 1e-12],
-                                  [np.inf, np.inf, om_axis[-1], (om_axis[-1]-om_axis[0])]),
-                          maxfev=20000)
-            A1_fit, A2_fit, mu_fit, s_fit = popt
-        except Exception:
-            A1_fit, A2_fit, mu_fit, s_fit = A0, A0, om_max - delta_om, s0
+        # # Initial guesses
+        # om_max = om_axis[np.argmax(xuv_sigq_avg)]
+        # s0 = 0.08 / hbar
+        # A0 = float(np.max(xuv_sigq_avg)) * 2 * s0
 
-        # Pack into the same [A1, mu1, s1, A2, mu2, s2] format
-        sp_xuv_meas_sig_fit_params = np.array([A1_fit, mu_fit, s_fit,
-                                                A2_fit, mu_fit + delta_om, s_fit])
-        self.sp_xuv_meas_sig_fit = rk._sum_n_gauss1d(om_axis, *sp_xuv_meas_sig_fit_params)
+        # from scipy.optimize import curve_fit as _cf
+        # try:
+        #     popt, _ = _cf(_two_gauss_linked, om_axis, xuv_sigq_avg,
+        #                   p0=[A0, A0, om_max - delta_om, s0],
+        #                   bounds=([0, 0, om_axis[0], 1e-12],
+        #                           [np.inf, np.inf, om_axis[-1], (om_axis[-1]-om_axis[0])]),
+        #                   maxfev=20000)
+        #     A1_fit, A2_fit, mu_fit, s_fit = popt
+        # except Exception:
+        #     A1_fit, A2_fit, mu_fit, s_fit = A0, A0, om_max - delta_om, s0
 
-        #### END FIT
+        # # Pack into the same [A1, mu1, s1, A2, mu2, s2] format
+        # sp_xuv_meas_sig_fit_params = np.array([A1_fit, mu_fit, s_fit,
+        #                                         A2_fit, mu_fit + delta_om, s_fit])
+        # self.sp_xuv_meas_sig_fit = rk._sum_n_gauss1d(om_axis, *sp_xuv_meas_sig_fit_params)
+
+        # #### END FIT
         
-        self.xuvs_rec = rk.nfit_params_to_probes(sp_xuv_meas_sig_fit_params, self.T)
-        self.sp_xuv_meas_sig_fit = rk.sp_tot(self.xuvs_rec,self.om_xuv)
+        # self.xuvs_rec = rk.nfit_params_to_probes(sp_xuv_meas_sig_fit_params, self.T)
+        # self.sp_xuv_meas_sig_fit = rk.sp_tot(self.xuvs_rec,self.om_xuv)
         
-        diff = self.xuvs_rec[0][2]*hbar - self.xuvs_rec[1][2]*hbar
-        ratio = self.xuvs_rec[0][1]/self.xuvs_rec[1][1]
+        # diff = self.xuvs_rec[0][2]*hbar - self.xuvs_rec[1][2]*hbar
+        # ratio = self.xuvs_rec[0][1]/self.xuvs_rec[1][1]
 
 
-        om_max = self.E[0,np.argmax(xuv_sigq_avg)]/hbar
-        s_guess = 0.08/hbar
-        a_guess = 0.01
-        sp_ideal = rk.sp_tot(((0,a_guess*1,om_max-0.177/hbar,s_guess,0),(0,a_guess*2,om_max,s_guess,0)),self.E[0,:]/hbar)
+        # om_max = self.E[0,np.argmax(xuv_sigq_avg)]/hbar
+        # s_guess = 0.08/hbar
+        # a_guess = 0.01
+        # sp_ideal = rk.sp_tot(((0,a_guess*1,om_max-0.177/hbar,s_guess,0),(0,a_guess*2,om_max,s_guess,0)),self.E[0,:]/hbar)
 
         # # --- Richardson-Lucy deconvolution: find positive kernel h such that sp_ideal ∗ h ≈ xuv_sigq_avg ---
         # # Normalize both signals so the convolution is well-conditioned
@@ -752,18 +673,18 @@ class RK_experiment:
         # plt.savefig('single_output_temp/reconstructions/xuv_deconvolution.png', dpi=300)
         # plt.close()
 
-        plt.plot(self.E[0,:],xuv_sigq_avg,label='measured xuv band')
-        plt.plot(self.E[0,:],sp_ideal,label='model xuv spectrum')
-        plt.plot(self.om_xuv*hbar,self.sp_xuv_meas_sig_fit,linewidth=0.65,linestyle='--',label='reconstructed xuv sp.')
-        plt.xlim([self.harmq_lo-0.2,self.harmq_hi+0.2])
-        plt.xlabel('Energy [eV]')
-        plt.ylabel('Amplitude (normalized)')
-        plt.title('XUV spectrum rec, gaussian fit')
-        plt.legend()
-        plt.text(0.2, 0.9, f'split: {diff:.03f} eV\nratio:{ratio:.02f}', transform=plt.gca().transAxes, ha='center', va='bottom')
-        plt.tight_layout()
-        plt.savefig('single_output_temp/reconstructions/sp_xuv_rec.png',dpi=300)
-        plt.close()
+        # plt.plot(self.E[0,:],xuv_sigq_avg,label='measured xuv band')
+        # plt.plot(self.E[0,:],sp_ideal,label='model xuv spectrum')
+        # plt.plot(self.om_xuv*hbar,self.sp_xuv_meas_sig_fit,linewidth=0.65,linestyle='--',label='reconstructed xuv sp.')
+        # plt.xlim([self.harmq_lo-0.2,self.harmq_hi+0.2])
+        # plt.xlabel('Energy [eV]')
+        # plt.ylabel('Amplitude (normalized)')
+        # plt.title('XUV spectrum rec, gaussian fit')
+        # plt.legend()
+        # plt.text(0.2, 0.9, f'split: {diff:.03f} eV\nratio:{ratio:.02f}', transform=plt.gca().transAxes, ha='center', va='bottom')
+        # plt.tight_layout()
+        # plt.savefig('single_output_temp/reconstructions/sp_xuv_rec.png',dpi=300)
+        # plt.close()
         
     def WF_reconstruct(self):
         """Retrieve probe spectrum using Wirtinger Flow."""
@@ -873,7 +794,7 @@ class RK_experiment:
         # Resample and analyze
 
         rho_uncorrected, amplit_tot_FT_corrected_small, extent_small, idxs_small, _, _ = rk.resample(
-            median_filter(np.abs(self.signal_sb_FT),size=(3,3))*np.exp(1j*np.angle(self.signal_sb_FT)), self.rho_hi, self.rho_lo, self.om0_ref, self.E, self.OM_T, self.N_T)
+            median_filter(np.abs(self.signal_sb_FT),size=(3,3))*np.exp(1j*np.angle(self.signal_sb_FT)), self.rho_hi, self.rho_lo, self.om_ref, self.E, self.OM_T, self.N_T)
         
         rk.plot_mat(rho_uncorrected, extent=[self.rho_lo,self.rho_hi,self.rho_lo,self.rho_hi], cmap='plasma',
                  mode='abs', saveloc='single_output_temp/rhos/synth_uncorr_unproj.png', xlabel='Energy [eV]', ylabel='Energy [eV]',
@@ -882,19 +803,19 @@ class RK_experiment:
         rho_uncorrected = rk.project_to_density_matrix(rho_uncorrected)
 
         rho_reconstructed, amplit_tot_FT_corrected_small, extent_small, idxs_small, E1, E2 = rk.resample(
-            self.amplit_tot_FT_corrected, self.rho_hi, self.rho_lo, self.om0_ref, self.E, self.OM_T, self.N_T)
+            self.amplit_tot_FT_corrected, self.rho_hi, self.rho_lo, self.om_ref, self.E, self.OM_T, self.N_T)
         rho_reconstructed = rk.project_to_density_matrix(rho_reconstructed)
         
         rho_reconstructed_x, amplit_tot_FT_corrected_small, extent_small, idxs_small, _, _ = rk.resample(
-            self.amplit_tot_FT_corrected_x, self.rho_hi, self.rho_lo, self.om0_ref, self.E, self.OM_T, self.N_T)
+            self.amplit_tot_FT_corrected_x, self.rho_hi, self.rho_lo, self.om_ref, self.E, self.OM_T, self.N_T)
         rho_reconstructed_x = rk.project_to_density_matrix(rho_reconstructed_x)
         
         rho_reconstructed_rec_x, amplit_tot_FT_corrected_small_rec, extent_small, idxs_small, _, _ = rk.resample(
-            self.amplit_tot_FT_corrected_rec_x, self.rho_hi, self.rho_lo, self.om0_ref, self.E, self.OM_T, self.N_T)
+            self.amplit_tot_FT_corrected_rec_x, self.rho_hi, self.rho_lo, self.om_ref, self.E, self.OM_T, self.N_T)
         rho_reconstructed_rec_x = rk.project_to_density_matrix(rho_reconstructed_rec_x)
         
         rho_reconstructed_rec_x_nomedian, amplit_tot_FT_corrected_small_rec, extent_small, idxs_small, _, _ = rk.resample(
-            self.amplit_tot_FT_corrected_rec_x_nomedian, self.rho_hi, self.rho_lo, self.om0_ref, self.E, self.OM_T, self.N_T)
+            self.amplit_tot_FT_corrected_rec_x_nomedian, self.rho_hi, self.rho_lo, self.om_ref, self.E, self.OM_T, self.N_T)
         rho_reconstructed_rec_x_nomedian = rk.project_to_density_matrix(rho_reconstructed_rec_x_nomedian)
         
         # Comparison with a ground truth
@@ -993,67 +914,35 @@ if __name__ == "__main__":
             N_T = 260
             # N_T = 700
             p_E = 4  # N_E upsampling integer
-            alpha = 1000000
-            # alpha = 10000
+            alpha = 30000
             b = 1
 
             sideband_lo = 26.0
-            sideband_hi = 27.5
+            sideband_hi = 28.0
             harmq_lo = 24.0
             harmq_hi = 26.0
 
             if_coherent = True
 
-            # Create experiment instance
-            experiment = RK_experiment(E_lo=E_lo,E_hi=E_hi,T_reach=T_reach,E_res=E_res,N_T=N_T,p_E=p_E,alpha=alpha,b=b,
-                                    sb_lo=sideband_lo,sb_hi=sideband_hi,harmq_lo=harmq_lo,harmq_hi=harmq_hi,if_coherent=if_coherent)
-            
+
             # Define pulses
-            # A_xuv = 1.0
-            # a_xuvs = [1.0,1.0]
-            # om_xuvs = [10.65/hbar,(10.65+2*1.55)/hbar]
-            # s_xuvs = [0.15/hbar,0.18/hbar]
 
-            # A_xuv = 0.1
-            # a_xuvs = [1.0]
-            # om_xuvs = [(25.65-1*1.40)/hbar]
-            # s_xuvs = [0.15/hbar]
-
-            # A_xuv = 0.1
-            # a_xuvs = [np.sqrt(0.4),np.sqrt(0.8)]
-            # om_xuvs = [(25.65-1*1.75)/hbar,(25.65-1*1.75+0.27)/hbar]
-            # s_xuvs = [0.10/hbar,0.10/hbar]
-
-            scale = 0.2
+            scale = 0.7
 
             A_xuv = 0.1*scale
-            a_xuvs = [np.sqrt(0.8),np.sqrt(0.8),np.sqrt(0.8),np.sqrt(0.8),np.sqrt(0.8),np.sqrt(0.8)]
-            om_xuvs = [(25.65-1*1.75)/hbar,(25.65+1*1.45)/hbar,(25.65+1*1.45+3.10)/hbar,(25.65-1*1.45)/hbar,(25.65+1*1.75)/hbar,(25.65+1*1.75+3.10)/hbar]
-            s_xuvs = [0.1/hbar,0.1/hbar,0.1/hbar,0.1/hbar,0.1/hbar,0.1/hbar]
-
-            a_xuvs = [np.sqrt(0.8),np.sqrt(0.8),np.sqrt(0.8),
-                      np.sqrt(0.8),np.sqrt(0.8),np.sqrt(0.8)]
-            om_xuvs = [(25.00-0.2)/hbar,(25.00+3.1-0.2)/hbar,(25.00-3.1-0.2)/hbar,
-                       (25.00+0.2)/hbar,(25.00+3.1+0.2)/hbar,(25.00-3.1+0.2)/hbar]
-            s_xuvs = [0.1/hbar,0.1/hbar,0.1/hbar,
-                      0.1/hbar,0.1/hbar,0.1/hbar]
-            
-            a_xuvs = [0.8,0.4]
-            om_xuvs = [(25.00-0.2)/hbar,
-                       (25.00+0.2)/hbar]
-            s_xuvs = [0.1/hbar,0.1/hbar]
-
+            a_xuvs = [0.8,0.8]
+            om_xuvs = [(25.00-0.2)/hbar,(25.00+0.1)/hbar]
+            s_xuvs = [0.1/hbar,0.12/hbar]
 
             A_probe = 1.2*scale
-            a_probes = [1.0,0.2,0.2,0.3]
-            om_probes = [1.55/hbar,1.20/hbar,2.00/hbar,1.85/hbar]
-            s_probes = [0.15/hbar,0.04/hbar,0.07/hbar,0.17/hbar]
+            a_probes = [1.0]
+            om_probes = [1.55/hbar]
+            s_probes = [0.15/hbar]
 
-            A_probe = 1.2*scale
-            a_probes = [1.0,0.2]
-            om_probes = [1.55/hbar,1.75/hbar]
-            s_probes = [0.11/hbar,0.05/hbar]
-
+            # A_probe = 1.2*scale
+            # a_probes = [1.0,0.2,0.2,0.3]
+            # om_probes = [1.55/hbar,1.20/hbar,2.00/hbar,1.85/hbar]
+            # s_probes = [0.15/hbar,0.04/hbar,0.07/hbar,0.17/hbar]
             # # Flat-top probe (similar total width and avg amplitude)
             # A_probe = 1.2
             # a_probes = [0.35, 0.35, 0.35, 0.35, 0.35, 0.35]
@@ -1062,33 +951,48 @@ if __name__ == "__main__":
 
             A_ref = 0.6*scale
             a_refs = [1.0,0.001]
-            om_refs = [1.25/hbar,1.55/hbar]
-            s_refs = [0.05/hbar,0.15/hbar]
+            om_refs = [1.55/hbar,1.55/hbar]
+            s_refs = [0.03/hbar,0.15/hbar]
 
-            experiment.define_pulses(A_xuv,A_probe,A_ref,a_xuvs,a_probes,a_refs,om_xuvs,om_probes,om_refs,s_xuvs,s_probes,s_refs)
+            A_ref = 1.0
+            om_ref = 1.55/hbar
+            s_ref = 0.02/hbar
+
+            # Create experiment instance
+            experiment = RK_experiment(E_lo=E_lo,E_hi=E_hi,T_reach=T_reach,E_res=E_res,N_T=N_T,p_E=p_E,alpha=alpha,b=b,
+                                    sb_lo=sideband_lo,sb_hi=sideband_hi,harmq_lo=harmq_lo,harmq_hi=harmq_hi,if_coherent=if_coherent,
+                                    A_ref=A_ref,om_ref=om_ref,s_ref=s_ref)
+            
+
+            experiment.define_pulses(A_xuv,A_probe,a_xuvs,a_probes,om_xuvs,om_probes,s_xuvs,s_probes)
             
             # Run the full pipeline
             experiment.generate_signal()
             PSBC[i_alpha,i_nt] = experiment.peak_sb_counts
 
-            try:
+            # try:
 
-                experiment.process_and_detrend()
-                experiment.kb_correct()
-                # experiment.xuv_peak()
-                experiment.WF_reconstruct()
-                experiment.resample_analyze()
+            #     experiment.process_and_detrend()
+            #     experiment.kb_correct()
+            #     # experiment.xuv_peak()
+            #     experiment.WF_reconstruct()
+            #     experiment.resample_analyze()
 
-                fid1s[i_alpha,i_nt] = experiment.fidelities[1]
-                fid2s[i_alpha,i_nt] = experiment.fidelities[2]
-                fid3s[i_alpha,i_nt] = experiment.fidelities[3]
-                fid4s[i_alpha,i_nt] = experiment.fidelities[4]
+            #     fid1s[i_alpha,i_nt] = experiment.fidelities[1]
+            #     fid2s[i_alpha,i_nt] = experiment.fidelities[2]
+            #     fid3s[i_alpha,i_nt] = experiment.fidelities[3]
+            #     fid4s[i_alpha,i_nt] = experiment.fidelities[4]
 
-            except:
-                fid1s[i_alpha,i_nt] = 0
-                fid2s[i_alpha,i_nt] = 0
-                fid3s[i_alpha,i_nt] = 0
-                fid4s[i_alpha,i_nt] = 0
+            # except:
+            #     fid1s[i_alpha,i_nt] = 0
+            #     fid2s[i_alpha,i_nt] = 0
+            #     fid3s[i_alpha,i_nt] = 0
+            #     fid4s[i_alpha,i_nt] = 0
+
+            experiment.process_and_detrend()
+            experiment.kb_correct()
+            experiment.WF_reconstruct()
+            experiment.resample_analyze()
 
             exit()
             

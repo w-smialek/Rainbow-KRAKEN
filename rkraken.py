@@ -344,282 +344,202 @@ def fit_n_gaussians_1d(
     y_vals,
     z_vals,
     n,
-    use_weights=False,
-    width_frac_bounds=(0.01, 0.6),   # min/max sigma as fraction of span_y
-    amp_min=0.0,                     # amplitude lower bound
-    verbose=True,                    # print status to terminal
-    prune_insignificant=True         # collapse negligible components before refinement
+    width_frac_bounds=(0.001, 0.6),
+    amp_min=0.0,
+    verbose=True,
+    saveloc=None,
+    plotlim=None
 ):
     """
-    Fit a sum of n 1D Gaussians to a 1D signal.
-
-    Strategy:
-      1. Multi-scale peak detection (light→heavy smoothing).
-      2. Greedy sequential fit: fit one Gaussian at a time to the residual
-         so each component locks onto a single feature.
-      3. Joint refinement of all parameters together.
-      4. Falls back to differential_evolution if local optimisation fails.
+    Fit a sum of n 1D Gaussians to a 1D signal using _sum_n_gauss1d.
 
     Returns
     -------
     fit_full : ndarray   – model evaluated on y_vals
     popt     : ndarray   – fitted [A1, mu1, s1, ..., An, mun, sn]
     """
-    import time as _time
-    _t_start = _time.perf_counter()
-
-    def _log(msg):
-        if verbose:
-            elapsed = _time.perf_counter() - _t_start
-            print(f"  [fit_{n}G {elapsed:6.3f}s] {msg}")
-
-    _log(f"starting: {y_vals.size} pts, range [{y_vals[0]:.3g}, {y_vals[-1]:.3g}]")
-
     y_vals = np.asarray(y_vals, float)
     z_vals = np.asarray(z_vals, float)
+    span_y = np.ptp(y_vals)
+    if span_y == 0:
+        span_y = 1.0
 
-    N = y_vals.size
-    if N < 3:
-        raise ValueError("y_vals must have at least 3 points")
+    min_s = float(width_frac_bounds[0]) * span_y
+    max_s = float(width_frac_bounds[1]) * span_y
 
-    y_min, y_max = float(y_vals[0]), float(y_vals[-1])
-    span_y = float(y_max - y_min)
-    if span_y <= 0:
-        raise ValueError("y_vals must be strictly increasing")
-    dy = span_y / (N - 1)
-    n = int(n)
+    y_lo, y_hi = float(y_vals[0]), float(y_vals[-1])
+    z_max = float(np.max(np.abs(z_vals))) if z_vals.size > 0 else 1.0
+    if z_max == 0:
+        z_max = 1.0
 
-    # ── bounds per component ────────────────────────────────────────
-    min_s = max(width_frac_bounds[0] * span_y, 1e-12)
-    max_s = max(width_frac_bounds[1] * span_y, min_s * 2)
+    # --- Initial guesses from peak detection (progressive relaxation) ---
+    peaks = np.array([], dtype=int)
 
-    lower = np.tile([float(amp_min), y_min, min_s], n)
-    upper = np.tile([np.inf,         y_max, max_s], n)
-
-    # ── weights ─────────────────────────────────────────────────────
-    sigma_w = None
-    if use_weights:
-        eps = 1e-12
-        sigma_w = np.sqrt(np.abs(z_vals) + eps)
-        sigma_w[sigma_w < 1e-12] = 1e-12
-
-    # ── single-component model for greedy stage ─────────────────────
-    def _gauss1(y, A, mu, s):
-        return A / (2 * s) * np.exp(-0.5 * ((y - mu) / s) ** 2)
-
-    # ── multi-scale peak detection ──────────────────────────────────
-    z_pos = np.maximum(z_vals, 0.0)
-    z_max = float(z_pos.max()) if z_pos.max() > 0 else 1.0
-
-    prom_threshold = 0.01 * z_max
-    min_dist = max(1, N // (5 * max(n, 2)))
-
-    smooth_candidates = sorted(set([
-        max(1, N // 200),
-        max(1, N // 80),
-        max(2, N // 40),
-    ]))
-
-    best_peak_idx = np.array([], dtype=int)
-    best_widths = np.array([])
-
-    for sm_sigma in smooth_candidates:
-        z_smooth = gaussian_filter(z_pos, sigma=sm_sigma)
-        trial_idx, trial_props = find_peaks(
-            z_smooth, prominence=prom_threshold, distance=min_dist,
-        )
-        if trial_idx.size > 0:
-            trial_widths, _, _, _ = peak_widths(
-                z_smooth, trial_idx, rel_height=0.5)
-            proms = trial_props['prominences']
-            order = np.argsort(proms)[::-1]
-            trial_idx = trial_idx[order]
-            trial_widths = trial_widths[order]
-            if trial_idx.size > best_peak_idx.size:
-                best_peak_idx = trial_idx
-                best_widths = trial_widths
-            if best_peak_idx.size >= n:
+    # Try progressively wider/lower peak detection to find at least n peaks
+    for min_dist_frac in [0.02, 0.01, 0.005]:
+        for min_height_frac in [0.1, 0.05, 0.01, 0.0]:
+            min_distance = max(1, int(min_dist_frac * len(z_vals)))
+            min_height = min_height_frac * z_max
+            try:
+                cand, _ = find_peaks(z_vals, height=min_height,
+                                     distance=min_distance)
+                if len(cand) >= n:
+                    peaks = cand
+                    break
+                elif len(cand) > len(peaks):
+                    peaks = cand
+            except Exception:
+                pass
+            if len(peaks) >= n:
                 break
-
-    if best_peak_idx.size == 0:
-        best_peak_idx = np.array([np.argmax(z_pos)])
-        best_widths = np.array([N / 4.0])
-
-    _log(f"peak detection: {best_peak_idx.size} peaks found "
-         f"at y=[{', '.join(f'{y_vals[i]:.3g}' for i in best_peak_idx[:6])}]"
-         + (" ..." if best_peak_idx.size > 6 else ""))
-
-    # ── greedy sequential fit ───────────────────────────────────────
-    # Fit one Gaussian at a time to the residual; this prevents the
-    # optimizer from merging nearby peaks into a single wide component.
-
-    fitted_params = []          # list of (A, mu, s) tuples
-    residual = z_pos.copy()
-    n_detected = best_peak_idx.size
-
-    for k in range(n):
-        # Choose initial guess for this component
-        if k < n_detected:
-            idx = int(best_peak_idx[k])
-            s_init = np.clip(best_widths[k] * dy / 2.35, min_s, max_s)
-            A_init = max(residual[idx] * 2 * s_init, 1e-6)
-            mu_init = float(y_vals[idx])
-        else:
-            # Pick the argmax of the current residual
-            res_pos = np.maximum(residual, 0.0)
-            idx = int(np.argmax(res_pos))
-            mu_init = float(y_vals[idx])
-            s_init = np.clip(0.05 * span_y, min_s, max_s)
-            A_init = max(res_pos[idx] * 2 * s_init, 1e-6)
-
-        p0_k = [A_init, mu_init, s_init]
-        lo_k = [float(amp_min), y_min, min_s]
-        hi_k = [np.inf,         y_max, max_s]
-
-        try:
-            popt_k, _ = curve_fit(
-                _gauss1, y_vals, np.maximum(residual, 0.0),
-                p0=p0_k, bounds=(lo_k, hi_k),
-                maxfev=5000, method='trf',
-            )
-            status = "ok"
-        except Exception as e:
-            popt_k = np.array(p0_k)
-            status = f"fallback ({type(e).__name__})"
-
-        fitted_params.extend(popt_k.tolist())
-        # Subtract this component from the residual
-        residual = residual - _gauss1(y_vals, *popt_k)
-        _log(f"greedy {k+1}/{n}: mu={popt_k[1]:.4g}  s={popt_k[2]:.4g}  A={popt_k[0]:.4g}  [{status}]")
-
-    theta0 = np.asarray(fitted_params, float)
-    theta0 = np.clip(theta0, lower + 1e-14, upper - 1e-14)
-
-    # ── prune negligible components ─────────────────────────────────
-    # After greedy fitting, some components (especially beyond the number
-    # of detected peaks) capture almost nothing.  Collapse them to tiny
-    # amplitudes so curve_fit effectively ignores them, reducing the
-    # effective dimensionality of the problem.
-    if not prune_insignificant:
-        # Force only the top 2 components to survive; zero out the rest
-        amps_greedy = theta0[0::3].copy()
-        if n > 2:
-            top2 = np.argsort(amps_greedy)[-2:]
-            for k in range(n):
-                if k not in top2:
-                    theta0[3*k + 0] = lower[3*k + 0] + 1e-14  # A → ~0
-            _log(f"forced 2-Gaussian mode: kept components {sorted(top2.tolist())}")
-
-    greedy_rss = float(np.sum((_sum_n_gauss1d(y_vals, *theta0) - z_vals) ** 2))
-    _log(f"greedy done — RSS={greedy_rss:.4g}")
-
-    # ── joint refinement ────────────────────────────────────────────
-    # Use relaxed tolerances + limited maxfev to keep wall-time bounded.
-    def _try_curvefit(p0, maxfev=5000):
-        popt, _ = curve_fit(
-            _sum_n_gauss1d, y_vals, z_vals,
-            p0=p0, bounds=(lower, upper),
-            sigma=sigma_w, absolute_sigma=False,
-            maxfev=maxfev, method='trf',
-            ftol=1e-6, xtol=1e-6, gtol=1e-6,
-        )
-        fit = _sum_n_gauss1d(y_vals, *popt)
-        if np.all(np.isfinite(fit)) and np.any(fit > 0):
-            return fit, popt
-        raise RuntimeError("bad fit")
-
-    # Measure fit quality: relative sum-of-squares
-    def _rss(params):
-        fit = _sum_n_gauss1d(y_vals, *params)
-        return float(np.sum((fit - z_vals) ** 2))
-
-    best_result = None
-    best_rss = np.inf
-
-    # Try joint refinement from greedy init
-    try:
-        fit, popt = _try_curvefit(theta0)
-        rss = _rss(popt)
-        if rss < best_rss:
-            best_rss = rss
-            best_result = (fit, popt)
-        _log(f"joint refine (greedy init): RSS={rss:.4g}")
-    except Exception as e:
-        _log(f"joint refine (greedy init): failed ({type(e).__name__})")
-
-    # Jittered restarts — skip if greedy already gave a good fit,
-    # and enforce a wall-time budget.
-    greedy_rel_rmse = np.sqrt(greedy_rss / N) / z_max if z_max > 0 else 0.0
-    need_jitters = best_result is None or greedy_rel_rmse > 0.02
-    n_jitters = 4 if need_jitters else 1
-    time_budget = 30.0  # seconds max for jitter phase
-
-    if not need_jitters:
-        _log("greedy init good enough — running 1 jitter for safety")
-
-    rng = np.random.default_rng(42)
-    for ji in range(n_jitters):
-        if _time.perf_counter() - _t_start > time_budget:
-            _log(f"jitter {ji+1}/{n_jitters}: skipped (time budget)")
+        if len(peaks) >= n:
             break
-        jitter = theta0.copy()
-        jitter[1::3] += rng.uniform(-0.05, 0.05, n) * span_y
-        jitter[2::3] *= rng.uniform(0.5, 2.0, n)
-        jitter = np.clip(jitter, lower + 1e-14, upper - 1e-14)
+
+    # If still not enough, also try second derivative (negative curvature) to
+    # detect shoulders / overlapping peaks
+    if len(peaks) < n and len(z_vals) > 4:
         try:
-            fit, popt = _try_curvefit(jitter)
-            rss = _rss(popt)
-            improved = rss < best_rss
-            if improved:
-                best_rss = rss
-                best_result = (fit, popt)
-            _log(f"jitter {ji+1}/{n_jitters}: RSS={rss:.4g}{' *' if improved else ''}")
+            dy = np.gradient(z_vals, y_vals)
+            ddy = np.gradient(dy, y_vals)
+            neg_curv = -ddy
+            neg_curv_peaks, _ = find_peaks(neg_curv, distance=max(1, int(0.01 * len(z_vals))))
+            # Merge with existing peaks (unique, sorted by height)
+            all_cand = np.unique(np.concatenate([peaks, neg_curv_peaks]))
+            heights_cand = z_vals[all_cand]
+            order = np.argsort(-heights_cand)
+            peaks = all_cand[order]
         except Exception:
-            _log(f"jitter {ji+1}/{n_jitters}: failed")
-            continue
+            pass
 
-    if best_result is not None:
-        elapsed = _time.perf_counter() - _t_start
-        rel_rmse = np.sqrt(best_rss / N) / z_max if z_max > 0 else 0.0
-        n_sig = int(np.sum(best_result[1][0::3] > 0.01 * best_result[1][0::3].max()))
-        _log(f"done — rel_RMSE={rel_rmse:.4f}, {n_sig} significant components, {elapsed:.3f}s total")
-        return best_result
+    if len(peaks) == 0:
+        peaks = np.array([np.argmax(z_vals)])
 
-    # ── differential evolution fallback ─────────────────────────────
-    _log("local fits failed — trying differential evolution (global)...")
+    # Sort by height descending
+    heights = z_vals[peaks]
+    order = np.argsort(-heights)
+    peaks = peaks[order]
+
+    # --- Estimate per-peak widths using peak_widths ---
     try:
-        de_bounds = list(zip(lower, upper))
-        z_scale = float(np.max(np.abs(z_vals))) if np.any(z_vals) else 1.0
-        for i in range(n):
-            if not np.isfinite(de_bounds[3*i][1]):
-                de_bounds[3*i] = (de_bounds[3*i][0], 10.0 * z_scale * max_s)
+        widths_samp, _, _, _ = peak_widths(z_vals, peaks[:min(n, len(peaks))],
+                                            rel_height=0.5)
+        dy = y_vals[1] - y_vals[0] if len(y_vals) > 1 else 1.0
+        widths_y = widths_samp * abs(dy)
+        # FWHM -> sigma: FWHM = 2*sqrt(2*ln2)*sigma => sigma = FWHM / 2.355
+        sigmas_est = widths_y / 2.3548
+    except Exception:
+        sigmas_est = np.full(min(n, len(peaks)), 0.05 * span_y)
 
-        result = differential_evolution(
-            _rss, bounds=de_bounds,
-            seed=0, maxiter=600, tol=1e-8,
-            x0=theta0, polish=True,
+    # --- Build p0 ---
+    p0 = np.zeros(3 * n)
+    for k in range(n):
+        if k < len(peaks):
+            idx = peaks[k]
+            mu0 = float(y_vals[idx])
+            s0 = float(np.clip(sigmas_est[k] if k < len(sigmas_est)
+                                else 0.05 * span_y, min_s, max_s))
+            # _sum_n_gauss1d peak height = A/(2s), so A = height * 2 * s
+            a0 = float(z_vals[idx]) * 2 * s0
+        else:
+            # Spread extra Gaussians evenly across the domain
+            mu0 = float(y_lo + (k + 1) * span_y / (n + 1))
+            s0 = 0.05 * span_y
+            a0 = 0.1 * z_max * 2 * s0
+        p0[3 * k]     = max(a0, amp_min)
+        p0[3 * k + 1] = mu0
+        p0[3 * k + 2] = s0
+
+    # --- Bounds: [A_k, mu_k, s_k] for each k ---
+    lower = []
+    upper = []
+    for k in range(n):
+        lower.extend([amp_min, y_lo - 0.1 * span_y, min_s])
+        upper.extend([np.inf,  y_hi + 0.1 * span_y, max_s])
+    lower = np.array(lower)
+    upper = np.array(upper)
+
+    # Clip p0 into bounds
+    p0 = np.clip(p0, lower + 1e-12, upper - 1e-12)
+
+    # --- Try curve_fit first (fast, local) ---
+    popt = None
+    try:
+        popt_cf, _ = curve_fit(
+            _sum_n_gauss1d,
+            y_vals,
+            z_vals,
+            p0=p0,
+            bounds=(lower, upper),
+            maxfev=50000,
         )
-        popt = result.x
-        fit_full = _sum_n_gauss1d(y_vals, *popt)
-        if np.all(np.isfinite(fit_full)) and np.any(fit_full > 0):
-            elapsed = _time.perf_counter() - _t_start
-            rel_rmse = np.sqrt(_rss(popt) / N) / z_max if z_max > 0 else 0.0
-            _log(f"DE converged — RSS={result.fun:.4g}, rel_RMSE={rel_rmse:.4f}, {elapsed:.3f}s total")
-            return fit_full, popt
-        _log("DE result invalid (non-finite or all-zero)")
-    except Exception as e:
-        _log(f"DE failed ({type(e).__name__}: {e})")
+        fit_cf = _sum_n_gauss1d(y_vals, *popt_cf)
+        res_cf = np.sum((fit_cf - z_vals) ** 2)
+        popt = popt_cf
+        best_res = res_cf
+    except Exception:
+        best_res = np.inf
 
-    # ── ultimate fallback ───────────────────────────────────────────
-    elapsed = _time.perf_counter() - _t_start
-    _log(f"WARNING: all strategies failed — returning greedy init as-is ({elapsed:.3f}s total)")
-    popt = theta0
+    # --- Always also try differential evolution (global) for robustness ---
+    de_bounds = list(zip(lower, upper))
+
+    def _obj(theta):
+        model = _sum_n_gauss1d(y_vals, *theta)
+        return np.sum((model - z_vals) ** 2)
+
+    try:
+        result = differential_evolution(_obj, de_bounds, seed=42,
+                                        maxiter=3000, tol=1e-12,
+                                        polish=True, init='sobol',
+                                        popsize=25)
+        if result.fun < best_res:
+            popt = result.x
+            best_res = result.fun
+    except Exception:
+        if verbose:
+            print("fit_n_gaussians_1d: differential_evolution also failed")
+
+    if popt is None:
+        popt = p0  # last resort
+
     fit_full = _sum_n_gauss1d(y_vals, *popt)
+
+    if verbose:
+        residual = np.sum((fit_full - z_vals) ** 2) / np.sum(z_vals ** 2 + 1e-30)
+        print(f"fit_n_gaussians_1d: n={n}, relative residual = {residual:.6e}")
+
+    if saveloc is not None:
+        import matplotlib.pyplot as plt
+        plt.figure()
+        plt.plot(y_vals, z_vals, label='input')
+        plt.plot(y_vals, fit_full, '--', label=f'fit (n={n})')
+        plt.xlabel('y')
+        plt.ylabel('z')
+        if plotlim is not None:
+            plt.xlim(plotlim)
+        plt.legend()
+        plt.tight_layout()
+        plt.savefig(saveloc, dpi=300)
+        plt.close()
+
     return fit_full, popt
 
 def spectrum_fun(A,om0,s,om):
     retval = A/(2*s)*np.exp(-(om-om0)**2/(2*s**2))
     return retval  # Positive-freq part
+
+def sqrt_probes(probes):
+    """Square-root each Gaussian component in a probes tuple.
+
+    Given spectrum_fun(A, om0, s, om) = A/(2s) * exp(-(om-om0)^2/(2s^2)),
+    its square root is sqrt(A/(2s)) * exp(-(om-om0)^2/(4s^2)),
+    which is again a Gaussian with A_new = sqrt(2*A), s_new = s*sqrt(2).
+    """
+    out = []
+    for (T_k, a_k, om0_k, s_k, phi_k) in probes:
+        a_new = 2*np.sqrt(a_k*s_k)
+        s_new = s_k * np.sqrt(2)
+        out.append((T_k, a_new, om0_k, s_new, phi_k))
+    return tuple(out)
 
 def sp_tot(gausses,om):
     retval = np.zeros_like(om)
@@ -737,6 +657,22 @@ def synth_baseline_n(sp_pr,sp_x,om_pr,om_x,T,mode='same'):
     d_om = om_pr[1]-om_pr[0]
 
     phase_pr = np.exp(1j*om_pr*T)
+    phase_x = np.exp(1j*0*T)
+
+    f1 = sp_pr*phase_pr
+    f2 = -sp_x*phase_x/om_x
+    conv1 = fftconvolve(f1,f2,mode=mode,axes=1)*d_om
+
+    f1 = sp_x*phase_x
+    f2 = -sp_pr*phase_pr/om_pr
+    conv2 = fftconvolve(f1,f2,mode=mode,axes=1)*d_om
+
+    return conv1 + conv2
+
+def synth_baseline_WF(sp_pr,sp_x,om_pr,om_x,T,ref_mask,A_ref,mode='same'):
+    d_om = om_pr[1]-om_pr[0]
+
+    phase_pr = np.exp(1j*om_pr*T) + A_ref*ref_mask
     phase_x = np.exp(1j*0*T)
 
     f1 = sp_pr*phase_pr
