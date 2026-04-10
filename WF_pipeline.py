@@ -148,67 +148,101 @@ class RK_experiment:
         
         # Store XUV parameters for ground truth comparison
         self.om0_xuv = om_xuvs[0]
-            
+        self.om0_xuv = om_xuvs[-2]
+
     def generate_signal(self,exp_signal=None):
         """Generate synthetic baseline and full signal with optional noise."""
 
-        # om_xuv = np.linspace(self.om0_xuv-self.E_span/hbar/2,self.om0_xuv+self.E_span/hbar/2,self.N_E_up)
-        # om_ir = np.linspace(-self.E_span/hbar/2,+self.E_span/hbar/2,self.N_E_up)
-        # om_ir_reg = rk.regularize_omega(om_ir)
+        om_xuv = np.linspace(self.om0_xuv-self.E_span/hbar/2,self.om0_xuv+self.E_span/hbar/2,self.N_E_up)
+        om_ir = np.linspace(-self.E_span/hbar/2,+self.E_span/hbar/2,self.N_E_up)
+        om_ir_reg = rk.regularize_omega(om_ir)
 
-        # sp_xuv = rk.sp_tot(self.xuvs,om_xuv) * np.exp(1j*0*self.T_up)
-        # # sp_ref = rk.sp_tot(self.refs,om_ir) * np.exp(1j*0*self.T_up) + rk.sp_tot(rk.pulse_emit(self.refs),om_ir) * np.exp(1j*0*self.T_up)
-        # sp_ref = rk.sp_tot(self.refs,om_ir) * np.exp(1j*0*om_ir*self.T_up/2) + rk.sp_tot(rk.pulse_emit(self.refs),om_ir) * np.exp(-1j*0*om_ir*self.T_up/2)
-        # sp_probe = rk.sp_tot(self.probes,om_ir) * np.exp(1j*om_ir*self.T_up) + rk.sp_tot(rk.pulse_emit(self.probes),om_ir) * np.exp(-1j*om_ir*self.T_up)
+        ref_mask = (self.A_ref*((om_ir >= self.om_ref - self.s_ref) & (om_ir <= self.om_ref + self.s_ref)).astype(float)
+                    + self.A_ref*((om_ir >= -self.om_ref - self.s_ref) & (om_ir <= -self.om_ref + self.s_ref)).astype(float))
 
-        # plt.plot(np.abs(sp_probe[0,:])**2)
-        # plt.savefig('fig0.png')
-        # plt.close()
+        sp_xuv = rk.sp_tot(self.xuvs,om_xuv) * np.exp(1j*0*self.T_up)
+        sp_probe = (rk.sp_tot(self.probes,om_ir)*1j + rk.sp_tot(rk.pulse_emit(self.probes),om_ir)*(-1j)) * np.exp(1j*om_ir*self.T_up)
+        sp_ref = (rk.sp_tot(self.probes,om_ir)*1j + rk.sp_tot(rk.pulse_emit(self.probes),om_ir)*(-1j)) * ref_mask * np.exp(1j*0*self.T_up)
 
-        # def cut_axes(conv,om1,om2,lo):
-        #     conv_ax = np.linspace(om1[0]+om2[0],om1[-1]+om2[-1],np.size(om1)+np.size(om2)-1)
-        #     i_lo = np.argmin(np.abs(conv_ax - lo))
-        #     i_hi = i_lo + np.size(om1)
-        #     return conv[:,i_lo:i_hi]
+        def cut_axes(conv,om1,om2,lo):
+            conv_ax = np.linspace(om1[0]+om2[0],om1[-1]+om2[-1],np.size(om1)+np.size(om2)-1)
+            i_lo = np.argmin(np.abs(conv_ax - lo))
+            i_hi = i_lo + np.size(om1)
+            return conv[:,i_lo:i_hi]
         
-        # d_om = om_ir[1] - om_ir[0]
+        d_om = om_ir[1] - om_ir[0]
 
-        # A1 = rk.sp_tot(self.xuvs,self.E_up[0,:]/hbar) * np.exp(1j*0*self.T_up)
+        A1 = rk.sp_tot(self.xuvs,self.E_up[0,:]/hbar) * np.exp(1j*0*self.T_up)
 
-        # A2_xi = d_om*(fftconvolve(sp_ref,-sp_xuv/om_xuv,axes=1) + fftconvolve(sp_xuv,-sp_ref/om_ir_reg,axes=1) +
-        #              fftconvolve(sp_probe,-sp_xuv/om_xuv,axes=1) + fftconvolve(sp_xuv,-sp_probe/om_ir_reg,axes=1))
-        # A2_xi_ax = rk.regularize_omega(np.linspace(om_xuv[0]+om_ir[0],om_xuv[-1]+om_ir[-1],2*self.N_E_up-1))
+        A2_xi = d_om*(fftconvolve(sp_ref,-sp_xuv/om_xuv,axes=1) + fftconvolve(sp_xuv,-sp_ref/om_ir_reg,axes=1) +
+                     fftconvolve(sp_probe,-sp_xuv/om_xuv,axes=1) + fftconvolve(sp_xuv,-sp_probe/om_ir_reg,axes=1))
+        A2_xi_ax = rk.regularize_omega(np.linspace(om_xuv[0]+om_ir[0],om_xuv[-1]+om_ir[-1],2*self.N_E_up-1))
 
-        # A2_ii = d_om*(fftconvolve(sp_ref,-sp_probe/om_ir_reg,axes=1) + fftconvolve(sp_probe,-sp_ref/om_ir_reg,axes=1))
-        # A2_ii_ax = rk.regularize_omega(np.linspace(2*om_ir[0],2*om_ir[-1],2*self.N_E_up-1))
+        A2_ii = d_om*(fftconvolve(sp_ref,-sp_probe/om_ir_reg,axes=1) + fftconvolve(sp_probe,-sp_ref/om_ir_reg,axes=1))
+        A2_ii_ax = rk.regularize_omega(np.linspace(2*om_ir[0],2*om_ir[-1],2*self.N_E_up-1))
 
-        # A3_i_xi = d_om*(fftconvolve(sp_ref,-A2_xi/A2_xi_ax,axes=1) + fftconvolve(A2_xi,-sp_ref/om_ir_reg,axes=1) + 
-        #                 fftconvolve(sp_probe,-A2_xi/A2_xi_ax,axes=1) + fftconvolve(A2_xi,-sp_probe/om_ir_reg,axes=1))
+        A3_i_xi = d_om*(fftconvolve(sp_ref,-A2_xi/A2_xi_ax,axes=1) + fftconvolve(A2_xi,-sp_ref/om_ir_reg,axes=1) + 
+                        fftconvolve(sp_probe,-A2_xi/A2_xi_ax,axes=1) + fftconvolve(A2_xi,-sp_probe/om_ir_reg,axes=1))
 
-        # A3_x_ii = d_om*(fftconvolve(sp_xuv,-A2_ii/A2_ii_ax,axes=1) + fftconvolve(A2_ii,-sp_xuv/om_xuv,axes=1))
+        A3_x_ii = d_om*(fftconvolve(sp_xuv,-A2_ii/A2_ii_ax,axes=1) + fftconvolve(A2_ii,-sp_xuv/om_xuv,axes=1))
 
-        # A_tot = A1 + cut_axes(A2_xi,om_ir,om_xuv,self.E_lo/hbar) + cut_axes(A3_i_xi,om_ir,A2_xi_ax,self.E_lo/hbar) + cut_axes(A3_x_ii,om_xuv,A2_ii_ax,self.E_lo/hbar)
+        A_tot = A1 + cut_axes(A2_xi,om_ir,om_xuv,self.E_lo/hbar) + cut_axes(A3_i_xi,om_ir,A2_xi_ax,self.E_lo/hbar) + cut_axes(A3_x_ii,om_xuv,A2_ii_ax,self.E_lo/hbar)
 
-        # S = np.abs(A_tot)**2
+        S = np.abs(A_tot)**2
 
-        # rk.plot_mat(A2_ii, extent=[self.E_lo,self.E_hi,-self.T_reach,self.T_reach],
-        #         saveloc='figg.png',xlabel='Kinetic energy (eV)',ylabel='Time (fs)')
+        
+        new_Elo = 12.5
+        i_new_Elo = np.argmin(np.abs(self.E_up[0,:] - new_Elo))
+        print(i_new_Elo)
+        S = S[:,i_new_Elo:]
 
-        # rk.plot_mat(np.minimum(S,0.0006), extent=[self.E_lo,self.E_hi,-self.T_reach,self.T_reach],
+        plt.style.use('bmh')
+
+        # rk.plot_mat(np.minimum(S,0.6), extent=[self.E_lo,self.E_hi,-self.T_reach,self.T_reach],
         #         saveloc='single_output_temp/pipeline_diag/measured_signal.png',xlabel='Kinetic energy (eV)',ylabel='Time (fs)')
+        rk.plot_mat(np.minimum(S,0.04), extent=[new_Elo,self.E_hi,-self.T_reach,self.T_reach],
+                saveloc='single_output_temp/pipeline_diag/measured_signal.png',xlabel='Kinetic energy (eV)',ylabel='Time (fs)', title='Signal', mode='abs', cmap='turbo', grid_alpha=0.2)
 
-        # self.signal_FT, self.OM_T, em_lo, em_hi = rk.CFT(self.T_range, S, use_window=False, zero_pad=self.zero_pad)
+        self.signal_FT, self.OM_T, em_lo, em_hi = rk.CFT(self.T_range, S, use_window=False, zero_pad=self.zero_pad)
         
-        # rk.plot_mat(np.minimum(np.abs(self.signal_FT),0.0010)*np.exp(1j*np.angle(self.signal_FT)), extent=[self.E_lo,self.E_hi,em_lo,em_hi],
+        # rk.plot_mat(np.minimum(np.abs(self.signal_FT),1.0)*np.exp(1j*np.angle(self.signal_FT)), extent=[self.E_lo,self.E_hi,em_lo,em_hi],
         #         saveloc='single_output_temp/pipeline_diag/raw_signal_FT.png', show=False)
+        rk.plot_mat(np.minimum(np.abs(self.signal_FT),0.02)*np.exp(1j*np.angle(self.signal_FT)), extent=[new_Elo,self.E_hi,em_lo,em_hi],
+                saveloc='single_output_temp/pipeline_diag/raw_signal_FT.png',xlabel='Kinetic energy (eV)',ylabel='Indirect energy (eV)', title='Signal FT', mode='abs', cmap='turbo', grid_alpha=0.2)
+        # rk.plot_mat((np.minimum(np.abs(self.signal_FT),0.01)*np.exp(1j*np.angle(self.signal_FT)))[211:250:,4350:4850], extent=[new_Elo,self.E_hi,em_lo,em_hi],
+        #         saveloc='single_output_temp/pipeline_diag/raw_signal_FT1.png',xlabel='Kinetic energy (eV)',ylabel='Indirect energy (eV)', title='Signal FT', mode='abs', cmap='turbo', grid_alpha=0.0)
+        rk.plot_mat((np.minimum(np.abs(self.signal_FT),0.01)*np.exp(1j*np.angle(self.signal_FT)))[550:650,4425:4925], extent=[new_Elo,self.E_hi,em_lo,em_hi],
+                saveloc='single_output_temp/pipeline_diag/raw_signal_FT1.png',xlabel='Kinetic energy (eV)',ylabel='Indirect energy (eV)', title='Signal FT', mode='abs', cmap='turbo', grid_alpha=0.0)
 
 
-        # # plt.plot(np.sum(S[:,320:480],axis=1))
-        # plt.plot(2*np.sum(S[:,:320],axis=1))
-        # plt.plot(np.sum(S,axis=1))
-        # # plt.ylim([0,0.12])
-        # plt.savefig('fig1.png')
-        # exit()
+        ## Plot the upsampled spectra with probe/ref on one axis, xuv on another
+
+        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(8, 10))
+        
+        # Top subplot: Probe and Reference spectra
+        ax1.plot(om_ir * hbar, np.abs(sp_probe[0,:]), label='Probe spectrum', linewidth=2)
+        ax1.plot(om_ir * hbar, np.abs(sp_ref[0,:]), label='Reference spectrum', linewidth=2)
+        ax1.set_xlabel('Energy [eV]',fontweight='bold')
+        ax1.set_ylabel('Amplitude [arb. u.]',fontweight='bold')
+        ax1.set_title('Probe and Reference Spectra',fontweight='bold',fontsize=12)
+        ax1.set_xlim([1,2])
+        ax1.legend()
+        ax1.grid(True, alpha=0.3)
+        
+        # Bottom subplot: XUV spectrum
+        ax2.plot(om_xuv * hbar, np.abs(sp_xuv[0,:]), label='XUV spectrum', linewidth=2, color='purple')
+        ax2.set_xlabel('Energy [eV]',fontweight='bold')
+        ax2.set_ylabel('Amplitude [arb. u.]',fontweight='bold')
+        ax2.set_title('XUV Spectrum',fontweight='bold',fontsize=12)
+        # ax2.set_xlim([24,26])
+        # ax2.legend()
+        ax2.grid(True, alpha=0.3)
+        
+        plt.tight_layout()
+        plt.savefig('single_output_temp/spectra/input_spectra.png', dpi=300)
+        plt.close()
+
+        exit()
 
         #########
 
@@ -246,6 +280,7 @@ class RK_experiment:
         ax1.set_xlabel('Energy [eV]',fontweight='bold')
         ax1.set_ylabel('Amplitude [arb. u.]',fontweight='bold')
         ax1.set_title('Probe and Reference Spectra',fontweight='bold',fontsize=12)
+        ax1.set_xlim([1,2])
         ax1.legend()
         ax1.grid(True, alpha=0.3)
         
@@ -254,6 +289,7 @@ class RK_experiment:
         ax2.set_xlabel('Energy [eV]',fontweight='bold')
         ax2.set_ylabel('Amplitude [arb. u.]',fontweight='bold')
         ax2.set_title('XUV Spectrum',fontweight='bold',fontsize=12)
+        ax2.set_xlim([24,26])
         # ax2.legend()
         ax2.grid(True, alpha=0.3)
         
@@ -578,7 +614,7 @@ class RK_experiment:
             plt.tight_layout()
             plt.savefig('single_output_temp/reconstructions/harmq_compare.png',dpi=300)
             plt.close()
-            
+        
         self.sp_xuv_meas_sig_fit = rk.sp_tot(self.xuvs_rec,self.om_xuv)
 
         #### FIT
@@ -797,7 +833,7 @@ class RK_experiment:
                  mode='abs', saveloc='single_output_temp/rhos/synth_uncorr_unproj.png', xlabel='Energy [eV]', ylabel='Energy [eV]',
                  title='Rho uncorrected for the probe spectrum', show=False)
         
-        rho_uncorrected = rk.project_to_density_matrix(rho_uncorrected)
+        rho_uncorrected = rk.project_to_density_matrix(1/2*(rho_uncorrected+rho_uncorrected.T))
 
         rho_reconstructed, amplit_tot_FT_corrected_small, extent_small, idxs_small, E1, E2 = rk.resample(
             self.amplit_tot_FT_corrected, self.rho_hi, self.rho_lo, self.om_ref, self.E, self.OM_T, self.N_T)
@@ -831,7 +867,10 @@ class RK_experiment:
             ### Ground truth - incoherent sum of individual XUV component density matrices
             ideal_rho = np.zeros((len(E1[:,0]), len(E1[:,0])), dtype=complex)
             for xuv_i in self.xuvs:
-                xuv_gt_i = rk.sp_tot((xuv_i,), (E1[:,0]-0.06)/hbar)
+                if self.ifexp:
+                    xuv_gt_i = rk.sp_tot((xuv_i,), (E1[:,0]-0.06)/hbar)
+                else:
+                    xuv_gt_i = rk.sp_tot((xuv_i,), E1[:,0]/hbar)
                 ideal_rho += xuv_gt_i[:,np.newaxis]@np.conjugate(xuv_gt_i[np.newaxis,:])
             ideal_rho = rk.project_to_density_matrix(ideal_rho, smooth_sigma=0.1)
 
@@ -841,8 +880,9 @@ class RK_experiment:
         if self.ifWF:
             fid3 = rk.fidelity(ideal_rho, rho_reconstructed_rec_x)
             fid4 = rk.fidelity(ideal_rho, rho_reconstructed_rec_x_nomedian)
-        
-        print(fid0,fid1,fid2,fid3,fid4)
+            print(fid0,fid1,fid2,fid3,fid4)
+        else:
+            print(fid0,fid1,fid2)
         
         rk.plot_mat(ideal_rho, extent=[self.rho_lo,self.rho_hi,self.rho_lo,self.rho_hi], cmap='plasma',
                  mode='abs', saveloc='single_output_temp/rhos/ideal_rho.png', xlabel='Energy [eV]', ylabel='Energy [eV]',
@@ -901,64 +941,68 @@ if __name__ == "__main__":
     fid4s = np.zeros_like(ALPHA)
     PSBC = np.zeros_like(ALPHA)
 
-    om_refss = np.linspace(1.55/hbar,1.65/hbar,10)
+    om_refss = np.linspace(1.42/hbar,1.55/hbar,10)
 
-    for om_refnow in om_refss:
+    for indnow, om_refnow in enumerate(om_refss):
         # Example usage of the RK_experiment class
 
-        E_lo = 21.0
+        E_lo = 9.0
         # E_hi = 29
-        E_hi = 29.0
-        T_reach = 50
+        E_hi = 28.0
+        T_reach = 150
         # T_reach = 250
-        E_res = 0.025    
+        E_res = 0.01    
         # E_res = 0.005    
-        N_T = 260
+        N_T = 660
         # N_T = 700
         p_E = 4  # N_E upsampling integer
-        alpha = 30000
+        alpha = 50000
         b = 1
 
-        sideband_lo = 26.0
+        sideband_lo = 25.3
         sideband_hi = 28.0
-        harmq_lo = 24.0
-        harmq_hi = 26.0
+        harmq_lo = 24.7
+        harmq_hi = 25.5
 
         if_coherent = True
 
 
         # Define pulses
 
-        scale = 0.7
+        scale = 0.5
+
+        # A_xuv = 0.1*scale
+        # a_xuvs = [0.8]
+        # om_xuvs = [25.00/hbar]
+        # s_xuvs = [0.12/hbar]
+
+        n_max = 8
 
         A_xuv = 0.1*scale
-        a_xuvs = [0.8,0.8]
-        om_xuvs = [(25.00-0.2)/hbar,(25.00+0.1)/hbar]
-        s_xuvs = [0.1/hbar,0.12/hbar]
-
-        A_probe = 1.2*scale
-        a_probes = [1.0]
-        om_probes = [1.55/hbar]
-        s_probes = [0.15/hbar]
+        a_xuvs = [0.8 for n in range(2*n_max)]
+        om_xuvs = [(n+1) * 1.50/hbar if n%2==0 else n * 1.50/hbar + 0.3/hbar for n in range(2*n_max)]
+        s_xuvs = [0.10/hbar for n in range(2*n_max)]
 
         # A_probe = 1.2*scale
         # a_probes = [1.0,0.2,0.2,0.3]
         # om_probes = [1.55/hbar,1.20/hbar,2.00/hbar,1.85/hbar]
         # s_probes = [0.15/hbar,0.04/hbar,0.07/hbar,0.17/hbar]
-        # # Flat-top probe (similar total width and avg amplitude)
-        # A_probe = 1.2
-        # a_probes = [0.35, 0.35, 0.35, 0.35, 0.35, 0.35]
-        # om_probes = [1.25/hbar, 1.39/hbar, 1.53/hbar, 1.67/hbar, 1.81/hbar, 1.95/hbar, 2.09/hbar]
-        # s_probes = [0.10/hbar, 0.10/hbar, 0.10/hbar, 0.10/hbar, 0.10/hbar, 0.10/hbar, 0.10/hbar]
+        # Flat-top probe (similar total width and avg amplitude)
 
-        A_ref = 0.6*scale
-        a_refs = [1.0,0.001]
-        om_refs = [1.55/hbar,1.55/hbar]
-        s_refs = [0.03/hbar,0.15/hbar]
+        # # Flat-top probe (1.45–1.60 eV, 31 Gaussians, box approx)
+        # A_probe = 0.1
+        # a_probes = [0.35]*30
+        # om_probes = [1.40/hbar + i*0.005/hbar for i in range(30)]
+        # s_probes = [0.005/hbar]*30
+        # Flat-top probe (1.45–1.60 eV, 31 Gaussians, box approx)
+        A_probe = 0.5
+        a_probes = [1.0]
+        om_probes = [1.50/hbar]
+        s_probes = [0.10/hbar]
 
         A_ref = 1.0
-        om_ref = om_refnow
-        s_ref = 0.02/hbar
+        om_ref = 1.60/hbar
+        s_ref = 0.015/hbar
 
         # Create experiment instance
         experiment = RK_experiment(E_lo=E_lo,E_hi=E_hi,T_reach=T_reach,E_res=E_res,N_T=N_T,p_E=p_E,alpha=alpha,b=b,
@@ -969,35 +1013,11 @@ if __name__ == "__main__":
 
         experiment.define_pulses(A_xuv,A_probe,a_xuvs,a_probes,om_xuvs,om_probes,s_xuvs,s_probes)
         
-        # Run the full pipeline
         experiment.generate_signal()
-        # PSBC[i_alpha,i_nt] = experiment.peak_sb_counts
-
-        # try:
-
-        #     experiment.process_and_detrend()
-        #     experiment.kb_correct()
-        #     # experiment.xuv_peak()
-        #     experiment.WF_reconstruct()
-        #     experiment.resample_analyze()
-
-        #     fid1s[i_alpha,i_nt] = experiment.fidelities[1]
-        #     fid2s[i_alpha,i_nt] = experiment.fidelities[2]
-        #     fid3s[i_alpha,i_nt] = experiment.fidelities[3]
-        #     fid4s[i_alpha,i_nt] = experiment.fidelities[4]
-
-        # except:
-        #     fid1s[i_alpha,i_nt] = 0
-        #     fid2s[i_alpha,i_nt] = 0
-        #     fid3s[i_alpha,i_nt] = 0
-        #     fid4s[i_alpha,i_nt] = 0
-
         experiment.process_and_detrend()
         experiment.kb_correct()
         experiment.WF_reconstruct()
         experiment.resample_analyze()
-
-        exit()
         
         # np.save('scans/newscan/fid1s400incoh.npy',fid1s)
         # np.save('scans/newscan/fid2s400incoh.npy',fid2s)

@@ -989,7 +989,7 @@ def threshold_noise(M_obs, mean_noise_power):
                 A_est[i,j] = m
     return A_est
 
-def koay_basser_correction(M_obs, mean_noise_power,lambda_thresh=1):
+def koay_basser_correction(M_obs, mean_noise_power,lambda_thresh=1,only_floor=False):
     """
     Removes Rician bias using the Koay-Basser inversion method.
     
@@ -1038,18 +1038,24 @@ def koay_basser_correction(M_obs, mean_noise_power,lambda_thresh=1):
         
         # Case 2: Signal is above noise floor -> Invert the function
         else:
-            current_snr_m = m / sigma
-            
-            # Use Brent's method to find the root.
-            # Lower bound 0, Upper bound usually just needs to be high enough.
-            # Since M > A usually, current_snr_m is a safe heuristic upper bound 
-            # for the search, but we add a buffer for safety.
-            try:
+            if only_floor:
+                A_est[i] = m 
+            else:
+                current_snr_m = m / sigma
+
                 root_snr = brentq(rician_mean_eq, 0, current_snr_m * 2, args=(current_snr_m,))
                 A_est[i] = root_snr * sigma
-            except ValueError:
-                # Fallback if convergence fails (rare)
-                A_est[i] = m 
+                
+                # Use Brent's method to find the root.
+                # Lower bound 0, Upper bound usually just needs to be high enough.
+                # Since M > A usually, current_snr_m is a safe heuristic upper bound 
+                # for the search, but we add a buffer for safety.
+                # try:
+                #     root_snr = brentq(rician_mean_eq, 0, current_snr_m * 2, args=(current_snr_m,))
+                #     A_est[i] = root_snr * sigma
+                # except ValueError:
+                #     # Fallback if convergence fails (rare)
+                #     A_est[i] = m 
 
     return A_est if len(A_est) > 1 else A_est[0]
 
