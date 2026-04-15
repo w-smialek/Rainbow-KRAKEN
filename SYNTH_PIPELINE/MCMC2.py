@@ -6,10 +6,6 @@ import numpyro.distributions as dist
 from numpyro.infer import MCMC, NUTS
 import numpy as np
 import matplotlib.pyplot as plt
-import os
-
-hbar = 6.582119569e-1
-
 
 def _circular_mean(angles, axis=0):
     """Return circular mean for angles in radians, robust to +/-pi wrap."""
@@ -18,15 +14,15 @@ def _circular_mean(angles, axis=0):
         return np.array([])
     return np.angle(np.mean(np.exp(1j * angles), axis=axis))
 
-def rho_model(e1, e2, amps, mus, sigmas, a_s, bs, gammas):
+def rho_model(e1, e2, amps, mus, sigmas, betas, taus, gammas):
     # Vectorized over peak indices to avoid Python O(n_peaks^2) loops inside NUTS.
     e1 = jnp.asarray(e1)
     e2 = jnp.asarray(e2)
     amps = jnp.asarray(amps)
     mus = jnp.asarray(mus)
     sigmas = jnp.asarray(sigmas)
-    a_s = jnp.asarray(a_s)
-    bs = jnp.asarray(bs)
+    betas = jnp.asarray(betas)
+    taus = jnp.asarray(taus)
     gammas = jnp.asarray(gammas)
 
     ndim = e1.ndim
@@ -38,17 +34,17 @@ def rho_model(e1, e2, amps, mus, sigmas, a_s, bs, gammas):
     amps_k = amps[pshape]
     mus_k = mus[pshape]
     sigmas_k = sigmas[pshape]
-    a_k = a_s[pshape]
-    b_k = bs[pshape]
+    beta_k = betas[pshape]
+    tau_k = taus[pshape]
 
     x1 = e1k - mus_k
     x2 = e2k - mus_k
 
-    rho1 = amps_k / (2.0 * sigmas_k) * jnp.exp(
-        -(x1 ** 2) / (2.0 * sigmas_k ** 2) + 1j * (a_k * x1 ** 2 + b_k * x1)
+    rho1 = amps_k / (2.0 * jnp.pi * sigmas_k ** 2)**(0.25) * jnp.exp(
+        -(x1 ** 2) * (1/(4.0 * sigmas_k ** 2) - 1j*beta_k/2) + 1j * tau_k * x1
     )
-    rho2 = amps_k / (2.0 * sigmas_k) * jnp.exp(
-        -(x2 ** 2) / (2.0 * sigmas_k ** 2) + 1j * (a_k * x2 ** 2 + b_k * x2)
+    rho2 = amps_k / (2.0 * jnp.pi * sigmas_k ** 2)**(0.25) * jnp.exp(
+        -(x2 ** 2) * (1/(4.0 * sigmas_k ** 2) - 1j*beta_k/2) + 1j * tau_k * x2
     )
 
     # Keep gamma indices aligned with (k, l) contraction; no anti-diagonal swap.
@@ -68,17 +64,6 @@ def _build_hermitian_gamma(n_peaks, gamma_mag, gamma_phase):
     gamma = gamma.at[upper_j, upper_i].set(jnp.conj(gij))
     return gamma
 
-# om_ref = 1.55 / hbar
-# amps = [1.0 / np.sqrt(2), 1.0]
-# mus = [25.0 - 0.17 + om_ref * hbar, 25.0 + om_ref * hbar]
-# sigmas = [0.1, 0.1]
-# a_s = [0, 4]
-# bs = [3, 0]
-# cs = [0, 0]
-# Lambdas = [10, 10]
-# gammas = np.array([[1.0, 0.0],
-#                    [0.0, 1.0]])
-
 def model(x, y, sigma_obs, z_obs=None, n_peaks=2):
     """
     Numpyro model for the 2D Gaussian density matrix with complex phase.
@@ -89,11 +74,11 @@ def model(x, y, sigma_obs, z_obs=None, n_peaks=2):
     mus_now = numpyro.sample(
         'mus', dist.Uniform(24.0, 26.0).expand([n_peaks]).to_event(1))
     sigmas_now = numpyro.sample(
-        'sigmas', dist.HalfNormal(0.3).expand([n_peaks]).to_event(1))
-    a_now = numpyro.sample(
-        'a_now', dist.Normal(0.0, 8.0).expand([n_peaks]).to_event(1))
-    b_now = numpyro.sample(
-        'b_now', dist.Normal(0.0, 8.0).expand([n_peaks]).to_event(1))
+        'sigmas', dist.Uniform(0.0,0.3).expand([n_peaks]).to_event(1))
+    betas_now = numpyro.sample(
+        'betas_now', dist.Normal(0.0, 8.0).expand([n_peaks]).to_event(1))
+    taus_now = numpyro.sample(
+        'taus_now', dist.Normal(0.0, 8.0).expand([n_peaks]).to_event(1))
 
     # Complex Hermitian gamma with unit diagonal and free off-diagonal entries.
     n_pairs = n_peaks * (n_peaks - 1) // 2
@@ -101,7 +86,7 @@ def model(x, y, sigma_obs, z_obs=None, n_peaks=2):
         gamma_mag = numpyro.sample(
             'gamma_mag', dist.Uniform(0.0, 1.0).expand([n_pairs]).to_event(1))
         gamma_phase = numpyro.sample(
-            'gamma_phase', dist.Uniform(-jnp.pi, jnp.pi).expand([n_pairs]).to_event(1))
+            'gamma_phase', dist.Uniform(-1.1*jnp.pi, 1.1*jnp.pi).expand([n_pairs]).to_event(1))
         gammas_now = _build_hermitian_gamma(n_peaks, gamma_mag, gamma_phase)
     else:
         gammas_now = jnp.eye(1, dtype=jnp.complex128)
@@ -112,8 +97,8 @@ def model(x, y, sigma_obs, z_obs=None, n_peaks=2):
         amps_now,
         mus_now,
         sigmas_now,
-        a_now,
-        b_now,
+        betas_now,
+        taus_now,
         gammas_now,
     )
 
@@ -153,16 +138,16 @@ def Bayesian_MCMC(x_obs, y_obs, z_obs, sigma_obs, n_peaks=2):
     amps_samples = np.array(samples['amps'])
     mus_samples = np.array(samples['mus'])
     sigmas_samples = np.array(samples['sigmas'])
-    a_samples = np.array(samples['a_now'])
-    b_samples = np.array(samples['b_now'])
+    betas_samples = np.array(samples['betas_now'])
+    taus_samples = np.array(samples['taus_now'])
     gamma_mag_samples = np.array(samples['gamma_mag']) if n_peaks > 1 else np.zeros((amps_samples.shape[0], 0))
     gamma_phase_samples = np.array(samples['gamma_phase']) if n_peaks > 1 else np.zeros((amps_samples.shape[0], 0))
 
     amps_hat = np.mean(amps_samples, axis=0)
     mus_hat = np.mean(mus_samples, axis=0)
     sigmas_hat = np.maximum(np.mean(sigmas_samples, axis=0), 1e-8)
-    a_hat = np.mean(a_samples, axis=0)
-    b_hat = np.mean(b_samples, axis=0)
+    betas_hat = np.mean(betas_samples, axis=0)
+    taus_hat = np.mean(taus_samples, axis=0)
 
     if n_peaks > 1:
         gamma_complex_samples = gamma_mag_samples * np.exp(1j * gamma_phase_samples)
@@ -180,8 +165,8 @@ def Bayesian_MCMC(x_obs, y_obs, z_obs, sigma_obs, n_peaks=2):
         posterior_panels.append((f'amps[{k}]', amps_samples[:, k]))
         posterior_panels.append((f'mus[{k}]', mus_samples[:, k]))
         posterior_panels.append((f'sigmas[{k}]', sigmas_samples[:, k]))
-        posterior_panels.append((f'a_s[{k}]', a_samples[:, k]))
-        posterior_panels.append((f'b_s[{k}]', b_samples[:, k]))
+        posterior_panels.append((f'betas[{k}]', betas_samples[:, k]))
+        posterior_panels.append((f'taus[{k}]', taus_samples[:, k]))
 
     pair_idx = 0
     for i in range(n_peaks):
@@ -266,8 +251,8 @@ def Bayesian_MCMC(x_obs, y_obs, z_obs, sigma_obs, n_peaks=2):
     print(  jnp.array(amps_hat),
             jnp.array(mus_hat),
             jnp.array(sigmas_hat),
-            jnp.array(a_hat),
-            jnp.array(b_hat),
+            jnp.array(betas_hat),
+            jnp.array(taus_hat),
             gamma_hat)
 
     z_inf = rho_model(
@@ -276,8 +261,8 @@ def Bayesian_MCMC(x_obs, y_obs, z_obs, sigma_obs, n_peaks=2):
         jnp.array(amps_hat),
         jnp.array(mus_hat),
         jnp.array(sigmas_hat),
-        jnp.array(a_hat),
-        jnp.array(b_hat),
+        jnp.array(betas_hat),
+        jnp.array(taus_hat),
         gamma_hat,
     )
     amp_inf = np.abs(np.array(z_inf))
@@ -299,3 +284,5 @@ def Bayesian_MCMC(x_obs, y_obs, z_obs, sigma_obs, n_peaks=2):
     plt.tight_layout()
     plt.savefig('MCMC_out/inferred_matrix.png')
     plt.close(fig_inf)
+
+    return amps_hat, mus_hat, sigmas_hat, betas_hat, taus_hat, gamma_hat

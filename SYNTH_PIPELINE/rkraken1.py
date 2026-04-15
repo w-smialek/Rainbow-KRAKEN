@@ -1,12 +1,10 @@
 import numpy as np
 from numpy import pi
 import matplotlib.pyplot as plt
-import matplotlib.ticker as ticker
 from math import floor
 from scipy.optimize import curve_fit, differential_evolution
 from scipy.signal import fftconvolve, find_peaks, peak_widths
 from matplotlib import patheffects as pe
-from skimage.restoration import denoise_tv_bregman
 from scipy.ndimage import median_filter, gaussian_filter
 from scipy.special import i0e, i1e
 from scipy.optimize import brentq
@@ -152,35 +150,76 @@ def _style_ax(ax, grid_alpha=None):
     if grid_alpha is not None:
         ax.grid(alpha=grid_alpha)
 
-def plot_mat(mat,extent=[0,1,0,1],cmap='plasma',mode='phase',show=True,saveloc=None,caption=None,xlabel='x',ylabel='y',title=None,grid_alpha=None):
+def _set_title_with_math_style(setter, text, title_kw, title_math_font='stix', title_math_bold=True):
+    """Render title text with optional math-font and bold mathtext settings."""
+    if text is None:
+        return
+
+    if '$' not in text:
+        setter(text, **title_kw)
+        return
+
+    valid_fontsets = {'dejavusans', 'dejavuserif', 'cm', 'stix', 'stixsans', 'custom'}
+    if title_math_font is None:
+        math_fontset = plt.rcParams.get('mathtext.fontset', 'dejavusans')
+    else:
+        math_fontset = str(title_math_font).lower()
+        if math_fontset not in valid_fontsets:
+            raise ValueError(
+                f"title_math_font must be one of {sorted(valid_fontsets)} or None, got {title_math_font!r}"
+            )
+
+    rc_updates = {'mathtext.fontset': math_fontset}
+    if title_math_bold:
+        rc_updates['mathtext.default'] = 'bf'
+
+    with plt.rc_context(rc_updates):
+        setter(text, **title_kw)
+
+def plot_mat(mat,extent=[0,1,0,1],cmap='plasma',mode='phase',show=True,saveloc=None,caption=None,xlabel='x',ylabel='y',
+             title=None,grid_alpha=None,title_math_bold=True,title_math_font='dejavusans',square=False):
 
     _label_kw = dict(fontsize=10,)
-    _title_kw = dict(fontsize=11, fontweight='semibold')
+    _title_kw0 = dict(fontsize=10, fontweight='semibold')
+    _title_kwabs = dict(fontsize=15, fontweight='semibold', y=1.03)
+    _title_kw = dict(fontsize=15, fontweight='semibold')
 
     if mode == 'abs':
-        plt.figure()
-        im = plt.imshow(np.abs(mat), extent=extent, origin='lower', aspect='auto', cmap=cmap)
-        plt.xlabel(xlabel, **_label_kw)
-        plt.ylabel(ylabel, **_label_kw)
+        fig, ax = plt.subplots(1, 1, figsize=(5, 4))
+        im = ax.imshow(np.abs(mat), extent=extent, origin='lower', aspect='auto', cmap=cmap)
+        ax.set_xlabel(xlabel, **_label_kw)
+        ax.set_ylabel(ylabel, **_label_kw)
         if title:
-            plt.title(title, **_title_kw)
+            _set_title_with_math_style(
+                ax.set_title,
+                title,
+                _title_kwabs,
+                title_math_font=title_math_font,
+                title_math_bold=title_math_bold,
+            )
         else:
-            plt.title('|M|', **_title_kw)
-        plt.colorbar(im)
+            ax.set_title('Abs(M)', **_title_kwabs)
+        fig.colorbar(im, ax=ax)
         if caption is not None:
-            plt.text(0.02, 0.98, caption, transform=plt.gca().transAxes, 
+            ax.text(0.02, 0.98, caption, transform=ax.transAxes,
                     fontsize=10, verticalalignment='top', horizontalalignment='left',
                     color='white', weight='bold',
                     path_effects=[pe.withStroke(linewidth=2, foreground='black')])
-        _style_ax(plt.gca(), grid_alpha=grid_alpha)
+
+        _style_ax(ax, grid_alpha=grid_alpha)
+        plt.tight_layout()
 
     elif mode == 'phase':
         fig, axes = plt.subplots(1, 2, figsize=(10, 4), sharex=True, sharey=True)
+        if square:
+            # Square axes shrink within their subplot slots; anchor inward to avoid a large center gap.
+            axes[0].set_box_aspect(1)
+            axes[1].set_box_aspect(1)
+            axes[0].set_anchor('E')
+            axes[1].set_anchor('W')
+
         im0 = axes[0].imshow(np.abs(mat), extent=extent, origin='lower', aspect='auto', cmap=cmap)
-        if title:
-            axes[0].set_title(title, **_title_kw)
-        else:
-            axes[0].set_title('|M|', **_title_kw)
+        axes[0].set_title('Abs(M)', **_title_kw0)
         axes[0].set_xlabel(xlabel, **_label_kw)
         axes[0].set_ylabel(ylabel, **_label_kw)
         fig.colorbar(im0, ax=axes[0])
@@ -191,41 +230,53 @@ def plot_mat(mat,extent=[0,1,0,1],cmap='plasma',mode='phase',show=True,saveloc=N
                         path_effects=[pe.withStroke(linewidth=2, foreground='black')])
 
         im1 = axes[1].imshow(np.angle(mat), extent=extent, origin='lower', aspect='auto', cmap='hsv', vmin=-np.pi, vmax=np.pi)
-        axes[1].set_title('arg(M)', **_title_kw)
+        axes[1].set_title('arg(M)', **_title_kw0)
         axes[1].set_xlabel(xlabel, **_label_kw)
         fig.colorbar(im1, ax=axes[1])
 
         if title:
-            fig.suptitle(title, **_title_kw)
+            title_kw = dict(_title_kw)
+            if square:
+                title_kw['y'] = 1.01
+            _set_title_with_math_style(
+                fig.suptitle,
+                title,
+                title_kw,
+                title_math_font=title_math_font,
+                title_math_bold=title_math_bold,
+            )
 
         for ax in axes:
             _style_ax(ax, grid_alpha=grid_alpha)
-        plt.tight_layout()
+        if square:
+            fig.subplots_adjust(left=0.08, right=0.97, bottom=0.12, top=0.87, wspace=0.08)
+        else:
+            plt.tight_layout()
 
-    elif mode == 'reim':
-        fig, axes = plt.subplots(1, 2, figsize=(10, 4), sharex=True, sharey=True)
-        im0 = axes[0].imshow(np.real(mat), extent=extent, origin='lower', aspect='auto', cmap=cmap)
-        axes[0].set_title('Re{M}', **_title_kw)
-        axes[0].set_xlabel(xlabel, **_label_kw)
-        axes[0].set_ylabel(ylabel, **_label_kw)
-        fig.colorbar(im0, ax=axes[0])
-        if caption is not None:
-            axes[0].text(0.02, 0.98, caption, transform=axes[0].transAxes, 
-                        fontsize=10, verticalalignment='top', horizontalalignment='left',
-                        color='white', weight='bold',
-                        path_effects=[pe.withStroke(linewidth=2, foreground='black')])
+    # elif mode == 'reim':
+    #     fig, axes = plt.subplots(1, 2, figsize=(10, 4), sharex=True, sharey=True)
+    #     im0 = axes[0].imshow(np.real(mat), extent=extent, origin='lower', aspect='auto', cmap=cmap)
+    #     axes[0].set_title('Re{M}', **_title_kw)
+    #     axes[0].set_xlabel(xlabel, **_label_kw)
+    #     axes[0].set_ylabel(ylabel, **_label_kw)
+    #     fig.colorbar(im0, ax=axes[0])
+    #     if caption is not None:
+    #         axes[0].text(0.02, 0.98, caption, transform=axes[0].transAxes, 
+    #                     fontsize=10, verticalalignment='top', horizontalalignment='left',
+    #                     color='white', weight='bold',
+    #                     path_effects=[pe.withStroke(linewidth=2, foreground='black')])
 
-        im1 = axes[1].imshow(np.imag(mat), extent=extent, origin='lower', aspect='auto', cmap=cmap)
-        axes[1].set_title('Im{M}', **_title_kw)
-        axes[1].set_xlabel(xlabel, **_label_kw)
-        fig.colorbar(im1, ax=axes[1])
+    #     im1 = axes[1].imshow(np.imag(mat), extent=extent, origin='lower', aspect='auto', cmap=cmap)
+    #     axes[1].set_title('Im{M}', **_title_kw)
+    #     axes[1].set_xlabel(xlabel, **_label_kw)
+    #     fig.colorbar(im1, ax=axes[1])
 
-        if title:
-            fig.suptitle(title, **_title_kw)
+    #     if title:
+    #         fig.suptitle(title, **_title_kw)
 
-        for ax in axes:
-            _style_ax(ax, grid_alpha=grid_alpha)
-        plt.tight_layout()
+    #     for ax in axes:
+    #         _style_ax(ax, grid_alpha=grid_alpha)
+    #     plt.tight_layout()
 
     if saveloc:
         plt.savefig(saveloc,dpi=500,bbox_inches='tight')
@@ -689,23 +740,23 @@ def synth_baseline_WF(sp_pr_ref,sp_x,om_pr,om_x,T,i_chi,is_om_r,mode='same'):
 
     return conv1 + conv2
 
-def synth_baseline_WF_hermit(input,sp_x,om_pr,om_x,T):
-    d_om = om_x[1]-om_x[0]
+# def synth_baseline_WF_hermit(input,sp_x,om_pr,om_x,T):
+#     d_om = om_x[1]-om_x[0]
 
-    phase_pr = np.exp(1j*om_pr*T)
-    phase_x = np.exp(1j*0*T)
+#     phase_pr = np.exp(1j*om_pr*T)
+#     phase_x = np.exp(1j*0*T)
 
-    f1 = input
-    f2 = -sp_x/om_x * np.conjugate(phase2)
-    conv1 = fftconvolve(f1,f2[:,::-1],mode='same',axes=1)*d_om
+#     f1 = input
+#     f2 = -sp_x/om_x * np.conjugate(phase2)
+#     conv1 = fftconvolve(f1,f2[:,::-1],mode='same',axes=1)*d_om
 
-    f1 = input
-    f2 = sp_x * phase0
-    conv2 = fftconvolve(f1,f2[:,::-1],mode='same',axes=1)*d_om
-    conv2 = -conv2/om_pr * np.conjugate(phase1)
+#     f1 = input
+#     f2 = sp_x * phase0
+#     conv2 = fftconvolve(f1,f2[:,::-1],mode='same',axes=1)*d_om
+#     conv2 = -conv2/om_pr * np.conjugate(phase1)
 
-    # return np.sum(conv1 + conv2, axis=0)
-    return np.sum(conv2, axis=0)
+#     # return np.sum(conv1 + conv2, axis=0)
+#     return np.sum(conv2, axis=0)
 
 def synth_baseline(sp_pr,sp_x,om_pr,om_x,T,mode='same'):
     d_om = om_x[1]-om_x[0]
