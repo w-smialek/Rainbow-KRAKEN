@@ -18,7 +18,7 @@ def _circular_mean(angles, axis=0):
         return np.array([])
     return np.angle(np.mean(np.exp(1j * angles), axis=axis))
 
-def rho_model(e1, e2, amps, mus, sigmas, a_s, bs, Lambdas, gammas):
+def rho_model(e1, e2, amps, mus, sigmas, a_s, bs, gammas):
     # Vectorized over peak indices to avoid Python O(n_peaks^2) loops inside NUTS.
     e1 = jnp.asarray(e1)
     e2 = jnp.asarray(e2)
@@ -27,7 +27,6 @@ def rho_model(e1, e2, amps, mus, sigmas, a_s, bs, Lambdas, gammas):
     sigmas = jnp.asarray(sigmas)
     a_s = jnp.asarray(a_s)
     bs = jnp.asarray(bs)
-    Lambdas = jnp.asarray(Lambdas)
     gammas = jnp.asarray(gammas)
 
     ndim = e1.ndim
@@ -52,13 +51,10 @@ def rho_model(e1, e2, amps, mus, sigmas, a_s, bs, Lambdas, gammas):
         -(x2 ** 2) / (2.0 * sigmas_k ** 2) + 1j * (a_k * x2 ** 2 + b_k * x2)
     )
 
-    delta2 = jnp.expand_dims(jnp.expand_dims((e1 - e2) ** 2, axis=0), axis=0)
-    lambda_sum = (Lambdas[:, None] + Lambdas[None, :])[(slice(None), slice(None)) + (None,) * ndim]
     # Keep gamma indices aligned with (k, l) contraction; no anti-diagonal swap.
     gamma_e = gammas[(slice(None), slice(None)) + (None,) * ndim]
-    damping = jnp.exp(-0.5 * lambda_sum * delta2)
 
-    pair_terms = gamma_e * rho1[:, None, ...] * jnp.conj(rho2)[None, :, ...] * damping
+    pair_terms = gamma_e * rho1[:, None, ...] * jnp.conj(rho2)[None, :, ...]
     return jnp.sum(pair_terms, axis=(0, 1))
 
 def _build_hermitian_gamma(n_peaks, gamma_mag, gamma_phase):
@@ -94,10 +90,6 @@ def model(x, y, sigma_obs, z_obs=None, n_peaks=2):
         'mus', dist.Uniform(24.0, 26.0).expand([n_peaks]).to_event(1))
     sigmas_now = numpyro.sample(
         'sigmas', dist.HalfNormal(0.3).expand([n_peaks]).to_event(1))
-    lambdas_now = numpyro.sample(
-        'Lambdas', dist.HalfNormal(10.0).expand([n_peaks]).to_event(1))
-    # lambdas_now = numpyro.sample(
-    #     'Lambdas', dist.Uniform(0.0,1.0).expand([n_peaks]).to_event(1))
     a_now = numpyro.sample(
         'a_now', dist.Normal(0.0, 8.0).expand([n_peaks]).to_event(1))
     b_now = numpyro.sample(
@@ -122,7 +114,6 @@ def model(x, y, sigma_obs, z_obs=None, n_peaks=2):
         sigmas_now,
         a_now,
         b_now,
-        lambdas_now,
         gammas_now,
     )
 
@@ -164,7 +155,6 @@ def Bayesian_MCMC(x_obs, y_obs, z_obs, sigma_obs, n_peaks=2):
     sigmas_samples = np.array(samples['sigmas'])
     a_samples = np.array(samples['a_now'])
     b_samples = np.array(samples['b_now'])
-    lambdas_samples = np.array(samples['Lambdas'])
     gamma_mag_samples = np.array(samples['gamma_mag']) if n_peaks > 1 else np.zeros((amps_samples.shape[0], 0))
     gamma_phase_samples = np.array(samples['gamma_phase']) if n_peaks > 1 else np.zeros((amps_samples.shape[0], 0))
 
@@ -173,7 +163,6 @@ def Bayesian_MCMC(x_obs, y_obs, z_obs, sigma_obs, n_peaks=2):
     sigmas_hat = np.maximum(np.mean(sigmas_samples, axis=0), 1e-8)
     a_hat = np.mean(a_samples, axis=0)
     b_hat = np.mean(b_samples, axis=0)
-    lambdas_hat = np.maximum(np.mean(lambdas_samples, axis=0), 1e-8)
 
     if n_peaks > 1:
         gamma_complex_samples = gamma_mag_samples * np.exp(1j * gamma_phase_samples)
@@ -191,7 +180,6 @@ def Bayesian_MCMC(x_obs, y_obs, z_obs, sigma_obs, n_peaks=2):
         posterior_panels.append((f'amps[{k}]', amps_samples[:, k]))
         posterior_panels.append((f'mus[{k}]', mus_samples[:, k]))
         posterior_panels.append((f'sigmas[{k}]', sigmas_samples[:, k]))
-        posterior_panels.append((f'Lambdas[{k}]', lambdas_samples[:, k]))
         posterior_panels.append((f'a_s[{k}]', a_samples[:, k]))
         posterior_panels.append((f'b_s[{k}]', b_samples[:, k]))
 
@@ -280,7 +268,6 @@ def Bayesian_MCMC(x_obs, y_obs, z_obs, sigma_obs, n_peaks=2):
             jnp.array(sigmas_hat),
             jnp.array(a_hat),
             jnp.array(b_hat),
-            jnp.array(lambdas_hat),
             gamma_hat)
 
     z_inf = rho_model(
@@ -291,7 +278,6 @@ def Bayesian_MCMC(x_obs, y_obs, z_obs, sigma_obs, n_peaks=2):
         jnp.array(sigmas_hat),
         jnp.array(a_hat),
         jnp.array(b_hat),
-        jnp.array(lambdas_hat),
         gamma_hat,
     )
     amp_inf = np.abs(np.array(z_inf))
