@@ -14,7 +14,7 @@ def _circular_mean(angles, axis=0):
         return np.array([])
     return np.angle(np.mean(np.exp(1j * angles), axis=axis))
 
-def rho_model(e1, e2, amps, mus, sigmas, betas, taus, gammas):
+def rho_model(e1, e2, amps, mus, sigmas, betas, taus, lambdas, gammas, etas):
     # Vectorized over peak indices to avoid Python O(n_peaks^2) loops inside NUTS.
     e1 = jnp.asarray(e1)
     e2 = jnp.asarray(e2)
@@ -23,7 +23,9 @@ def rho_model(e1, e2, amps, mus, sigmas, betas, taus, gammas):
     sigmas = jnp.asarray(sigmas)
     betas = jnp.asarray(betas)
     taus = jnp.asarray(taus)
+    lambdas = jnp.asarray(lambdas)
     gammas = jnp.asarray(gammas)
+    etas = jnp.asarray(etas)
 
     ndim = e1.ndim
     pshape = (slice(None),) + (None,) * ndim
@@ -36,6 +38,7 @@ def rho_model(e1, e2, amps, mus, sigmas, betas, taus, gammas):
     sigmas_k = sigmas[pshape]
     beta_k = betas[pshape]
     tau_k = taus[pshape]
+    lambda_k = lambdas[pshape]
 
     x1 = e1k - mus_k
     x2 = e2k - mus_k
@@ -49,9 +52,26 @@ def rho_model(e1, e2, amps, mus, sigmas, betas, taus, gammas):
 
     # Keep gamma indices aligned with (k, l) contraction; no anti-diagonal swap.
     gamma_e = gammas[(slice(None), slice(None)) + (None,) * ndim]
+    eta_e = etas[(slice(None), slice(None)) + (None,) * ndim]
 
-    pair_terms = gamma_e * rho1[:, None, ...] * jnp.conj(rho2)[None, :, ...]
+    D_kl = jnp.exp(
+        - lambda_k[:, None, ...]**2 / 2 * x1[:, None, ...]**2
+        - lambda_k[None, :, ...]**2 / 2 * x2[None, :, ...]**2
+        + eta_e * lambda_k[:, None, ...] * lambda_k[None, :, ...] * x1[:, None, ...] * x2[None, :, ...]
+    )
+
+    pair_terms = gamma_e * rho1[:, None, ...] * jnp.conj(rho2)[None, :, ...] * D_kl
     return jnp.sum(pair_terms, axis=(0, 1))
+
+def _build_symmetric_eta(n_peaks, eta_off_diag):
+    eta = jnp.eye(n_peaks, dtype=jnp.float64)
+    if n_peaks <= 1:
+        return eta
+
+    upper_i, upper_j = jnp.triu_indices(n_peaks, k=1)
+    eta = eta.at[upper_i, upper_j].set(eta_off_diag)
+    eta = eta.at[upper_j, upper_i].set(eta_off_diag)
+    return eta
 
 def _build_hermitian_gamma(n_peaks, gamma_mag, gamma_phase):
     gamma = jnp.eye(n_peaks, dtype=jnp.complex128)
@@ -79,17 +99,25 @@ def model(x, y, sigma_obs, z_obs=None, n_peaks=2):
         'betas_now', dist.Normal(0.0, 8.0).expand([n_peaks]).to_event(1))
     taus_now = numpyro.sample(
         'taus_now', dist.Normal(0.0, 8.0).expand([n_peaks]).to_event(1))
+    lambdas_now = numpyro.sample(
+        'lambdas_now', dist.HalfNormal(4.0).expand([n_peaks]).to_event(1))
 
     # Complex Hermitian gamma with unit diagonal and free off-diagonal entries.
     n_pairs = n_peaks * (n_peaks - 1) // 2
     if n_pairs > 0:
+        # gamma_mag = numpyro.sample(
+        #     'gamma_mag', dist.Uniform(0.0, 1.0).expand([n_pairs]).to_event(1))
         gamma_mag = numpyro.sample(
-            'gamma_mag', dist.Uniform(0.0, 1.0).expand([n_pairs]).to_event(1))
+            'gamma_mag', dist.HalfNormal(0.05).expand([n_pairs]).to_event(1))
         gamma_phase = numpyro.sample(
             'gamma_phase', dist.Uniform(-1.1*jnp.pi, 1.1*jnp.pi).expand([n_pairs]).to_event(1))
         gammas_now = _build_hermitian_gamma(n_peaks, gamma_mag, gamma_phase)
+        eta_off_diag = numpyro.sample(
+            'eta_off_diag', dist.Uniform(-1.0, 1.0).expand([n_pairs]).to_event(1))
+        etas_now = _build_symmetric_eta(n_peaks, eta_off_diag)
     else:
         gammas_now = jnp.eye(1, dtype=jnp.complex128)
+        etas_now = jnp.eye(1, dtype=jnp.float64)
 
     z_expected = rho_model(
         x,
@@ -99,7 +127,9 @@ def model(x, y, sigma_obs, z_obs=None, n_peaks=2):
         sigmas_now,
         betas_now,
         taus_now,
+        lambdas_now,
         gammas_now,
+        etas_now,
     )
 
     z_real_expected = jnp.real(z_expected)
@@ -118,6 +148,7 @@ def Bayesian_MCMC(x_obs, y_obs, z_obs, sigma_obs, n_peaks=2):
     print("\nSetting up NUTS MCMC...")
     nuts_kernel = NUTS(model)
     mcmc = MCMC(nuts_kernel, num_warmup=1000, num_samples=2000, num_chains=1)
+    # mcmc = MCMC(nuts_kernel, num_warmup=10, num_samples=20, num_chains=1)
     
     print("Running MCMC to obtain posterior distributions...")
     rng_key = jax.random.PRNGKey(0)
@@ -140,39 +171,46 @@ def Bayesian_MCMC(x_obs, y_obs, z_obs, sigma_obs, n_peaks=2):
     sigmas_samples = np.array(samples['sigmas'])
     betas_samples = np.array(samples['betas_now'])
     taus_samples = np.array(samples['taus_now'])
+    lambdas_samples = np.array(samples['lambdas_now'])
     gamma_mag_samples = np.array(samples['gamma_mag']) if n_peaks > 1 else np.zeros((amps_samples.shape[0], 0))
     gamma_phase_samples = np.array(samples['gamma_phase']) if n_peaks > 1 else np.zeros((amps_samples.shape[0], 0))
+    eta_off_diag_samples = np.array(samples['eta_off_diag']) if n_peaks > 1 else np.zeros((amps_samples.shape[0], 0))
 
     amps_hat = np.mean(amps_samples, axis=0)
     mus_hat = np.mean(mus_samples, axis=0)
     sigmas_hat = np.maximum(np.mean(sigmas_samples, axis=0), 1e-8)
     betas_hat = np.mean(betas_samples, axis=0)
     taus_hat = np.mean(taus_samples, axis=0)
+    lambdas_hat = np.mean(lambdas_samples, axis=0)
 
     if n_peaks > 1:
         gamma_complex_samples = gamma_mag_samples * np.exp(1j * gamma_phase_samples)
         gamma_complex_hat = np.mean(gamma_complex_samples, axis=0)
         gamma_mag_hat = np.abs(gamma_complex_hat)
         gamma_phase_hat = np.angle(gamma_complex_hat)
+        eta_off_diag_hat = np.mean(eta_off_diag_samples, axis=0)
     else:
         gamma_mag_hat = np.array([])
         gamma_phase_hat = np.array([])
+        eta_off_diag_hat = np.array([])
     
     # Plot posterior diagnostics for all fitted parameters.
     posterior_panels = []
 
     for k in range(n_peaks):
-        posterior_panels.append((f'amps[{k}]', amps_samples[:, k]))
-        posterior_panels.append((f'mus[{k}]', mus_samples[:, k]))
-        posterior_panels.append((f'sigmas[{k}]', sigmas_samples[:, k]))
-        posterior_panels.append((f'betas[{k}]', betas_samples[:, k]))
-        posterior_panels.append((f'taus[{k}]', taus_samples[:, k]))
+        posterior_panels.append((f'$D_{{{k+1}{k+1}}}$', amps_samples[:, k]))
+        posterior_panels.append((f'$\\mu_{k+1}$', mus_samples[:, k]))
+        posterior_panels.append((f'$\\sigma_{k+1}$', sigmas_samples[:, k]))
+        posterior_panels.append((f'$\\beta_{k+1}$', betas_samples[:, k]))
+        posterior_panels.append((f'$\\tau_{k+1}$', taus_samples[:, k]))
+        posterior_panels.append((f'$\\gamma_{k+1}$', lambdas_samples[:, k]))
 
     pair_idx = 0
     for i in range(n_peaks):
         for j in range(i + 1, n_peaks):
-            posterior_panels.append((f'|gamma[{i},{j}]|', gamma_mag_samples[:, pair_idx]))
-            posterior_panels.append((f'arg(gamma[{i},{j}])', gamma_phase_samples[:, pair_idx]))
+            posterior_panels.append((f'$|D_{{{i+1}{j+1}}}| / \\sqrt{{D_{{{i+1}{i+1}}} D_{{{j+1}{j+1}}}}}$', gamma_mag_samples[:, pair_idx]))
+            posterior_panels.append((f'$\\text{{arg}}(D_{{{i+1}{j+1}}})$', gamma_phase_samples[:, pair_idx]))
+            posterior_panels.append((f'$\\eta_{{{i+1}{j+1}}}$', eta_off_diag_samples[:, pair_idx]))
             pair_idx += 1
 
     n_panels = len(posterior_panels)
@@ -190,70 +228,35 @@ def Bayesian_MCMC(x_obs, y_obs, z_obs, sigma_obs, n_peaks=2):
         else:
             ax.hist(values, bins=40, density=True, alpha=0.75, color='tab:blue')
             ax.axvline(np.mean(values), color='black', linestyle='--', linewidth=1.0)
-        ax.set_title(label, fontsize=10)
+        ax.set_title(label, fontsize=20, y=1.04)
 
     for ax in axs[n_panels:]:
         ax.axis('off')
 
-    fig.suptitle('Posterior distributions of fitted parameters', fontsize=13, y=1.02)
+    fig.suptitle('Posterior distributions of fitted parameters', fontsize=30, y=1.02, weight='bold')
     plt.tight_layout()
     plt.savefig('MCMC_out/out1.png', dpi=400, bbox_inches='tight')
     plt.close(fig)
 
     # Observed data diagnostics mapped to a full grid; unobserved entries stay at zero.
-    z_amp_obs = np.abs(z_obs)
-    z_phase_obs = np.angle(z_obs)
     x_grid = np.unique(np.sort(x_obs))
     y_grid = np.unique(np.sort(y_obs))
-    nx_obs, ny_obs = len(x_grid), len(y_grid)
-
-    amp_grid = np.zeros((ny_obs, nx_obs), dtype=float)
-    phase_grid = np.zeros((ny_obs, nx_obs), dtype=float)
-    sigma_grid = np.zeros((ny_obs, nx_obs), dtype=float)
-
-    xi = np.searchsorted(x_grid, x_obs)
-    yi = np.searchsorted(y_grid, y_obs)
-    amp_grid[yi, xi] = z_amp_obs
-    phase_grid[yi, xi] = z_phase_obs
-    sigma_grid[yi, xi] = sigma_obs
-
-    fig_obs, axs_obs = plt.subplots(1, 3, figsize=(18, 5))
     extent = [x_grid.min(), x_grid.max(), y_grid.min(), y_grid.max()]
-
-    im_amp_obs = axs_obs[0].imshow(amp_grid, origin='lower', extent=extent, aspect='auto', cmap='plasma')
-    axs_obs[0].set_title('Observed |z_obs| (missing=0)')
-    axs_obs[0].set_xlabel('x_obs')
-    axs_obs[0].set_ylabel('y_obs')
-    fig_obs.colorbar(im_amp_obs, ax=axs_obs[0], label='Amplitude')
-
-    im_phase_obs = axs_obs[1].imshow(phase_grid, origin='lower', extent=extent, aspect='auto', cmap='hsv')
-    axs_obs[1].set_title('Observed phase(z_obs) (missing=0)')
-    axs_obs[1].set_xlabel('x_obs')
-    axs_obs[1].set_ylabel('y_obs')
-    fig_obs.colorbar(im_phase_obs, ax=axs_obs[1], label='Phase [rad]')
-
-    im_sigma_obs = axs_obs[2].imshow(sigma_grid, origin='lower', extent=extent, aspect='auto', cmap='magma')
-    axs_obs[2].set_title('Provided sigma_obs (missing=0)')
-    axs_obs[2].set_xlabel('x_obs')
-    axs_obs[2].set_ylabel('y_obs')
-    fig_obs.colorbar(im_sigma_obs, ax=axs_obs[2], label='Sigma')
-
-    plt.tight_layout()
-    plt.savefig('MCMC_out/diagnostic_observed.png')
-    plt.close(fig_obs)
 
     # Final inferred matrix from posterior-mean parameters.
     Xg, Yg = np.meshgrid(x_grid, y_grid)
 
     gamma_hat = _build_hermitian_gamma(n_peaks, jnp.array(gamma_mag_hat), jnp.array(gamma_phase_hat))
-
+    eta_hat = _build_symmetric_eta(n_peaks, jnp.array(eta_off_diag_hat))
 
     print(  jnp.array(amps_hat),
             jnp.array(mus_hat),
             jnp.array(sigmas_hat),
             jnp.array(betas_hat),
             jnp.array(taus_hat),
-            gamma_hat)
+            jnp.array(lambdas_hat),
+            gamma_hat,
+            eta_hat)
 
     z_inf = rho_model(
         jnp.array(Xg),
@@ -263,7 +266,9 @@ def Bayesian_MCMC(x_obs, y_obs, z_obs, sigma_obs, n_peaks=2):
         jnp.array(sigmas_hat),
         jnp.array(betas_hat),
         jnp.array(taus_hat),
+        jnp.array(lambdas_hat),
         gamma_hat,
+        eta_hat,
     )
     amp_inf = np.abs(np.array(z_inf))
     phase_inf = np.angle(np.array(z_inf))
@@ -285,4 +290,4 @@ def Bayesian_MCMC(x_obs, y_obs, z_obs, sigma_obs, n_peaks=2):
     plt.savefig('MCMC_out/inferred_matrix.png')
     plt.close(fig_inf)
 
-    return amps_hat, mus_hat, sigmas_hat, betas_hat, taus_hat, gamma_hat
+    return amps_hat, mus_hat, sigmas_hat, betas_hat, taus_hat, lambdas_hat, gamma_hat, eta_hat
