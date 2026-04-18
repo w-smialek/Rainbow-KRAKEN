@@ -3,5 +3,6 @@
 /single_output_temp/
 /single_output_naive/
 /WF_gif/
+/MCMC_out/
 # Keep the directory itself by tracking a .gitkeep file (create it if needed)
 !/ims/.gitkeep

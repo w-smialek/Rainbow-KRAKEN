@@ -76,7 +76,7 @@ def plot_spectra(om_pr,om_x,sp_pr,sp_ref,sp_x):
     plt.tight_layout()
     plt.savefig('single_output_temp/spectra/input_spectra.png', dpi=300)
     plt.close()
-    exit()
+
     # fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(8, 10))
     
     # # Top subplot: Probe and Reference spectra
@@ -112,6 +112,7 @@ class RK_experiment:
 
         self.ifexp = False
         self.ifWF = True
+        self.ifWide = False
 
         # Field parameters
         self.E_lo = E_lo
@@ -510,8 +511,11 @@ class RK_experiment:
                 caption=f'RES = {np.sum(np.abs(self.signal_ft0_ROI - signal_sb_FT_ROI)) / np.sum(np.abs(self.signal_ft0_ROI)):.4f}')
 
     def probe_sp_correct(self):
-
-        dzeta = 0.05 * np.max(np.abs(rk.sp_tot(self.probes,self.OM_T)))
+        
+        if self.ifWide:
+            dzeta = 0.1 * np.max(np.abs(rk.sp_tot(self.probes,self.OM_T))) # WIDE PROBE VARIANT
+        else:
+            dzeta = 0.05 * np.max(np.abs(rk.sp_tot(self.probes,self.OM_T)))
 
         probe_modulation = rk.sp_tot(self.probes,self.OM_T) / np.maximum(self.OM_T,0.01)
 
@@ -526,6 +530,9 @@ class RK_experiment:
 
         x_mask = (self.E[0, :] > self.x_lo) & (self.E[0, :] < self.x_hi)
         y_mask = probe_modulation[:,0] > dzeta
+
+        if self.ifWide:
+            self.signal_sb_FT_corrected = median_filter(np.real(self.signal_sb_FT_corrected),size=(3,3)) + 1j*median_filter(np.imag(self.signal_sb_FT_corrected),size=(3,3))  # WIDE PROBE VARIANT
 
         self.E_rho = self.E[np.ix_(y_mask, x_mask)]
         self.OM_T_rho = self.OM_T[np.ix_(y_mask, x_mask)]
@@ -551,7 +558,7 @@ class RK_experiment:
         E1 = self.E_rho - self.OM_T_rho*hbar + self.om_ref*hbar - self.om_ref*hbar
         E2 = self.E_rho - self.om_ref*hbar
 
-        N_NEW = 200
+        N_NEW = 100
         rho_raw, amplit_tot_FT_corrected_small, extent_small, idxs_small, E1interp, E2interp = rk.resample(
             self.signal_sb_FT_corrected, self.rho_hi, self.rho_lo, self.om_ref, self.E, self.OM_T, N_NEW)
         rho_raw_sigma, amplit_tot_FT_corrected_small, extent_small, idxs_small, E1interp, E2interp = rk.resample(
@@ -576,28 +583,41 @@ class RK_experiment:
                  saveloc='single_output_temp/rhos/rho_ideal.png', xlabel='Energy $\\varepsilon_2$ [eV]', ylabel='Energy $\\varepsilon_1$ [eV]',
                  title='Initial photoelectron density matrix', show=False, square=True)
         
-        selected_indices = self.sigma_rho.flatten() > 0
+        if self.ifWide:
+            inferred_rho = rk.project_to_density_matrix(rho_raw,4)
+            fid0 = rk.fidelity(ideal_rho, inferred_rho)
 
-        from MCMC2 import Bayesian_MCMC
+            rk.plot_mat(inferred_rho - 1e-4, extent=[self.rho_lo,self.rho_hi,self.rho_lo,self.rho_hi], cmap='plasma',
+                    saveloc='single_output_temp/rhos/rho_inferred.png', xlabel='Energy $\\varepsilon_2$ [eV]', ylabel='Energy $\\varepsilon_1$ [eV]',
+                    title='Inferred density matrix', show=False, caption='F=%.3f'%fid0, square=True)
 
-        amps_hat, mus_hat, sigmas_hat, betas_hat, taus_hat, lambdas_hat, gamma_hat, eta_hat = Bayesian_MCMC(E1.flatten()[selected_indices],E2.flatten()[selected_indices],
-                      self.signal_sb_FT_corrected_rho.flatten()[selected_indices],self.sigma_rho.flatten()[selected_indices],n_peaks=2)
+            rk.plot_mat((ideal_rho - inferred_rho) / np.max(np.abs(ideal_rho)), extent=[self.rho_lo,self.rho_hi,self.rho_lo,self.rho_hi], cmap='plasma',
+                    saveloc='single_output_temp/rhos/rho_diff.png', xlabel='Energy $\\varepsilon_2$ [eV]', ylabel='Energy $\\varepsilon_1$ [eV]',
+                    title='$(\\rho_0 - \\rho_{\\text{inferred}}) / \\text{max}(|\\rho_0|) $', show=False, square=True)
+            
+        else:
+            selected_indices = self.sigma_rho.flatten() > 0
 
-        def rho_inferred(e1,e2):
-            return rho_model(e1,e2,amps_hat,mus_hat,sigmas_hat,betas_hat,taus_hat,lambdas_hat,gamma_hat,eta_hat)
+            from MCMC2 import Bayesian_MCMC
 
-        inferred_rho = rho_inferred(E1interp, E2interp)
-        inferred_rho = inferred_rho/np.trace(inferred_rho)
+            amps_hat, mus_hat, sigmas_hat, betas_hat, taus_hat, lambdas_hat, gamma_hat, eta_hat = Bayesian_MCMC(E1.flatten()[selected_indices],E2.flatten()[selected_indices],
+                        self.signal_sb_FT_corrected_rho.flatten()[selected_indices],self.sigma_rho.flatten()[selected_indices],n_peaks=2)
 
-        fid0 = rk.fidelity(ideal_rho, inferred_rho)
+            def rho_inferred(e1,e2):
+                return rho_model(e1,e2,amps_hat,mus_hat,sigmas_hat,betas_hat,taus_hat,lambdas_hat,gamma_hat,eta_hat)
 
-        rk.plot_mat(inferred_rho - 1e-4, extent=[self.rho_lo,self.rho_hi,self.rho_lo,self.rho_hi], cmap='plasma',
-                 saveloc='single_output_temp/rhos/rho_inferred.png', xlabel='Energy $\\varepsilon_2$ [eV]', ylabel='Energy $\\varepsilon_1$ [eV]',
-                 title='Inferred density matrix', show=False, caption='F=%.3f'%fid0, square=True)
+            inferred_rho = rho_inferred(E1interp, E2interp)
+            inferred_rho = inferred_rho/np.trace(inferred_rho)
 
-        rk.plot_mat((ideal_rho - inferred_rho) / np.max(np.abs(ideal_rho)), extent=[self.rho_lo,self.rho_hi,self.rho_lo,self.rho_hi], cmap='plasma',
-                 saveloc='single_output_temp/rhos/rho_diff.png', xlabel='Energy $\\varepsilon_2$ [eV]', ylabel='Energy $\\varepsilon_1$ [eV]',
-                 title='$(\\rho_0 - \\rho_{\\text{inferred}}) / \\text{max}(|\\rho_0|) $', show=False, square=True)
+            fid0 = rk.fidelity(ideal_rho, inferred_rho)
+
+            rk.plot_mat(inferred_rho - 1e-4, extent=[self.rho_lo,self.rho_hi,self.rho_lo,self.rho_hi], cmap='plasma',
+                    saveloc='single_output_temp/rhos/rho_inferred.png', xlabel='Energy $\\varepsilon_2$ [eV]', ylabel='Energy $\\varepsilon_1$ [eV]',
+                    title='Inferred density matrix', show=False, caption='F=%.3f'%fid0, square=True)
+
+            rk.plot_mat((ideal_rho - inferred_rho) / np.max(np.abs(ideal_rho)), extent=[self.rho_lo,self.rho_hi,self.rho_lo,self.rho_hi], cmap='plasma',
+                    saveloc='single_output_temp/rhos/rho_diff.png', xlabel='Energy $\\varepsilon_2$ [eV]', ylabel='Energy $\\varepsilon_1$ [eV]',
+                    title='$(\\rho_0 - \\rho_{\\text{inferred}}) / \\text{max}(|\\rho_0|) $', show=False, square=True)
 
     # def WF_reconstruct(self):
     #     """Retrieve probe spectrum using Wirtinger Flow."""
@@ -680,8 +700,17 @@ if __name__ == "__main__":
     om_probes = [1.55/hbar]
     s_probes = [0.08/hbar]
 
+    A_probe = 2.0  # WIDE PROBE VARIANT
+    a_probes = [1.0]
+    om_probes = [1.55/hbar]
+    s_probes = [0.18/hbar]
+
     A_ref = 1.0
     om_ref = 1.50/hbar
+    s_ref = 0.025/hbar
+
+    A_ref = 1.0  # WIDE PROBE VARIANT
+    om_ref = 1.55/hbar
     s_ref = 0.025/hbar
 
     # Create experiment instance
@@ -689,7 +718,8 @@ if __name__ == "__main__":
                             sb_lo=sideband_lo,sb_hi=sideband_hi,harmq_lo=harmq_lo,harmq_hi=harmq_hi,if_coherent=if_coherent,
                             A_ref=A_ref,om_ref=om_ref,s_ref=s_ref)
 
-    experiment.ifWF = False        
+    experiment.ifWF = False
+    experiment.ifWide = True
 
     experiment.define_pulses(A_probe,a_probes,om_probes,s_probes)
     experiment.define_model()
@@ -697,4 +727,5 @@ if __name__ == "__main__":
     experiment.process_and_detrend()
     experiment.kb_correct()
     experiment.probe_sp_correct()
-    experiment.resample_analyze()
+    # experiment.resample_analyze()
+    experiment.resample_analyze_project()
