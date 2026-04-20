@@ -598,7 +598,7 @@ class RK_experiment:
         else:
             selected_indices = self.sigma_rho.flatten() > 0
 
-            from MCMC2 import Bayesian_MCMC
+            from MCMCrho import Bayesian_MCMC
 
             amps_hat, mus_hat, sigmas_hat, betas_hat, taus_hat, lambdas_hat, gamma_hat, eta_hat = Bayesian_MCMC(E1.flatten()[selected_indices],E2.flatten()[selected_indices],
                         self.signal_sb_FT_corrected_rho.flatten()[selected_indices],self.sigma_rho.flatten()[selected_indices],n_peaks=2)
@@ -700,7 +700,7 @@ if __name__ == "__main__":
     om_probes = [1.55/hbar]
     s_probes = [0.08/hbar]
 
-    A_probe = 2.0  # WIDE PROBE VARIANT
+    A_probe = 0.6  # WIDE PROBE VARIANT
     a_probes = [1.0]
     om_probes = [1.55/hbar]
     s_probes = [0.18/hbar]
@@ -727,5 +727,4 @@ if __name__ == "__main__":
     experiment.process_and_detrend()
     experiment.kb_correct()
     experiment.probe_sp_correct()
-    # experiment.resample_analyze()
-    experiment.resample_analyze_project()
+    experiment.resample_analyze()
