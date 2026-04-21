@@ -32,6 +32,7 @@ import matplotlib.pyplot as plt
 from scipy.signal import fftconvolve
 from scipy.ndimage import median_filter
 import rkraken as rk
+from matplotlib import patheffects as pe
 
 # Reduced Planck constant in eV*fs (approx CODATA): ħ = 6.582119569e-16 eV·s
 hbar = 6.582119569e-1
@@ -175,6 +176,9 @@ class RK_experiment:
         
         # Random number generator
         self.rng = np.random.default_rng()
+
+        # Probe model complexity for Bayesian reconstruction.
+        self.n_probe_peaks = 1
         
         # Initialize grids and pulses
         self.prepare_grid(E_range=None)
@@ -192,18 +196,32 @@ class RK_experiment:
         self.E_up_range = np.linspace(self.E_lo, self.E_hi, self.N_E_up)
         self.E_up, self.T_up = np.meshgrid(self.E_up_range, self.T_range)
 
-    def define_pulses(self,A_probe,a_probes,om_probes,s_probes):
-        # # Define XUV pulse configurations (stationary, tau=0)
-        # xuvs_list = []
-        # for i in range(len(a_xuvs)):
-        #     xuv_pulse = (0*self.T, A_xuv*a_xuvs[i], om_xuvs[i], s_xuvs[i], 0)
-        #     xuvs_list.append(xuv_pulse)
-        # self.xuvs = tuple(xuvs_list)
-        
+    def define_pulses(
+        self,
+        A_probe,
+        a_probes,
+        om_probes,
+        s_probes,
+        probe_phase=0.0,
+        probe_phase_grad=0.0,
+        probe_phase_chirp=0.0,
+    ):
         # Define probe pulse configurations (time-dependent, tau=T)
+        n_probe = len(a_probes)
+        if not (len(om_probes) == n_probe and len(s_probes) == n_probe):
+            raise ValueError('a_probes, om_probes, and s_probes must have the same length')
+
         probes_list = []
-        for i in range(len(a_probes)):
-            probe_pulse = (self.T, A_probe*a_probes[i], om_probes[i], s_probes[i], 0)
+        for i in range(n_probe):
+            probe_pulse = (
+                self.T,
+                A_probe * a_probes[i],
+                om_probes[i],
+                s_probes[i],
+                probe_phase,
+                probe_phase_grad,
+                probe_phase_chirp,
+            )
             probes_list.append(probe_pulse)
         self.probes = tuple(probes_list)
 
@@ -219,30 +237,27 @@ class RK_experiment:
                            [0.0,1.0]])
         etas = np.array([[1.0,0.0],
                          [0.0,1.0]])
-
-        # amps = [1.0/np.sqrt(2),1.0]
-        # mus = [25.0-0.20+self.om_ref*hbar,25.0+self.om_ref*hbar]
-        # sigmas = [0.08,0.08]
-        # betas = [2,2]
-        # taus = [1,1]
-        # lambdas = [3,7]
-        # gammas = np.array([[1.0,0.5],
-        #                    [0.5,1.0]])
-        # etas = np.array([[1.0,0.0],
-        #                  [0.0,1.0]])
         
-        # amps = [1.0,1.0,1.0]
-        # mus = [25.0-0.30+self.om_ref*hbar,25.0+self.om_ref*hbar,25.0+0.30+self.om_ref*hbar]
-        # sigmas = [0.06,0.06,0.06]
-        # betas = [0,0,0]
-        # taus = [0,0,0]
-        # lambdas = [5,15,10]
-        # gammas = np.array([[1.0,1.0,1.0],
-        #                    [1.0,1.0,1.0],
-        #                    [1.0,1.0,1.0]])
-        # etas = np.array([[1.0,-1.0,-1.0],
-        #                  [-1.0,1.0,-1.0],
-        #                  [-1.0,-1.0,1.0]])
+        # amps = [1.0]
+        # mus = [25.0+self.om_ref*hbar]
+        # sigmas = [0.08]
+        # betas = [3]
+        # taus = [1]
+        # lambdas = [0]
+        # gammas = np.array([[1.0]])
+        # etas = np.array([[1.0]])
+
+        # Keep known rho parameters for probe-only Bayesian inference.
+        self.rho_params = {
+            'amps': np.asarray(amps, dtype=float),
+            'mus': np.asarray(mus, dtype=float),
+            'sigmas': np.asarray(sigmas, dtype=float),
+            'betas': np.asarray(betas, dtype=float),
+            'taus': np.asarray(taus, dtype=float),
+            'lambdas': np.asarray(lambdas, dtype=float),
+            'gammas': np.asarray(gammas, dtype=np.complex128),
+            'etas': np.asarray(etas, dtype=float),
+        }
 
         def rho_f(e1, e2):
             return rho_model(e1,e2,amps,mus,sigmas,betas,taus,lambdas,gammas,etas) 
@@ -262,20 +277,6 @@ class RK_experiment:
 
         self.sp_probe = rk.sp_tot(self.probes, self.om_probe)
         self.sp_ref = self.sp_probe*ref_mask
-        # self.sp_xuv = rk.sp_tot(self.xuvs, self.om_xuv)
-
-        # ir_lo,xuv_lo,ir_hi,xuv_hi = rk.conv_bounds(self.E_lo/hbar,self.E_hi/hbar,self.N_E_up,self.om_ref)
-        # self.om_probe_up = np.linspace(ir_lo,ir_hi,self.N_E_up)
-        # self.om_xuv_up = np.linspace(xuv_lo,xuv_hi,self.N_E_up)
-
-        # ref_mask_up = self.A_ref*((self.om_probe_up >= self.om_ref - self.s_ref) & (self.om_probe_up <= self.om_ref + self.s_ref)).astype(float)        
-
-        # self.sp_probe_up = rk.sp_tot(self.probes, self.om_probe_up)
-        # self.sp_ref_up = self.sp_probe_up*ref_mask_up
-        # self.sp_xuv_up = rk.sp_tot(self.xuvs, self.om_xuv_up)
-
-        # om_probe_reg = rk.regularize_omega(self.om_probe_up)
-        # om_xuv_reg = rk.regularize_omega(self.om_xuv_up)
 
         ### PLOT the upsampled spectra with probe/ref on one axis, xuv on another
 
@@ -336,45 +337,6 @@ class RK_experiment:
         rk.plot_mat(self.signal_ft0-1e-3,extent=[self.E_lo,self.E_hi,em_lo,em_hi],saveloc='single_output/pipeline_diag/model_ft.png')
         rk.plot_mat(signal_clean-1e-6,extent=[self.E_lo,self.E_hi,-self.T_reach,self.T_reach],saveloc='single_output/pipeline_diag/model_sig.png')
 
-        # if self.if_coherent:
-        #     sp_xuv_E = rk.sp_tot(self.xuvs, self.E_up/hbar)
-        #     # Second-order amplitudes
-        #     A2_probe = rk.synth_baseline_n(self.sp_probe_up, self.sp_xuv_up, 
-        #                                  om_probe_reg, om_xuv_reg, self.T_up)
-        #     A2_ref = rk.synth_baseline_n(self.sp_ref_up, self.sp_xuv_up, 
-        #                                om_probe_reg, om_xuv_reg, self.T_up*0)
-
-        #     A2_total = A2_probe + A2_ref
-
-        #     amplit_tot_0 = rk.downsample(
-        #                             A2_total
-        #                             + sp_xuv_E
-        #                             , self.p_E)
-        #     signal_clean = np.abs(amplit_tot_0)**2
-
-        #     self.signal_zerocomp = np.abs(rk.downsample(A2_probe, self.p_E))**2 + np.abs(rk.downsample(A2_ref, self.p_E))**2
-
-        # else:
-        #     # Incoherent: sum |amplitude|^2 from each XUV component
-        #     signal_clean = np.zeros((self.N_T, self.N_E))
-        #     for xuv_i in self.xuvs:
-        #         sp_xuv_i = rk.sp_tot((xuv_i,), self.om_xuv_up)
-        #         sp_xuv_i_E = rk.sp_tot((xuv_i,), self.E_up/hbar)
-        #         # Second-order amplitudes
-        #         A2_probe_i = rk.synth_baseline_n(self.sp_probe_up, sp_xuv_i, 
-        #                                        om_probe_reg, om_xuv_reg, self.T_up)
-        #         A2_ref_i = rk.synth_baseline_n(self.sp_ref_up, sp_xuv_i, 
-        #                                      om_probe_reg, om_xuv_reg, self.T_up*0)
-                
-        #         A2_total_i = A2_probe_i + A2_ref_i
-
-        #         amplit_i = rk.downsample(
-        #                             A2_total_i
-        #                             + sp_xuv_i_E
-        #                             , self.p_E)
-        #         signal_clean += np.abs(amplit_i)**2
-        
-
         ### APPLY NOISE PROCEDURE
 
         signal_clean *= self.alpha
@@ -422,6 +384,8 @@ class RK_experiment:
 
         self.x_lo = 24.0 + self.om_ref*hbar
         self.x_hi = 26.0 + self.om_ref*hbar
+        self.x_lo = 24.5 + self.om_ref*hbar
+        self.x_hi = 25.5 + self.om_ref*hbar
 
         self.y_lo = 1.0/hbar
         self.y_hi = 2.0/hbar
@@ -464,123 +428,125 @@ class RK_experiment:
 
         # self.signal_sb_FT = median_filter(np.real(self.signal_sb_FT),size=(3,3)) + 1j*median_filter(np.imag(self.signal_sb_FT),size=(3,3))
 
-        # signal_sb_FT_ROI, em_axis_mid, i0, i1, ef_axis_mid, e0, e1 = rk.extract_midslice(self.signal_sb_FT, self.OMt_slice_fracts, hbar*self.OM_T[:,0], self.Ef_slice_fracts, self.E)
-        # rk.plot_mat(signal_sb_FT_ROI - 1e-5, extent=[self.x_lo,self.x_hi,self.y_lo*hbar,self.y_hi*hbar],
-        #         saveloc='single_output/pipeline_diag/signal_FT_sb_KB_corr_median.png', xlabel='Kinetic energy $E_f$ (eV)',ylabel='Indirect energy $\\hbar \\omega_\\tau$ (eV)', show=False,title='FT of the sideband signal', 
-        #         caption=f'RES = {np.sum(np.abs(self.signal_ft0_ROI - signal_sb_FT_ROI)) / np.sum(np.abs(self.signal_ft0_ROI)):.4f}')
-
         rk.plot_mat(np.abs(self.signal_ft0_ROI -  signal_sb_FT_ROI ) / np.max(np.abs(self.signal_ft0_ROI)), extent=[self.E_lo,self.E_hi,hbar*self.OM_T[0,0],hbar*self.OM_T[-1,0]],
                 saveloc='single_output/pipeline_diag/signal_FT_sb_KB_corr_diff.png', xlabel='Kinetic energy $E_f$ (eV)',ylabel='Indirect energy $\\hbar \\omega_\\tau$ (eV)', show=False,title='FT of the sideband signal', 
                 caption=f'RES = {np.sum(np.abs(self.signal_ft0_ROI - signal_sb_FT_ROI)) / np.sum(np.abs(self.signal_ft0_ROI)):.4f}')
 
-    def probe_sp_correct(self):
-        
-        if self.ifWide:
-            dzeta = 0.1 * np.max(np.abs(rk.sp_tot(self.probes,self.OM_T))) # WIDE PROBE VARIANT
-        else:
-            dzeta = 0.05 * np.max(np.abs(rk.sp_tot(self.probes,self.OM_T)))
+    def probe_reconstruct(self):
 
-        probe_modulation = rk.sp_tot(self.probes,self.OM_T) / np.maximum(self.OM_T,0.01)
+        if not hasattr(self, 'rho_params'):
+            raise RuntimeError('define_model() must be called before probe_reconstruct() to set fixed rho parameters.')
 
-        where_off = probe_modulation < dzeta
-        probe_modulation[where_off] = dzeta
-
-        self.signal_sb_FT_corrected = self.signal_sb_FT / probe_modulation
-        self.signal_sb_FT_corrected[where_off] = 0
-
-        self.sigma = self.sigma / np.abs(probe_modulation)
-        self.sigma[where_off] = 0
+        sig_power = np.sum(np.abs(self.signal_sb_FT),axis=1)
+        dzeta  = 0.02 * np.max(sig_power)
 
         x_mask = (self.E[0, :] > self.x_lo) & (self.E[0, :] < self.x_hi)
-        y_mask = probe_modulation[:,0] > dzeta
+        y_mask =  (sig_power > dzeta) & (np.abs(self.OM_T*hbar)[:,0] < 0.5) & (self.OM_T[:,0] > np.min(np.abs(self.OM_T[:,0])))
 
-        if self.ifWide:
-            self.signal_sb_FT_corrected = median_filter(np.real(self.signal_sb_FT_corrected),size=(3,3)) + 1j*median_filter(np.imag(self.signal_sb_FT_corrected),size=(3,3))  # WIDE PROBE VARIANT
+        self.E_zero = self.E[np.ix_(y_mask, x_mask)]
+        self.OM_T_zero = self.OM_T[np.ix_(y_mask, x_mask)]
+        self.sigma_zero = self.sigma[np.ix_(y_mask, x_mask)]
+        self.sigma_zero = np.abs(self.sigma_zero).astype(float)
+        self.signal_sb_FT_zero = self.signal_sb_FT[np.ix_(y_mask, x_mask)]
 
-        self.E_rho = self.E[np.ix_(y_mask, x_mask)]
-        self.OM_T_rho = self.OM_T[np.ix_(y_mask, x_mask)]
-        self.sigma_rho = self.sigma[np.ix_(y_mask, x_mask)]
-        self.signal_sb_FT_corrected_rho = self.signal_sb_FT_corrected[np.ix_(y_mask, x_mask)]
-
-        self.sigma_rho = np.abs(self.sigma_rho).astype(float)
-
-        rk.plot_mat(self.sigma_rho, extent=[self.E_rho[0,0]-self.om_ref*hbar,self.E_rho[0,-1]-self.om_ref*hbar,self.OM_T_rho[1,0]*hbar,self.OM_T_rho[-1,0]*hbar], cmap='plasma',
-                 saveloc='single_output/rhos/sigmas.png', xlabel='Kinetic energy $E_f$ (eV)', ylabel='Indirect energy $\\hbar \\omega_\\tau$ (eV)',
-                 title='$\\sigma(E_f,\\hbar \\omega_\\tau )$', show=False, mode='abs')
-
-        rk.plot_mat(self.signal_sb_FT_corrected_rho - 1e-3, extent=[self.E_rho[0,0]-self.om_ref*hbar,self.E_rho[0,-1]-self.om_ref*hbar,self.OM_T_rho[1,0]*hbar,self.OM_T_rho[-1,0]*hbar], cmap='plasma',
-                 saveloc='single_output/rhos/rho_rec_unproj.png', xlabel='Kinetic energy $E_f$ (eV)', ylabel='Indirect energy $\\hbar \\omega_\\tau$ (eV)',
+        rk.plot_mat(self.signal_sb_FT_zero - 1e-3, extent=[self.E_zero[0,0]-self.om_ref*hbar,self.E_zero[0,-1]-self.om_ref*hbar,self.OM_T_zero[1,0]*hbar,self.OM_T_zero[-1,0]*hbar], cmap='plasma',
+                 saveloc='single_output/LBFGS/zero_comp.png', xlabel='Kinetic energy $E_f$ (eV)', ylabel='Indirect energy $\\hbar \\omega_\\tau$ (eV)',
                  title='$\\tilde S_{corr}(E_f,\\omega_\\tau)$', show=False, square=True)
 
-        return
+        rk.plot_mat(self.sigma_zero, extent=[self.E_zero[0,0]-self.om_ref*hbar,self.E_zero[0,-1]-self.om_ref*hbar,self.OM_T_zero[1,0]*hbar,self.OM_T_zero[-1,0]*hbar], cmap='plasma',
+                 saveloc='single_output/LBFGS/zero_comp_sigma.png', xlabel='Kinetic energy $E_f$ (eV)', ylabel='Indirect energy $\\hbar \\omega_\\tau$ (eV)',
+                 title='$\\sigma(E_f,\\hbar \\omega_\\tau )$', show=False, mode='abs')
 
-    def resample_analyze(self):
-        """Resample and analyze results to produce final density matrices."""
-        # Resample and analyze
+        ir_lo,xuv_lo,ir_hi,xuv_hi = rk.conv_bounds(self.x_lo/hbar,self.x_hi/hbar,self.N_E,self.om_ref)
+        om_probe_zero = np.linspace(ir_lo,ir_hi,self.E_zero.shape[1])
+        om_xuv_zero = np.linspace(xuv_lo,xuv_hi,self.E_zero.shape[1])
+        OM_P_zero = np.tile(om_probe_zero, (self.E_zero.shape[0], 1))
+        OM_X_zero = np.tile(om_xuv_zero, (self.E_zero.shape[0], 1))
 
-        E1 = self.E_rho - self.OM_T_rho*hbar + self.om_ref*hbar - self.om_ref*hbar
-        E2 = self.E_rho - self.om_ref*hbar
+        # # Build full frequency grids used by the zero-omega forward model and apply the same ROI masks.
+        # OM_P = np.tile(self.om_probe, (self.N_T, 1))
+        # OM_X = np.tile(self.om_xuv, (self.N_T, 1))
+        # OM_P_zero = OM_P[np.ix_(y_mask, x_mask)]
+        # OM_X_zero = OM_X[np.ix_(y_mask, x_mask)]
 
-        N_NEW = 100
-        rho_raw, amplit_tot_FT_corrected_small, extent_small, idxs_small, E1interp, E2interp = rk.resample(
-            self.signal_sb_FT_corrected, self.rho_hi, self.rho_lo, self.om_ref, self.E, self.OM_T, N_NEW)
-        rho_raw_sigma, amplit_tot_FT_corrected_small, extent_small, idxs_small, E1interp, E2interp = rk.resample(
-            self.sigma, self.rho_hi, self.rho_lo, self.om_ref, self.E, self.OM_T, N_NEW)
-
-        ideal_rho = self.rho_f(E1interp + self.om_ref*hbar, E2interp + self.om_ref*hbar)
-        ideal_rho = ideal_rho/np.trace(ideal_rho)
-
-        raw_trace = np.trace(rho_raw)
-        rho_raw = rho_raw/raw_trace
-        rho_raw_sigma = rho_raw_sigma/raw_trace
-
-        rk.plot_mat(rho_raw - 1e-4, extent=[self.rho_lo,self.rho_hi,self.rho_lo,self.rho_hi], cmap='plasma',
-                 saveloc='single_output/rhos/rho_raw', xlabel='Energy $\\varepsilon_2$ [eV]', ylabel='Energy $\\varepsilon_1$ [eV]',
-                 title='$\\tilde S_{corr}(\\varepsilon_2,\\varepsilon_1)$', show=False, square=True)
+        from LBFGSprobe import LBFGS_probe
+        opt_probe, z_fit_zero = LBFGS_probe(
+            om_p=OM_P_zero,
+            om_x=OM_X_zero,
+            om_t=self.OM_T_zero,
+            z_obs=self.signal_sb_FT_zero,
+            sigma_obs=self.sigma_zero,
+            rho_params=self.rho_params,
+            om_ref=self.om_ref,
+            n_probe_peaks=self.n_probe_peaks,
+            obs_mask=None,
+            maxiter=500,
+            tol=1e-6,
+            rng_seed=0,
+            lambda1=0.0,
+            lambda2=0.005
+        )
+        # Interpolate the optimized discrete vector to the full probe frequency grid if necessary
+        opt_probe_interp = np.interp(self.om_probe, om_probe_zero, np.real(opt_probe)) + \
+                           1j * np.interp(self.om_probe, om_probe_zero, np.imag(opt_probe))
         
-        rk.plot_mat(rho_raw_sigma, extent=[self.rho_lo,self.rho_hi,self.rho_lo,self.rho_hi], cmap='plasma',
-                 saveloc='single_output/rhos/rho_raw_sigma', xlabel='Energy $\\varepsilon_2$ [eV]', ylabel='Energy $\\varepsilon_1$ [eV]',
-                 title='$\\sigma (\\varepsilon_2,\\varepsilon_1)$', show=False, mode='abs')
-
-        rk.plot_mat(ideal_rho - 1e-4, extent=[self.rho_lo,self.rho_hi,self.rho_lo,self.rho_hi], cmap='plasma',
-                 saveloc='single_output/rhos/rho_ideal.png', xlabel='Energy $\\varepsilon_2$ [eV]', ylabel='Energy $\\varepsilon_1$ [eV]',
-                 title='Initial photoelectron density matrix', show=False, square=True)
+        self.sp_probe_inferred_complex = opt_probe_interp
+        self.sp_probe_inferred = np.abs(opt_probe_interp)
+        self.signal_sb_FT_zero_fit = z_fit_zero
         
-        if self.ifWide:
-            inferred_rho = rk.project_to_density_matrix(rho_raw,4)
-            fid0 = rk.fidelity(ideal_rho, inferred_rho)
+        print("Inferred probe field from discrete L-BFGS completed.")
 
-            rk.plot_mat(inferred_rho - 1e-4, extent=[self.rho_lo,self.rho_hi,self.rho_lo,self.rho_hi], cmap='plasma',
-                    saveloc='single_output/rhos/rho_inferred.png', xlabel='Energy $\\varepsilon_2$ [eV]', ylabel='Energy $\\varepsilon_1$ [eV]',
-                    title='Inferred density matrix', show=False, caption='F=%.3f'%fid0, square=True)
+        fig, ax_amp = plt.subplots(1, 1, figsize=(8, 4.5))
+        ax_phase = ax_amp.twinx()
 
-            rk.plot_mat((ideal_rho - inferred_rho) / np.max(np.abs(ideal_rho)), extent=[self.rho_lo,self.rho_hi,self.rho_lo,self.rho_hi], cmap='plasma',
-                    saveloc='single_output/rhos/rho_diff.png', xlabel='Energy $\\varepsilon_2$ [eV]', ylabel='Energy $\\varepsilon_1$ [eV]',
-                    title='$(\\rho_0 - \\rho_{\\text{inferred}}) / \\text{max}(|\\rho_0|) $', show=False, square=True)
-            
-        else:
-            selected_indices = self.sigma_rho.flatten() > 0
+        true_power = np.sum(np.abs(self.sp_probe)**2)
+        fit_power = np.sum(np.abs(self.sp_probe_inferred_complex)**2)
+        self.sp_probe_inferred_complex = self.sp_probe_inferred_complex * np.sqrt(true_power/fit_power)
 
-            from MCMCrho import Bayesian_MCMC
+        probe_energy = self.om_probe*hbar
+        true_mag = np.abs(self.sp_probe)
+        fit_mag = np.abs(self.sp_probe_inferred_complex)
+        
+        # Calculate the relative global phase difference using maximum amplitude point
+        idx_max = np.argmax(true_mag)
+        phase_offset = np.angle(self.sp_probe[idx_max]) - np.angle(self.sp_probe_inferred_complex[idx_max])
+        self.sp_probe_inferred_complex = self.sp_probe_inferred_complex * np.exp(1j * phase_offset)
 
-            amps_hat, mus_hat, sigmas_hat, betas_hat, taus_hat, lambdas_hat, gamma_hat, eta_hat = Bayesian_MCMC(E1.flatten()[selected_indices],E2.flatten()[selected_indices],
-                        self.signal_sb_FT_corrected_rho.flatten()[selected_indices],self.sigma_rho.flatten()[selected_indices],n_peaks=2)
+        true_phase = np.angle(self.sp_probe)
+        fit_phase = np.angle(self.sp_probe_inferred_complex)
+        true_phase_mask = true_mag >= 0.05 * np.max(true_mag)
+        fit_phase_mask = fit_mag >= 0.05 * np.max(fit_mag)
+        true_phase_plot = np.where(true_phase_mask, true_phase, np.nan)
+        fit_phase_plot = np.where(fit_phase_mask, fit_phase, np.nan)
 
-            def rho_inferred(e1,e2):
-                return rho_model(e1,e2,amps_hat,mus_hat,sigmas_hat,betas_hat,taus_hat,lambdas_hat,gamma_hat,eta_hat)
+        line_true_amp, = ax_amp.plot(probe_energy, true_mag, label='True probe |mag|', linewidth=1.2)
+        line_fit_amp, = ax_amp.plot(probe_energy, fit_mag, '--', label='Inferred probe |mag|', linewidth=1.2)
+        ax_amp.set_xlabel('Energy [eV]')
+        ax_amp.set_ylabel('Amplitude [arb. u.]')
+        ax_amp.set_title('Probe spectrum: true vs inferred')
+        ax_amp.grid(True, alpha=0.3)
+        ax_amp.set_xlim([0.7,2.5])
 
-            inferred_rho = rho_inferred(E1interp, E2interp)
-            inferred_rho = inferred_rho/np.trace(inferred_rho)
+        line_true_phase, = ax_phase.plot(probe_energy, true_phase_plot, label='True phase', linewidth=0.9)
+        line_fit_phase, = ax_phase.plot(probe_energy, fit_phase_plot, '--', label='Inferred phase', linewidth=0.9)
+        ax_phase.set_ylabel('Phase [rad]')
+        ax_phase.set_ylim([-np.pi, np.pi])
+        ax_phase.set_yticks([-np.pi, -np.pi/2, 0.0, np.pi/2, np.pi])
 
-            fid0 = rk.fidelity(ideal_rho, inferred_rho)
+        lines = [line_true_amp, line_fit_amp, line_true_phase, line_fit_phase]
+        labels = [line.get_label() for line in lines]
+        ax_amp.legend(lines, labels, loc='best')
 
-            rk.plot_mat(inferred_rho - 1e-4, extent=[self.rho_lo,self.rho_hi,self.rho_lo,self.rho_hi], cmap='plasma',
-                    saveloc='single_output/rhos/rho_inferred.png', xlabel='Energy $\\varepsilon_2$ [eV]', ylabel='Energy $\\varepsilon_1$ [eV]',
-                    title='Inferred density matrix', show=False, caption='F=%.3f'%fid0, square=True)
+        res_val = np.sum(np.abs(self.sp_probe - self.sp_probe_inferred_complex)**2) / np.sum(np.abs(self.sp_probe)**2)
 
-            rk.plot_mat((ideal_rho - inferred_rho) / np.max(np.abs(ideal_rho)), extent=[self.rho_lo,self.rho_hi,self.rho_lo,self.rho_hi], cmap='plasma',
-                    saveloc='single_output/rhos/rho_diff.png', xlabel='Energy $\\varepsilon_2$ [eV]', ylabel='Energy $\\varepsilon_1$ [eV]',
-                    title='$(\\rho_0 - \\rho_{\\text{inferred}}) / \\text{max}(|\\rho_0|) $', show=False, square=True)
+        ax_amp.text(0.02, 0.98, f"RES = {res_val:.4f}", transform=ax_amp.transAxes,
+        fontsize=10, verticalalignment='top', horizontalalignment='left',
+        color='white', weight='bold',
+        path_effects=[pe.withStroke(linewidth=2, foreground='black')])
+
+        plt.tight_layout(rect=[0, 0.03, 1, 1])
+        plt.savefig('single_output/pipeline_diag/probe_spectrum_fit.png', dpi=300)
+        plt.close(fig)
 
 if __name__ == "__main__":
 
@@ -602,15 +568,36 @@ if __name__ == "__main__":
 
     # Define pulses
 
-    # A_probe = 0.6
-    # a_probes = [1.0,0.05,0.05]
-    # om_probes = [1.55/hbar,1.52/hbar,1.58/hbar]
-    # s_probes = [0.15/hbar,0.02/hbar,0.02/hbar]
+    A_probe = 0.6
+    a_probes = [1.0,0.1,0.15]
+    om_probes = [1.55/hbar,1.46/hbar,1.58/hbar]
+    s_probes = [0.10/hbar,0.02/hbar,0.04/hbar]
 
     A_probe = 0.6
-    a_probes = [1.0]
-    om_probes = [1.55/hbar]
-    s_probes = [0.08/hbar]
+    a_probes = [1.0,0.2,0.3]
+    om_probes = [1.55/hbar,1.46/hbar,1.59/hbar]
+    s_probes = [0.10/hbar,0.02/hbar,0.04/hbar]
+
+    A_probe = 0.6
+    a_probes = [1.0,0.2,0.2]
+    om_probes = [1.55/hbar,1.20/hbar,2.00/hbar]
+    s_probes = [0.15/hbar,0.04/hbar,0.07/hbar]
+    probe_phase = 1.0
+    probe_phase_grad = 1.0
+    probe_phase_chirp = 1.0
+
+    A_probe = 0.6
+    a_probes = [1.0,0.3]
+    om_probes = [1.55/hbar,1.66/hbar]
+    s_probes = [0.10/hbar,0.05/hbar]
+    probe_phase = 0.0
+    probe_phase_grad = 2.5
+    probe_phase_chirp = 2.5
+
+    # A_probe = 0.6
+    # a_probes = [1.0]
+    # om_probes = [1.55/hbar]
+    # s_probes = [0.08/hbar]
 
     # A_probe = 0.6  # WIDE PROBE VARIANT
     # a_probes = [1.0]
@@ -632,11 +619,19 @@ if __name__ == "__main__":
 
     experiment.ifWF = False
     experiment.ifWide = False
+    experiment.n_probe_peaks = 2#len(a_probes)
 
-    experiment.define_pulses(A_probe,a_probes,om_probes,s_probes)
+    experiment.define_pulses(
+        A_probe,
+        a_probes,
+        om_probes,
+        s_probes,
+        probe_phase=probe_phase,
+        probe_phase_grad=probe_phase_grad,
+        probe_phase_chirp=probe_phase_chirp,
+    )
     experiment.define_model()
     experiment.generate_signal()
     experiment.process_and_detrend()
     experiment.kb_correct()
-    experiment.probe_sp_correct()
-    experiment.resample_analyze()
+    experiment.probe_reconstruct()

@@ -1,12 +1,10 @@
 import numpy as np
 from numpy import pi
 import matplotlib.pyplot as plt
-import matplotlib.ticker as ticker
 from math import floor
 from scipy.optimize import curve_fit, differential_evolution
 from scipy.signal import fftconvolve, find_peaks, peak_widths
 from matplotlib import patheffects as pe
-from skimage.restoration import denoise_tv_bregman
 from scipy.ndimage import median_filter, gaussian_filter
 from scipy.special import i0e, i1e
 from scipy.optimize import brentq
@@ -152,35 +150,76 @@ def _style_ax(ax, grid_alpha=None):
     if grid_alpha is not None:
         ax.grid(alpha=grid_alpha)
 
-def plot_mat(mat,extent=[0,1,0,1],cmap='plasma',mode='phase',show=True,saveloc=None,caption=None,xlabel='x',ylabel='y',title=None,grid_alpha=None):
+def _set_title_with_math_style(setter, text, title_kw, title_math_font='stix', title_math_bold=True):
+    """Render title text with optional math-font and bold mathtext settings."""
+    if text is None:
+        return
+
+    if '$' not in text:
+        setter(text, **title_kw)
+        return
+
+    valid_fontsets = {'dejavusans', 'dejavuserif', 'cm', 'stix', 'stixsans', 'custom'}
+    if title_math_font is None:
+        math_fontset = plt.rcParams.get('mathtext.fontset', 'dejavusans')
+    else:
+        math_fontset = str(title_math_font).lower()
+        if math_fontset not in valid_fontsets:
+            raise ValueError(
+                f"title_math_font must be one of {sorted(valid_fontsets)} or None, got {title_math_font!r}"
+            )
+
+    rc_updates = {'mathtext.fontset': math_fontset}
+    if title_math_bold:
+        rc_updates['mathtext.default'] = 'bf'
+
+    with plt.rc_context(rc_updates):
+        setter(text, **title_kw)
+
+def plot_mat(mat,extent=[0,1,0,1],cmap='plasma',mode='phase',show=True,saveloc=None,caption=None,xlabel='x',ylabel='y',
+             title=None,grid_alpha=None,title_math_bold=True,title_math_font='dejavusans',square=False):
 
     _label_kw = dict(fontsize=10,)
-    _title_kw = dict(fontsize=11, fontweight='semibold')
+    _title_kw0 = dict(fontsize=10, fontweight='semibold')
+    _title_kwabs = dict(fontsize=15, fontweight='semibold', y=1.03)
+    _title_kw = dict(fontsize=15, fontweight='semibold')
 
     if mode == 'abs':
-        plt.figure()
-        im = plt.imshow(np.abs(mat), extent=extent, origin='lower', aspect='auto', cmap=cmap)
-        plt.xlabel(xlabel, **_label_kw)
-        plt.ylabel(ylabel, **_label_kw)
+        fig, ax = plt.subplots(1, 1, figsize=(5, 4))
+        im = ax.imshow(np.abs(mat), extent=extent, origin='lower', aspect='auto', cmap=cmap)
+        ax.set_xlabel(xlabel, **_label_kw)
+        ax.set_ylabel(ylabel, **_label_kw)
         if title:
-            plt.title(title, **_title_kw)
+            _set_title_with_math_style(
+                ax.set_title,
+                title,
+                _title_kwabs,
+                title_math_font=title_math_font,
+                title_math_bold=title_math_bold,
+            )
         else:
-            plt.title('|M|', **_title_kw)
-        plt.colorbar(im)
+            ax.set_title('Abs(M)', **_title_kwabs)
+        fig.colorbar(im, ax=ax)
         if caption is not None:
-            plt.text(0.02, 0.98, caption, transform=plt.gca().transAxes, 
+            ax.text(0.02, 0.98, caption, transform=ax.transAxes,
                     fontsize=10, verticalalignment='top', horizontalalignment='left',
                     color='white', weight='bold',
                     path_effects=[pe.withStroke(linewidth=2, foreground='black')])
-        _style_ax(plt.gca(), grid_alpha=grid_alpha)
+
+        _style_ax(ax, grid_alpha=grid_alpha)
+        plt.tight_layout()
 
     elif mode == 'phase':
         fig, axes = plt.subplots(1, 2, figsize=(10, 4), sharex=True, sharey=True)
+        if square:
+            # Square axes shrink within their subplot slots; anchor inward to avoid a large center gap.
+            axes[0].set_box_aspect(1)
+            axes[1].set_box_aspect(1)
+            axes[0].set_anchor('E')
+            axes[1].set_anchor('W')
+
         im0 = axes[0].imshow(np.abs(mat), extent=extent, origin='lower', aspect='auto', cmap=cmap)
-        if title:
-            axes[0].set_title(title, **_title_kw)
-        else:
-            axes[0].set_title('|M|', **_title_kw)
+        axes[0].set_title('Abs(M)', **_title_kw0)
         axes[0].set_xlabel(xlabel, **_label_kw)
         axes[0].set_ylabel(ylabel, **_label_kw)
         fig.colorbar(im0, ax=axes[0])
@@ -191,41 +230,53 @@ def plot_mat(mat,extent=[0,1,0,1],cmap='plasma',mode='phase',show=True,saveloc=N
                         path_effects=[pe.withStroke(linewidth=2, foreground='black')])
 
         im1 = axes[1].imshow(np.angle(mat), extent=extent, origin='lower', aspect='auto', cmap='hsv', vmin=-np.pi, vmax=np.pi)
-        axes[1].set_title('arg(M)', **_title_kw)
+        axes[1].set_title('arg(M)', **_title_kw0)
         axes[1].set_xlabel(xlabel, **_label_kw)
         fig.colorbar(im1, ax=axes[1])
 
         if title:
-            fig.suptitle(title, **_title_kw)
+            title_kw = dict(_title_kw)
+            if square:
+                title_kw['y'] = 1.01
+            _set_title_with_math_style(
+                fig.suptitle,
+                title,
+                title_kw,
+                title_math_font=title_math_font,
+                title_math_bold=title_math_bold,
+            )
 
         for ax in axes:
             _style_ax(ax, grid_alpha=grid_alpha)
-        plt.tight_layout()
+        if square:
+            fig.subplots_adjust(left=0.08, right=0.97, bottom=0.12, top=0.87, wspace=0.08)
+        else:
+            plt.tight_layout()
 
-    elif mode == 'reim':
-        fig, axes = plt.subplots(1, 2, figsize=(10, 4), sharex=True, sharey=True)
-        im0 = axes[0].imshow(np.real(mat), extent=extent, origin='lower', aspect='auto', cmap=cmap)
-        axes[0].set_title('Re{M}', **_title_kw)
-        axes[0].set_xlabel(xlabel, **_label_kw)
-        axes[0].set_ylabel(ylabel, **_label_kw)
-        fig.colorbar(im0, ax=axes[0])
-        if caption is not None:
-            axes[0].text(0.02, 0.98, caption, transform=axes[0].transAxes, 
-                        fontsize=10, verticalalignment='top', horizontalalignment='left',
-                        color='white', weight='bold',
-                        path_effects=[pe.withStroke(linewidth=2, foreground='black')])
+    # elif mode == 'reim':
+    #     fig, axes = plt.subplots(1, 2, figsize=(10, 4), sharex=True, sharey=True)
+    #     im0 = axes[0].imshow(np.real(mat), extent=extent, origin='lower', aspect='auto', cmap=cmap)
+    #     axes[0].set_title('Re{M}', **_title_kw)
+    #     axes[0].set_xlabel(xlabel, **_label_kw)
+    #     axes[0].set_ylabel(ylabel, **_label_kw)
+    #     fig.colorbar(im0, ax=axes[0])
+    #     if caption is not None:
+    #         axes[0].text(0.02, 0.98, caption, transform=axes[0].transAxes, 
+    #                     fontsize=10, verticalalignment='top', horizontalalignment='left',
+    #                     color='white', weight='bold',
+    #                     path_effects=[pe.withStroke(linewidth=2, foreground='black')])
 
-        im1 = axes[1].imshow(np.imag(mat), extent=extent, origin='lower', aspect='auto', cmap=cmap)
-        axes[1].set_title('Im{M}', **_title_kw)
-        axes[1].set_xlabel(xlabel, **_label_kw)
-        fig.colorbar(im1, ax=axes[1])
+    #     im1 = axes[1].imshow(np.imag(mat), extent=extent, origin='lower', aspect='auto', cmap=cmap)
+    #     axes[1].set_title('Im{M}', **_title_kw)
+    #     axes[1].set_xlabel(xlabel, **_label_kw)
+    #     fig.colorbar(im1, ax=axes[1])
 
-        if title:
-            fig.suptitle(title, **_title_kw)
+    #     if title:
+    #         fig.suptitle(title, **_title_kw)
 
-        for ax in axes:
-            _style_ax(ax, grid_alpha=grid_alpha)
-        plt.tight_layout()
+    #     for ax in axes:
+    #         _style_ax(ax, grid_alpha=grid_alpha)
+    #     plt.tight_layout()
 
     if saveloc:
         plt.savefig(saveloc,dpi=500,bbox_inches='tight')
@@ -532,6 +583,59 @@ def spectrum_fun(A,om0,s,om):
     retval = A/(2*s)*np.exp(-(om-om0)**2/(2*s**2))
     return retval  # Positive-freq part
 
+
+def _unpack_pulse_tuple(pulse):
+    """Normalize pulse tuples to 7 fields.
+
+    Supported input tuple layouts:
+      (tau, amp, om0, sigma, phi0)
+      (tau, amp, om0, sigma, phi0, phase_grad)
+      (tau, amp, om0, sigma, phi0, phase_grad, phase_chirp)
+
+    Returns
+    -------
+    tau, amp, om0, sigma, phi0, phase_grad, phase_chirp
+    """
+    n_fields = len(pulse)
+    if n_fields == 5:
+        tau, amp, om0, sigma, phi0 = pulse
+        return tau, amp, om0, sigma, phi0, 0.0, 0.0
+    if n_fields == 6:
+        tau, amp, om0, sigma, phi0, phase_grad = pulse
+        return tau, amp, om0, sigma, phi0, phase_grad, 0.0
+    if n_fields == 7:
+        tau, amp, om0, sigma, phi0, phase_grad, phase_chirp = pulse
+        return tau, amp, om0, sigma, phi0, phase_grad, phase_chirp
+
+    raise ValueError(
+        "Pulse tuple must have 5, 6, or 7 entries: "
+        "(tau, amp, om0, sigma, phi0[, phase_grad[, phase_chirp]])"
+    )
+
+
+def _pack_pulse_tuple(n_fields, tau, amp, om0, sigma, phi0, phase_grad, phase_chirp):
+    """Pack pulse fields preserving the original tuple length convention."""
+    if n_fields <= 5:
+        return (tau, amp, om0, sigma, phi0)
+    if n_fields == 6:
+        return (tau, amp, om0, sigma, phi0, phase_grad)
+    return (tau, amp, om0, sigma, phi0, phase_grad, phase_chirp)
+
+
+def _dominant_peak_center(pulses):
+    """Return center frequency of the component with largest amplitude."""
+    if len(pulses) == 0:
+        raise ValueError("At least one pulse component is required")
+
+    amplitudes = []
+    centers = []
+    for pulse in pulses:
+        _, amp, om0, _, _, _, _ = _unpack_pulse_tuple(pulse)
+        amplitudes.append(float(np.abs(amp)))
+        centers.append(float(om0))
+
+    return centers[int(np.argmax(amplitudes))]
+
 def sqrt_probes(probes):
     """Square-root each Gaussian component in a probes tuple.
 
@@ -540,17 +644,38 @@ def sqrt_probes(probes):
     which is again a Gaussian with A_new = sqrt(2*A), s_new = s*sqrt(2).
     """
     out = []
-    for (T_k, a_k, om0_k, s_k, phi_k) in probes:
+    for pulse in probes:
+        n_fields = len(pulse)
+        T_k, a_k, om0_k, s_k, phi_k, phase_grad_k, phase_chirp_k = _unpack_pulse_tuple(pulse)
         a_new = 2*np.sqrt(a_k*s_k)
         s_new = s_k * np.sqrt(2)
-        out.append((T_k, a_new, om0_k, s_new, phi_k))
+        out.append(
+            _pack_pulse_tuple(
+                n_fields,
+                T_k,
+                a_new,
+                om0_k,
+                s_new,
+                phi_k,
+                phase_grad_k,
+                phase_chirp_k,
+            )
+        )
     return tuple(out)
 
 def sp_tot(gausses,om):
-    retval = np.zeros_like(om)
+    om = np.asarray(om)
+    retval = np.zeros_like(om, dtype=np.complex128)
+    if len(gausses) == 0:
+        return retval
+
+    om_ref = _dominant_peak_center(gausses)
+    domega = om - om_ref
+
     for gauss in gausses:
-        _,a0,om0,s0,_ = gauss
-        retval += spectrum_fun(a0,om0,s0,om)
+        _, a0, om0, s0, phi0, phase_grad, phase_chirp = _unpack_pulse_tuple(gauss)
+        phase = phi0 + phase_grad * domega + 0.5 * phase_chirp * domega**2
+        retval += spectrum_fun(a0, om0, s0, om) * np.exp(1j * phase)
     return retval
 
 def extract_midslice(sig_full,slice_fracts,sliced_range,e_slice_fracts=None,e_sliced_range=None):
@@ -689,23 +814,23 @@ def synth_baseline_WF(sp_pr_ref,sp_x,om_pr,om_x,T,i_chi,is_om_r,mode='same'):
 
     return conv1 + conv2
 
-def synth_baseline_WF_hermit(input,sp_x,om_pr,om_x,T):
-    d_om = om_x[1]-om_x[0]
+# def synth_baseline_WF_hermit(input,sp_x,om_pr,om_x,T):
+#     d_om = om_x[1]-om_x[0]
 
-    phase_pr = np.exp(1j*om_pr*T)
-    phase_x = np.exp(1j*0*T)
+#     phase_pr = np.exp(1j*om_pr*T)
+#     phase_x = np.exp(1j*0*T)
 
-    f1 = input
-    f2 = -sp_x/om_x * np.conjugate(phase2)
-    conv1 = fftconvolve(f1,f2[:,::-1],mode='same',axes=1)*d_om
+#     f1 = input
+#     f2 = -sp_x/om_x * np.conjugate(phase2)
+#     conv1 = fftconvolve(f1,f2[:,::-1],mode='same',axes=1)*d_om
 
-    f1 = input
-    f2 = sp_x * phase0
-    conv2 = fftconvolve(f1,f2[:,::-1],mode='same',axes=1)*d_om
-    conv2 = -conv2/om_pr * np.conjugate(phase1)
+#     f1 = input
+#     f2 = sp_x * phase0
+#     conv2 = fftconvolve(f1,f2[:,::-1],mode='same',axes=1)*d_om
+#     conv2 = -conv2/om_pr * np.conjugate(phase1)
 
-    # return np.sum(conv1 + conv2, axis=0)
-    return np.sum(conv2, axis=0)
+#     # return np.sum(conv1 + conv2, axis=0)
+#     return np.sum(conv2, axis=0)
 
 def synth_baseline(sp_pr,sp_x,om_pr,om_x,T,mode='same'):
     d_om = om_x[1]-om_x[0]
@@ -750,10 +875,37 @@ def plotc(ar):
     plt.plot(np.imag(ar),linewidth=0.8)
     plt.show()
 
-def nfit_params_to_probes(params, T):
+def nfit_params_to_probes(params, T, phi0=0.0, phase_grad=0.0, phase_chirp=0.0):
+    """Convert n-Gaussian fit parameters to probe tuples with phase terms.
+
+    Parameters
+    ----------
+    params : array-like
+        Flat parameter vector [A1, om1, s1, A2, om2, s2, ...].
+    T : array-like
+        Delay grid carried by each probe component.
+    phi0, phase_grad, phase_chirp : float or array-like
+        Optional phase polynomial coefficients per component. Scalars are
+        broadcast to all components.
+    """
     probes = []
-    for k in range(len(params)//3):
-        probes.append((T,params[3*k],params[3*k+1],params[3*k+2],0))
+    n_comp = len(params) // 3
+    phi0_arr = np.broadcast_to(np.asarray(phi0, dtype=float), (n_comp,))
+    grad_arr = np.broadcast_to(np.asarray(phase_grad, dtype=float), (n_comp,))
+    chirp_arr = np.broadcast_to(np.asarray(phase_chirp, dtype=float), (n_comp,))
+
+    for k in range(n_comp):
+        probes.append(
+            (
+                T,
+                params[3*k],
+                params[3*k+1],
+                params[3*k+2],
+                float(phi0_arr[k]),
+                float(grad_arr[k]),
+                float(chirp_arr[k]),
+            )
+        )
     return tuple(probes)
 
 def reconstruct_WirtFlow(sig_measrd,sp_probe,sp_xuv,om_probe,om_xuv,T,b_est,
@@ -868,7 +1020,7 @@ def reconstruct_WirtFlow(sig_measrd,sp_probe,sp_xuv,om_probe,om_xuv,T,b_est,
                 )
 
             plt.tight_layout()
-            plt.savefig('single_output_temp/WF_diag/spectrum_convergence_iter%.3f_%i.png'%(alph,nt))
+            plt.savefig('single_output/WF_diag/spectrum_convergence_iter%.3f_%i.png'%(alph,nt))
             plt.close()
 
             fig = plt.figure(figsize=(12, 8))
@@ -939,7 +1091,7 @@ def reconstruct_WirtFlow(sig_measrd,sp_probe,sp_xuv,om_probe,om_xuv,T,b_est,
             )
 
             plt.tight_layout()
-            # plt.savefig('single_output_temp/WF_diag/spectrum_convergence_iter%.3f_%i.png'%(alph,nt))
+            # plt.savefig('single_output/WF_diag/spectrum_convergence_iter%.3f_%i.png'%(alph,nt))
             plt.savefig('WF_gif/frame_%04d.png' % gif_frame_idx, dpi=100)
             plt.close()
             gif_frame_idx += 1
@@ -989,7 +1141,7 @@ def threshold_noise(M_obs, mean_noise_power):
                 A_est[i,j] = m
     return A_est
 
-def koay_basser_correction(M_obs, mean_noise_power,lambda_thresh=1):
+def koay_basser_correction(M_obs, mean_noise_power,lambda_thresh=1,only_floor=False):
     """
     Removes Rician bias using the Koay-Basser inversion method.
     
@@ -1038,18 +1190,24 @@ def koay_basser_correction(M_obs, mean_noise_power,lambda_thresh=1):
         
         # Case 2: Signal is above noise floor -> Invert the function
         else:
-            current_snr_m = m / sigma
-            
-            # Use Brent's method to find the root.
-            # Lower bound 0, Upper bound usually just needs to be high enough.
-            # Since M > A usually, current_snr_m is a safe heuristic upper bound 
-            # for the search, but we add a buffer for safety.
-            try:
+            if only_floor:
+                A_est[i] = m 
+            else:
+                current_snr_m = m / sigma
+
                 root_snr = brentq(rician_mean_eq, 0, current_snr_m * 2, args=(current_snr_m,))
                 A_est[i] = root_snr * sigma
-            except ValueError:
-                # Fallback if convergence fails (rare)
-                A_est[i] = m 
+                
+                # Use Brent's method to find the root.
+                # Lower bound 0, Upper bound usually just needs to be high enough.
+                # Since M > A usually, current_snr_m is a safe heuristic upper bound 
+                # for the search, but we add a buffer for safety.
+                # try:
+                #     root_snr = brentq(rician_mean_eq, 0, current_snr_m * 2, args=(current_snr_m,))
+                #     A_est[i] = root_snr * sigma
+                # except ValueError:
+                #     # Fallback if convergence fails (rare)
+                #     A_est[i] = m 
 
     return A_est if len(A_est) > 1 else A_est[0]
 
@@ -1063,9 +1221,9 @@ def modulating_function_multi(om_t,ene_Eg,pulse_params_x,probes,big_sigma=0):
     for xuv_now in pulse_params_x:
         for probe in probes:
 
-            tau_x,A_x,om0_x,s_x,phi_x = xuv_now
+            tau_x, A_x, om0_x, s_x, phi_x, _, _ = _unpack_pulse_tuple(xuv_now)
 
-            tau_p,A_p,om0_p,s_p,phi_p = probe
+            tau_p, A_p, om0_p, s_p, phi_p, _, _ = _unpack_pulse_tuple(probe)
             s_pp = s_p+big_sigma
 
             # Frequency-domain widths combine as s = sqrt(s_x^2 + s_p^2)
@@ -1090,7 +1248,7 @@ def normalize_params(gauss_params, om):
     Normalize a tuple of Gaussian parameters so their sum integrates to 1.
     
     Args:
-        gauss_params: tuple of tuples, each (tau, A, om0, s, phi)
+        gauss_params: tuple of pulse tuples
         om: array of omega values for integration
         
     Returns:
@@ -1101,7 +1259,8 @@ def normalize_params(gauss_params, om):
     
     # Compute integral using trapezoidal rule
     d_om = om[1] - om[0]
-    integral = np.sum(total_spectrum) * d_om
+    # Use spectral magnitude because total_spectrum can be complex when phase is enabled.
+    integral = np.sum(np.abs(total_spectrum)) * d_om
     
     if integral == 0.0 or not np.isfinite(integral):
         # Spectrum has no overlap with the grid — return unmodified params
@@ -1117,10 +1276,23 @@ def normalize_params(gauss_params, om):
 
     # Scale all amplitudes by the normalization factor
     norm_factor = 1.0 / integral
-    normalized = tuple(
-        (tau, A * norm_factor, om0, s, phi)
-        for tau, A, om0, s, phi in gauss_params
-    )
+    normalized = []
+    for pulse in gauss_params:
+        n_fields = len(pulse)
+        tau, A, om0, s, phi, phase_grad, phase_chirp = _unpack_pulse_tuple(pulse)
+        normalized.append(
+            _pack_pulse_tuple(
+                n_fields,
+                tau,
+                A * norm_factor,
+                om0,
+                s,
+                phi,
+                phase_grad,
+                phase_chirp,
+            )
+        )
+    normalized = tuple(normalized)
     
     return normalized
 
@@ -1437,7 +1609,8 @@ def pulse_emit(probes):
     Parameters:
     -----------
     probes : tuple
-        Tuple of pulse tuples, each in format (tau, amplitude, omega, sigma, phi)
+        Tuple of pulse tuples in format
+        (tau, amplitude, omega, sigma, phi0[, phase_grad[, phase_chirp]])
     
     Returns:
     --------
@@ -1446,8 +1619,18 @@ def pulse_emit(probes):
     """
     flipped_probes = []
     for probe in probes:
-        tau, amplitude, omega, sigma, phi = probe
-        flipped_probe = (tau, amplitude, -omega, sigma, phi)
+        n_fields = len(probe)
+        tau, amplitude, omega, sigma, phi, phase_grad, phase_chirp = _unpack_pulse_tuple(probe)
+        flipped_probe = _pack_pulse_tuple(
+            n_fields,
+            tau,
+            amplitude,
+            -omega,
+            sigma,
+            phi,
+            phase_grad,
+            phase_chirp,
+        )
         flipped_probes.append(flipped_probe)
     
     return tuple(flipped_probes)
