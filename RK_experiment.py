@@ -9,24 +9,26 @@ The pipeline consists of the following stages:
 2. generate_signal() - Generate synthetic baseline and full signal with noise
 3. process_and_detrend() - Process signal, estimate background, and detrend
 4. kb_correct() - Apply Koay-Basser correction for Rician noise
-5. xuv_peak() - Reconstruct XUV peak spectrum 
-6. WF_reconstruct() - Retrieve probe spectrum using Wirtinger Flow
-7. resample_analyze() - Resample and analyze to produce final density matrices
+5. probe_reconstruct() - Reconstruct probe spectrum from sideband FT
+6. probe_sp_correct() - Apply probe correction using true and reconstructed probes
+7. mcmc_fit() - Fit the corrected density matrix with Bayesian MCMC
 
 Usage:
     experiment = RK_experiment()
     experiment.generate_signal()
     experiment.process_and_detrend() 
     experiment.kb_correct()
-    experiment.xuv_peak()
-    experiment.WF_reconstruct()
-    experiment.resample_analyze()
+    experiment.probe_reconstruct()
+    experiment.probe_sp_correct()
+    experiment.mcmc_fit()
 
 All experimental parameters are stored as class attributes and can be 
 modified before running the pipeline methods.
 """
 
 import numpy as np
+import os
+import shutil
 from numpy import pi
 import matplotlib.pyplot as plt
 from scipy.signal import fftconvolve
@@ -34,6 +36,7 @@ from scipy.ndimage import median_filter
 import rkraken as rk
 from matplotlib import patheffects as pe
 from LBFGSprobe import LBFGS_probe
+from MCMCrho import Bayesian_MCMC
 
 # Reduced Planck constant in eV*fs (approx CODATA): ħ = 6.582119569e-16 eV·s
 hbar = 6.582119569e-1
@@ -435,9 +438,6 @@ class RK_experiment:
 
     def probe_reconstruct(self):
 
-        if not hasattr(self, 'rho_params'):
-            raise RuntimeError('define_model() must be called before probe_reconstruct() to set fixed rho parameters.')
-
         sig_power = np.sum(np.abs(self.signal_sb_FT),axis=1)
         dzeta  = 0.02 * np.max(sig_power)
 
@@ -485,14 +485,13 @@ class RK_experiment:
             rng_seed=0,
             lambda1=0.0,
             lambda2=0.005
-        )
+        ) # z_fit_zero: Forward model from reconstructed probe
+
         # Interpolate the optimized discrete vector to the full probe frequency grid if necessary
-        opt_probe_interp = np.interp(self.om_probe, om_probe_zero, np.real(opt_probe)) + \
-                           1j * np.interp(self.om_probe, om_probe_zero, np.imag(opt_probe))
-        
+        opt_probe_interp = (np.interp(self.om_probe, om_probe_zero, np.real(opt_probe),left=0.0,right=0.0) 
+                            + 1j * np.interp(self.om_probe, om_probe_zero, np.imag(opt_probe),left=0.0,right=0.0))
+
         self.sp_probe_inferred_complex = opt_probe_interp
-        self.sp_probe_inferred = np.abs(opt_probe_interp)
-        self.signal_sb_FT_zero_fit = z_fit_zero
         
         print("Inferred probe field from discrete L-BFGS completed.")
 
@@ -501,34 +500,31 @@ class RK_experiment:
 
         true_power = np.sum(np.abs(self.sp_probe)**2)
         fit_power = np.sum(np.abs(self.sp_probe_inferred_complex)**2)
-        self.sp_probe_inferred_complex = self.sp_probe_inferred_complex * np.sqrt(true_power/fit_power)
 
-        probe_energy = self.om_probe*hbar
         true_mag = np.abs(self.sp_probe)
-        fit_mag = np.abs(self.sp_probe_inferred_complex)
+        fit_mag = np.abs(self.sp_probe_inferred_complex * np.sqrt(true_power/fit_power))
         
         # Calculate the relative global phase difference using maximum amplitude point
         idx_max = np.argmax(true_mag)
         phase_offset = np.angle(self.sp_probe[idx_max]) - np.angle(self.sp_probe_inferred_complex[idx_max])
-        self.sp_probe_inferred_complex = self.sp_probe_inferred_complex * np.exp(1j * phase_offset)
 
         true_phase = np.angle(self.sp_probe)
-        fit_phase = np.angle(self.sp_probe_inferred_complex)
+        fit_phase = np.angle(self.sp_probe_inferred_complex * np.exp(1j * phase_offset))
         true_phase_mask = true_mag >= 0.05 * np.max(true_mag)
         fit_phase_mask = fit_mag >= 0.05 * np.max(fit_mag)
         true_phase_plot = np.where(true_phase_mask, true_phase, np.nan)
         fit_phase_plot = np.where(fit_phase_mask, fit_phase, np.nan)
 
-        line_true_amp, = ax_amp.plot(probe_energy, true_mag, label='True probe |mag|', linewidth=1.2)
-        line_fit_amp, = ax_amp.plot(probe_energy, fit_mag, '--', label='Inferred probe |mag|', linewidth=1.2)
+        line_true_amp, = ax_amp.plot(self.om_probe*hbar, true_mag, label='True probe |mag|', linewidth=1.2)
+        line_fit_amp, = ax_amp.plot(self.om_probe*hbar, fit_mag, '--', label='Inferred probe |mag|', linewidth=1.2)
         ax_amp.set_xlabel('Energy [eV]')
         ax_amp.set_ylabel('Amplitude [arb. u.]')
         ax_amp.set_title('Probe spectrum: true vs inferred')
         ax_amp.grid(True, alpha=0.3)
         ax_amp.set_xlim([0.7,2.5])
 
-        line_true_phase, = ax_phase.plot(probe_energy, true_phase_plot, label='True phase', linewidth=0.9)
-        line_fit_phase, = ax_phase.plot(probe_energy, fit_phase_plot, '--', label='Inferred phase', linewidth=0.9)
+        line_true_phase, = ax_phase.plot(self.om_probe*hbar, true_phase_plot, label='True phase', linewidth=0.9)
+        line_fit_phase, = ax_phase.plot(self.om_probe*hbar, fit_phase_plot, '--', label='Inferred phase', linewidth=0.9)
         ax_phase.set_ylabel('Phase [rad]')
         ax_phase.set_ylim([-np.pi, np.pi])
         ax_phase.set_yticks([-np.pi, -np.pi/2, 0.0, np.pi/2, np.pi])
@@ -537,7 +533,8 @@ class RK_experiment:
         labels = [line.get_label() for line in lines]
         ax_amp.legend(lines, labels, loc='best')
 
-        res_val = np.sum(np.abs(self.sp_probe - self.sp_probe_inferred_complex)**2) / np.sum(np.abs(self.sp_probe)**2)
+        res_val = np.sum(np.abs(self.sp_probe - fit_mag*np.exp(1j*fit_phase))**2) / np.sum(np.abs(self.sp_probe)**2)
+        self.probe_reconstruction_res = float(res_val)
 
         ax_amp.text(0.02, 0.98, f"RES = {res_val:.4f}", transform=ax_amp.transAxes,
         fontsize=10, verticalalignment='top', horizontalalignment='left',
@@ -548,90 +545,312 @@ class RK_experiment:
         plt.savefig('single_output_temp/pipeline_diag/probe_spectrum_fit.png', dpi=300)
         plt.close(fig)
 
-if __name__ == "__main__":
+    def _apply_correction(self,sp,dzeta):
+        ref_phase = np.exp(-1j*np.angle(np.interp(self.om_ref,self.OM_T[:,0],sp[:,0])))
+        probe_modulation = ref_phase * sp / np.maximum(self.OM_T,0.01)
 
-    E_lo = 24.5
-    E_hi = 28.0
-    T_reach = 150
-    E_res = 0.01    
-    N_T = 501
-    p_E = 4  # N_E upsampling integer
-    alpha = 10000
-    b = 1
+        where_off = np.abs(probe_modulation) < dzeta * np.max(np.abs(probe_modulation))
+        probe_modulation[where_off] = dzeta
 
-    sideband_lo = 25.5
-    sideband_hi = 28.0
-    harmq_lo = 24.5
-    harmq_hi = 25.5
+        signal_sb_FT_corrected = self.signal_sb_FT / probe_modulation
+        signal_sb_FT_corrected[where_off] = 0
 
-    if_coherent = True
+        sigma = self.sigma / np.abs(probe_modulation)
+        sigma[where_off] = 0
 
-    # Define pulses
+        x_mask = (self.E[0, :] > self.x_lo) & (self.E[0, :] < self.x_hi)
+        y_mask = np.abs(probe_modulation[:,0]) > dzeta
 
-    A_probe = 0.6
-    a_probes = [1.0,0.1,0.15]
-    om_probes = [1.55/hbar,1.46/hbar,1.58/hbar]
-    s_probes = [0.10/hbar,0.02/hbar,0.04/hbar]
+        if self.ifWide:
+            signal_sb_FT_corrected = median_filter(np.real(signal_sb_FT_corrected),size=(3,3)) + 1j*median_filter(np.imag(signal_sb_FT_corrected),size=(3,3))  # WIDE PROBE VARIANT
 
-    A_probe = 0.6
-    a_probes = [1.0,0.2,0.3]
-    om_probes = [1.55/hbar,1.46/hbar,1.59/hbar]
-    s_probes = [0.10/hbar,0.02/hbar,0.04/hbar]
+        E_rho = self.E[np.ix_(y_mask, x_mask)]
+        OM_T_rho = self.OM_T[np.ix_(y_mask, x_mask)]
+        sigma_rho = sigma[np.ix_(y_mask, x_mask)]
+        sigma_rho = np.abs(sigma_rho).astype(float)
+        signal_sb_FT_corrected_rho = signal_sb_FT_corrected[np.ix_(y_mask, x_mask)]
+        return signal_sb_FT_corrected, signal_sb_FT_corrected_rho, sigma, sigma_rho, E_rho, OM_T_rho
 
-    A_probe = 0.6
-    a_probes = [1.0,0.2,0.2]
-    om_probes = [1.55/hbar,1.20/hbar,2.00/hbar]
-    s_probes = [0.15/hbar,0.04/hbar,0.07/hbar]
-    probe_phase = 1.0
-    probe_phase_grad = 1.0
-    probe_phase_chirp = 1.0
+    def probe_sp_correct(self):
 
-    A_probe = 0.6
-    a_probes = [1.0,0.3]
-    om_probes = [1.55/hbar,1.66/hbar]
-    s_probes = [0.10/hbar,0.05/hbar]
-    probe_phase = 0.0
-    probe_phase_grad = 2.5
-    probe_phase_chirp = 2.5
+        dzeta = 0.15 if self.ifWide else 0.15
 
-    # A_probe = 0.6
-    # a_probes = [1.0]
-    # om_probes = [1.55/hbar]
-    # s_probes = [0.08/hbar]
+        sp_true = rk.sp_tot(self.probes,self.OM_T)
 
-    # A_probe = 0.6  # WIDE PROBE VARIANT
-    # a_probes = [1.0]
-    # om_probes = [1.55/hbar]
-    # s_probes = [0.18/hbar]
+        sp_rec_col = (1+0j) * np.interp(self.OM_T[:,0], self.om_probe, np.real(self.sp_probe_inferred_complex), left=0.0, right=0.0)
+        sp_rec_col += 1j * np.interp(self.OM_T[:,0], self.om_probe, np.imag(self.sp_probe_inferred_complex), left=0.0, right=0.0)
+        sp_rec = np.repeat(sp_rec_col[:, np.newaxis], self.OM_T.shape[1], axis=1)
 
-    A_ref = 1.0
-    om_ref = 1.50/hbar
-    s_ref = 0.025/hbar
+        self.rhodata, self.rhodata_roi, self.rhosigma, self.rhosigma_roi, self.E_roi, self.OM_T_roi = self._apply_correction(sp_true,dzeta)
 
-    # A_ref = 1.0  # WIDE PROBE VARIANT
-    # om_ref = 1.55/hbar
-    # s_ref = 0.025/hbar
+        rk.plot_mat(self.rhosigma_roi, extent=[self.E_roi[0,0]-self.om_ref*hbar,self.E_roi[0,-1]-self.om_ref*hbar,self.OM_T_roi[1,0]*hbar,self.OM_T_roi[-1,0]*hbar], cmap='plasma',
+                 saveloc='single_output_temp/rhos/sigmas.png', xlabel='Kinetic energy $E_f$ (eV)', ylabel='Indirect energy $\\hbar \\omega_\\tau$ (eV)',
+                 title='$\\sigma(E_f,\\hbar \\omega_\\tau )$', show=False, mode='abs')
 
-    # Create experiment instance
-    experiment = RK_experiment(E_lo=E_lo,E_hi=E_hi,T_reach=T_reach,E_res=E_res,N_T=N_T,p_E=p_E,alpha=alpha,b=b,
-                            sb_lo=sideband_lo,sb_hi=sideband_hi,harmq_lo=harmq_lo,harmq_hi=harmq_hi,if_coherent=if_coherent,
-                            A_ref=A_ref,om_ref=om_ref,s_ref=s_ref)
+        rk.plot_mat(self.rhodata_roi - 1e-3, extent=[self.E_roi[0,0]-self.om_ref*hbar,self.E_roi[0,-1]-self.om_ref*hbar,self.OM_T_roi[1,0]*hbar,self.OM_T_roi[-1,0]*hbar], cmap='plasma',
+                 saveloc='single_output_temp/rhos/rho_unproj.png', xlabel='Kinetic energy $E_f$ (eV)', ylabel='Indirect energy $\\hbar \\omega_\\tau$ (eV)',
+                 title='$\\tilde S_{corr}(E_f,\\omega_\\tau)$', show=False, square=True)
 
-    experiment.ifWF = False
-    experiment.ifWide = False
-    experiment.n_probe_peaks = 2#len(a_probes)
+        self.rhodata_rec, self.rhodata_roi_rec, self.rhosigma_rec, self.rhosigma_roi_rec, self.E_roi_rec, self.OM_T_roi_rec = self._apply_correction(sp_rec,dzeta)
 
-    experiment.define_pulses(
-        A_probe,
-        a_probes,
-        om_probes,
-        s_probes,
-        probe_phase=probe_phase,
-        probe_phase_grad=probe_phase_grad,
-        probe_phase_chirp=probe_phase_chirp,
-    )
-    experiment.define_model()
-    experiment.generate_signal()
-    experiment.process_and_detrend()
-    experiment.kb_correct()
-    experiment.probe_reconstruct()
+        rk.plot_mat(self.rhosigma_roi_rec, extent=[self.E_roi_rec[0,0]-self.om_ref*hbar,self.E_roi_rec[0,-1]-self.om_ref*hbar,self.OM_T_roi_rec[1,0]*hbar,self.OM_T_roi_rec[-1,0]*hbar], cmap='plasma',
+                 saveloc='single_output_temp/rhos/sigmas_rec.png', xlabel='Kinetic energy $E_f$ (eV)', ylabel='Indirect energy $\\hbar \\omega_\\tau$ (eV)',
+                 title='$\\sigma(E_f,\\hbar \\omega_\\tau )$', show=False, mode='abs')
+
+        rk.plot_mat(self.rhodata_roi_rec - 1e-3, extent=[self.E_roi_rec[0,0]-self.om_ref*hbar,self.E_roi_rec[0,-1]-self.om_ref*hbar,self.OM_T_roi_rec[1,0]*hbar,self.OM_T_roi_rec[-1,0]*hbar], cmap='plasma',
+                 saveloc='single_output_temp/rhos/rho_unproj_rec.png', xlabel='Kinetic energy $E_f$ (eV)', ylabel='Indirect energy $\\hbar \\omega_\\tau$ (eV)',
+                 title='$\\tilde S_{corr}(E_f,\\omega_\\tau)$', show=False, square=True)
+
+        return
+
+
+    # @staticmethod
+    # def _interp_complex(x, x_grid, y_complex):
+    #     return np.interp(x, x_grid, np.real(y_complex), left=0.0, right=0.0) + 1j * np.interp(
+    #         x, x_grid, np.imag(y_complex), left=0.0, right=0.0
+    #     )
+
+    # def _apply_probe_modulation_correction(self, probe_modulation, dzeta):
+    #     mod_abs = np.abs(probe_modulation)
+    #     where_off = mod_abs < dzeta
+
+    #     safe_mod = probe_modulation.copy()
+    #     safe_mod[where_off] = dzeta
+
+    #     sig_corr = self.signal_sb_FT / safe_mod
+    #     sig_corr[where_off] = 0
+
+    #     sigma_corr = self.sigma / np.maximum(mod_abs, dzeta)
+    #     sigma_corr[where_off] = 0
+
+    #     return sig_corr, sigma_corr
+
+    # def probe_sp_correct(self):
+
+    #     probe_mod_true = rk.sp_tot(self.probes, self.OM_T) / np.maximum(self.OM_T, 0.01)
+    #     probe_mod_inferred = self._interp_complex(self.OM_T, self.om_probe, self.sp_probe_inferred_complex) / np.maximum(self.OM_T, 0.01)
+
+    #     if self.ifWide:
+    #         dzeta_true = 0.1 * np.max(np.abs(probe_mod_true))
+    #         dzeta_inferred = 0.1 * np.max(np.abs(probe_mod_inferred))
+    #     else:
+    #         dzeta_true = 0.05 * np.max(np.abs(probe_mod_true))
+    #         dzeta_inferred = 0.05 * np.max(np.abs(probe_mod_inferred))
+
+    #     self.signal_sb_FT_corrected_true, self.sigma_true = self._apply_probe_modulation_correction(probe_mod_true, dzeta_true)
+    #     self.signal_sb_FT_corrected_inferred, self.sigma_inferred = self._apply_probe_modulation_correction(probe_mod_inferred, dzeta_inferred)
+
+    #     if self.ifWide:
+    #         self.signal_sb_FT_corrected_true = median_filter(np.real(self.signal_sb_FT_corrected_true), size=(3, 3)) + 1j * median_filter(np.imag(self.signal_sb_FT_corrected_true), size=(3, 3))
+    #         self.signal_sb_FT_corrected_inferred = median_filter(np.real(self.signal_sb_FT_corrected_inferred), size=(3, 3)) + 1j * median_filter(np.imag(self.signal_sb_FT_corrected_inferred), size=(3, 3))
+
+    #     # Use inferred-probe correction for downstream reconstruction and keep true-probe correction for diagnostics.
+    #     self.signal_sb_FT_corrected = self.signal_sb_FT_corrected_inferred
+    #     self.sigma_corrected = self.sigma_inferred
+
+    #     x_mask = (self.E[0, :] > self.x_lo) & (self.E[0, :] < self.x_hi)
+    #     y_mask_true = np.abs(probe_mod_true[:, 0]) > dzeta_true
+    #     y_mask_inferred = np.abs(probe_mod_inferred[:, 0]) > dzeta_inferred
+
+    #     self.E_rho_true = self.E[np.ix_(y_mask_true, x_mask)]
+    #     self.OM_T_rho_true = self.OM_T[np.ix_(y_mask_true, x_mask)]
+    #     self.sigma_rho_true = np.abs(self.sigma_true[np.ix_(y_mask_true, x_mask)]).astype(float)
+    #     self.signal_sb_FT_corrected_rho_true = self.signal_sb_FT_corrected_true[np.ix_(y_mask_true, x_mask)]
+
+    #     self.E_rho = self.E[np.ix_(y_mask_inferred, x_mask)]
+    #     self.OM_T_rho = self.OM_T[np.ix_(y_mask_inferred, x_mask)]
+    #     self.signal_sb_FT_corrected_rho = self.signal_sb_FT_corrected[np.ix_(y_mask_inferred, x_mask)]
+    #     self.sigma_rho = np.abs(self.sigma_corrected[np.ix_(y_mask_inferred, x_mask)]).astype(float)
+
+    #     rk.plot_mat(self.sigma_rho, extent=[self.E_rho[0,0]-self.om_ref*hbar,self.E_rho[0,-1]-self.om_ref*hbar,self.OM_T_rho[1,0]*hbar,self.OM_T_rho[-1,0]*hbar], cmap='plasma',
+    #              saveloc='single_output_temp/rhos/sigmas.png', xlabel='Kinetic energy $E_f$ (eV)', ylabel='Indirect energy $\\hbar \\omega_\\tau$ (eV)',
+    #              title='$\\sigma(E_f,\\hbar \\omega_\\tau )$', show=False, mode='abs')
+
+    #     rk.plot_mat(self.signal_sb_FT_corrected_rho - 1e-3, extent=[self.E_rho[0,0]-self.om_ref*hbar,self.E_rho[0,-1]-self.om_ref*hbar,self.OM_T_rho[1,0]*hbar,self.OM_T_rho[-1,0]*hbar], cmap='plasma',
+    #              saveloc='single_output_temp/rhos/rho_rec_unproj.png', xlabel='Kinetic energy $E_f$ (eV)', ylabel='Indirect energy $\\hbar \\omega_\\tau$ (eV)',
+    #              title='$\\tilde S_{corr}(E_f,\\omega_\\tau)$ using inferred probe', show=False, square=True)
+
+    #     rk.plot_mat(self.signal_sb_FT_corrected_rho_true - 1e-3, extent=[self.E_rho_true[0,0]-self.om_ref*hbar,self.E_rho_true[0,-1]-self.om_ref*hbar,self.OM_T_rho_true[1,0]*hbar,self.OM_T_rho_true[-1,0]*hbar], cmap='plasma',
+    #              saveloc='single_output_temp/rhos/rho_rec_unproj_true_probe.png', xlabel='Kinetic energy $E_f$ (eV)', ylabel='Indirect energy $\\hbar \\omega_\\tau$ (eV)',
+    #              title='$\\tilde S_{corr}(E_f,\\omega_\\tau)$ using true probe', show=False, square=True)
+
+    #     corr_delta = self.signal_sb_FT_corrected_true - self.signal_sb_FT_corrected_inferred
+    #     corr_rel = np.sum(np.abs(corr_delta)) / np.maximum(np.sum(np.abs(self.signal_sb_FT_corrected_true)), 1e-12)
+    #     self.probe_correction_rel_res = float(corr_rel)
+
+    #     rk.plot_mat(np.abs(corr_delta) / np.maximum(np.max(np.abs(self.signal_sb_FT_corrected_true)), 1e-12),
+    #              extent=[self.E_lo,self.E_hi,hbar*self.OM_T[0,0],hbar*self.OM_T[-1,0]],
+    #              saveloc='single_output_temp/rhos/rho_rec_unproj_true_vs_inferred_diff.png',
+    #              xlabel='Kinetic energy $E_f$ (eV)', ylabel='Indirect energy $\\hbar \\omega_\\tau$ (eV)',
+    #              title='Relative difference between true and inferred probe corrections',
+    #              show=False, mode='abs', caption='RES=%.4f'%self.probe_correction_rel_res)
+
+    def _run_density_branch(self, branch_tag, signal_corrected, sigma_corrected, signal_roi, sigma_roi, E_rho, OM_T_rho):
+        E1 = E_rho - OM_T_rho*hbar + self.om_ref*hbar - self.om_ref*hbar
+        E2 = E_rho - self.om_ref*hbar
+
+        N_NEW = 100
+        rho_raw, _, _, _, E1interp, E2interp = rk.resample(
+            signal_corrected, self.rho_hi, self.rho_lo, self.om_ref, self.E, self.OM_T, N_NEW)
+        rho_raw_sigma, _, _, _, E1interp, E2interp = rk.resample(
+            sigma_corrected, self.rho_hi, self.rho_lo, self.om_ref, self.E, self.OM_T, N_NEW)
+
+        ideal_rho = self.rho_f(E1interp + self.om_ref*hbar, E2interp + self.om_ref*hbar)
+        ideal_rho = ideal_rho/np.trace(ideal_rho)
+
+        raw_trace = np.trace(rho_raw)
+        rho_raw = rho_raw/raw_trace
+        rho_raw_sigma = rho_raw_sigma/raw_trace
+
+        rk.plot_mat(rho_raw - 1e-4, extent=[self.rho_lo,self.rho_hi,self.rho_lo,self.rho_hi], cmap='plasma',
+                 saveloc=f'single_output_temp/rhos/rho_raw_{branch_tag}', xlabel='Energy $\\varepsilon_2$ [eV]', ylabel='Energy $\\varepsilon_1$ [eV]',
+                 title=f'$\\tilde S_{{corr}}(\\varepsilon_2,\\varepsilon_1)$ [{branch_tag}]', show=False, square=True)
+
+        rk.plot_mat(rho_raw_sigma, extent=[self.rho_lo,self.rho_hi,self.rho_lo,self.rho_hi], cmap='plasma',
+                 saveloc=f'single_output_temp/rhos/rho_raw_sigma_{branch_tag}', xlabel='Energy $\\varepsilon_2$ [eV]', ylabel='Energy $\\varepsilon_1$ [eV]',
+                 title=f'$\\sigma (\\varepsilon_2,\\varepsilon_1)$ [{branch_tag}]', show=False, mode='abs')
+
+        rk.plot_mat(ideal_rho - 1e-4, extent=[self.rho_lo,self.rho_hi,self.rho_lo,self.rho_hi], cmap='plasma',
+                 saveloc=f'single_output_temp/rhos/rho_ideal_{branch_tag}.png', xlabel='Energy $\\varepsilon_2$ [eV]', ylabel='Energy $\\varepsilon_1$ [eV]',
+                 title=f'Initial photoelectron density matrix [{branch_tag}]', show=False, square=True)
+
+        inferred_params = None
+        if self.ifWide:
+            inferred_rho = rk.project_to_density_matrix(rho_raw,4)
+        else:
+            selected_indices = sigma_roi.flatten() > 0
+
+            amps_hat, mus_hat, sigmas_hat, betas_hat, taus_hat, lambdas_hat, gamma_hat, eta_hat = Bayesian_MCMC(
+                E1.flatten()[selected_indices],
+                E2.flatten()[selected_indices],
+                signal_roi.flatten()[selected_indices],
+                sigma_roi.flatten()[selected_indices],
+                n_peaks=2
+            )
+
+            inferred_params = (amps_hat, mus_hat, sigmas_hat, betas_hat, taus_hat, lambdas_hat, gamma_hat, eta_hat)
+
+            def rho_inferred(e1,e2):
+                return rho_model(e1,e2,amps_hat,mus_hat,sigmas_hat,betas_hat,taus_hat,lambdas_hat,gamma_hat,eta_hat)
+
+            inferred_rho = rho_inferred(E1interp, E2interp)
+            inferred_rho = inferred_rho/np.trace(inferred_rho)
+
+            posterior_src = 'single_output_temp/MCMCrho/mcmc_posterior.png'
+            posterior_dst = f'single_output_temp/MCMCrho/mcmc_posterior_{branch_tag}.png'
+            if os.path.exists(posterior_src):
+                shutil.copyfile(posterior_src, posterior_dst)
+
+        fid0 = rk.fidelity(ideal_rho, inferred_rho)
+
+        rk.plot_mat(inferred_rho - 1e-4, extent=[self.rho_lo,self.rho_hi,self.rho_lo,self.rho_hi], cmap='plasma',
+                saveloc=f'single_output_temp/rhos/rho_inferred_{branch_tag}.png', xlabel='Energy $\\varepsilon_2$ [eV]', ylabel='Energy $\\varepsilon_1$ [eV]',
+                title=f'Inferred density matrix [{branch_tag}]', show=False, caption='F=%.3f'%fid0, square=True)
+
+        rk.plot_mat((ideal_rho - inferred_rho) / np.maximum(np.max(np.abs(ideal_rho)), 1e-12), extent=[self.rho_lo,self.rho_hi,self.rho_lo,self.rho_hi], cmap='plasma',
+                saveloc=f'single_output_temp/rhos/rho_diff_{branch_tag}.png', xlabel='Energy $\\varepsilon_2$ [eV]', ylabel='Energy $\\varepsilon_1$ [eV]',
+                title=f'$(\\rho_0 - \\rho_{{\\text{{inferred}}}}) / \\text{{max}}(|\\rho_0|)$ [{branch_tag}]', show=False, square=True)
+
+        return {
+            'ideal_rho': ideal_rho,
+            'rho_raw': rho_raw,
+            'rho_raw_sigma': rho_raw_sigma,
+            'inferred_rho': inferred_rho,
+            'fidelity': float(fid0),
+            'inferred_params': inferred_params,
+        }
+
+    def mcmc_fit(self):
+        true_branch = self._run_density_branch(
+            'true_probe',
+            self.signal_sb_FT_corrected_true,
+            self.sigma_true,
+            self.signal_sb_FT_corrected_rho_true,
+            self.sigma_rho_true,
+            self.E_rho_true,
+            self.OM_T_rho_true,
+        )
+
+        # inferred_branch = self._run_density_branch(
+        #     'reconstructed_probe',
+        #     self.signal_sb_FT_corrected,
+        #     self.sigma_corrected,
+        #     self.signal_sb_FT_corrected_rho,
+        #     self.sigma_rho,
+        #     self.E_rho,
+        #     self.OM_T_rho,
+        # )
+
+        # rho_raw_rel_diff = np.sum(np.abs(true_branch['rho_raw'] - inferred_branch['rho_raw'])) / np.maximum(np.sum(np.abs(true_branch['rho_raw'])), 1e-12)
+        # rho_inferred_rel_diff = np.sum(np.abs(true_branch['inferred_rho'] - inferred_branch['inferred_rho'])) / np.maximum(np.sum(np.abs(true_branch['inferred_rho'])), 1e-12)
+
+        # rk.plot_mat((true_branch['inferred_rho'] - inferred_branch['inferred_rho']) / np.maximum(np.max(np.abs(true_branch['ideal_rho'])), 1e-12),
+        #         extent=[self.rho_lo,self.rho_hi,self.rho_lo,self.rho_hi], cmap='plasma',
+        #         saveloc='single_output_temp/rhos/rho_inferred_true_vs_reconstructed_diff.png',
+        #         xlabel='Energy $\\varepsilon_2$ [eV]', ylabel='Energy $\\varepsilon_1$ [eV]',
+        #         title='$(\\rho_{\\text{true probe}}-\\rho_{\\text{reconstructed probe}}) / \\text{max}(|\\rho_0|)$',
+        #         show=False, square=True, caption='RES=%.4f'%rho_inferred_rel_diff)
+
+        # rk.plot_mat((true_branch['rho_raw'] - inferred_branch['rho_raw']) / np.maximum(np.max(np.abs(true_branch['rho_raw'])), 1e-12),
+        #         extent=[self.rho_lo,self.rho_hi,self.rho_lo,self.rho_hi], cmap='plasma',
+        #         saveloc='single_output_temp/rhos/rho_raw_true_vs_reconstructed_diff.png',
+        #         xlabel='Energy $\\varepsilon_2$ [eV]', ylabel='Energy $\\varepsilon_1$ [eV]',
+        #         title='$(\\tilde S_{corr}^{\\text{true}}-\\tilde S_{corr}^{\\text{reconstructed}})/\\text{max}$',
+        #         show=False, square=True, caption='RES=%.4f'%rho_raw_rel_diff)
+
+
+
+
+
+
+
+        # comparison_metrics = {
+        #     'probe_reconstruction_res': float(getattr(self, 'probe_reconstruction_res', np.nan)),
+        #     'probe_correction_rel_res': float(getattr(self, 'probe_correction_rel_res', np.nan)),
+        #     'fidelity_true_probe': float(true_branch['fidelity']),
+        #     'fidelity_reconstructed_probe': float(inferred_branch['fidelity']),
+        #     'fidelity_delta_true_minus_reconstructed': float(true_branch['fidelity'] - inferred_branch['fidelity']),
+        #     'rho_raw_rel_diff_true_vs_reconstructed': float(rho_raw_rel_diff),
+        #     'rho_inferred_rel_diff_true_vs_reconstructed': float(rho_inferred_rel_diff),
+        # }
+        # self.downstream_comparison_metrics = comparison_metrics
+
+        # with open('single_output_temp/rhos/downstream_comparison_metrics.txt', 'w', encoding='utf-8') as fout:
+        #     for key in sorted(comparison_metrics.keys()):
+        #         fout.write(f'{key}: {comparison_metrics[key]:.10e}\\n')
+
+        # # Preserve legacy outputs as reconstructed-probe branch defaults.
+        # rk.plot_mat(inferred_branch['rho_raw'] - 1e-4, extent=[self.rho_lo,self.rho_hi,self.rho_lo,self.rho_hi], cmap='plasma',
+        #          saveloc='single_output_temp/rhos/rho_raw', xlabel='Energy $\\varepsilon_2$ [eV]', ylabel='Energy $\\varepsilon_1$ [eV]',
+        #          title='$\\tilde S_{corr}(\\varepsilon_2,\\varepsilon_1)$', show=False, square=True)
+
+        # rk.plot_mat(inferred_branch['rho_raw_sigma'], extent=[self.rho_lo,self.rho_hi,self.rho_lo,self.rho_hi], cmap='plasma',
+        #          saveloc='single_output_temp/rhos/rho_raw_sigma', xlabel='Energy $\\varepsilon_2$ [eV]', ylabel='Energy $\\varepsilon_1$ [eV]',
+        #          title='$\\sigma (\\varepsilon_2,\\varepsilon_1)$', show=False, mode='abs')
+
+        # rk.plot_mat(inferred_branch['ideal_rho'] - 1e-4, extent=[self.rho_lo,self.rho_hi,self.rho_lo,self.rho_hi], cmap='plasma',
+        #          saveloc='single_output_temp/rhos/rho_ideal.png', xlabel='Energy $\\varepsilon_2$ [eV]', ylabel='Energy $\\varepsilon_1$ [eV]',
+        #          title='Initial photoelectron density matrix', show=False, square=True)
+
+        # rk.plot_mat(inferred_branch['inferred_rho'] - 1e-4, extent=[self.rho_lo,self.rho_hi,self.rho_lo,self.rho_hi], cmap='plasma',
+        #         saveloc='single_output_temp/rhos/rho_inferred.png', xlabel='Energy $\\varepsilon_2$ [eV]', ylabel='Energy $\\varepsilon_1$ [eV]',
+        #         title='Inferred density matrix', show=False, caption='F=%.3f'%inferred_branch['fidelity'], square=True)
+
+        # rk.plot_mat((inferred_branch['ideal_rho'] - inferred_branch['inferred_rho']) / np.maximum(np.max(np.abs(inferred_branch['ideal_rho'])), 1e-12), extent=[self.rho_lo,self.rho_hi,self.rho_lo,self.rho_hi], cmap='plasma',
+        #         saveloc='single_output_temp/rhos/rho_diff.png', xlabel='Energy $\\varepsilon_2$ [eV]', ylabel='Energy $\\varepsilon_1$ [eV]',
+        #         title='$(\\rho_0 - \\rho_{\\text{inferred}}) / \\text{max}(|\\rho_0|) $', show=False, square=True)
+
+        # self.fidelity = inferred_branch['fidelity']
+        # self.inferred_rho = inferred_branch['inferred_rho']
+        # if inferred_branch['inferred_params'] is not None:
+        #     self.inferred_params = inferred_branch['inferred_params']
+        # self.branch_true = true_branch
+        # self.branch_reconstructed = inferred_branch
+
+    def run_full_pipeline(self):
+        self.generate_signal()
+        self.process_and_detrend()
+        self.kb_correct()
+        self.probe_reconstruct()
+        self.probe_sp_correct()
+        self.mcmc_fit()

@@ -32,6 +32,7 @@ import matplotlib.pyplot as plt
 from scipy.signal import fftconvolve
 from scipy.ndimage import median_filter
 import rkraken as rk
+from MCMCrho import Bayesian_MCMC
 
 # Reduced Planck constant in eV*fs (approx CODATA): ħ = 6.582119569e-16 eV·s
 hbar = 6.582119569e-1
@@ -109,7 +110,7 @@ def plot_spectra(om_pr,om_x,sp_pr,sp_ref,sp_x):
     fig.suptitle('IR spectrum and photelectron signal', fontsize=20, weight='bold')
     
     plt.tight_layout()
-    plt.savefig('single_output/spectra/input_spectra.png', dpi=300)
+    plt.savefig('single_output_temp/spectra/input_spectra.png', dpi=300)
     plt.close()
 
     return
@@ -333,8 +334,8 @@ class RK_experiment:
         signal_clean, _, _, _ = rk.CFT(self.T_range, signal_ft0, use_window=False, zero_pad=0, inverse=True)
         signal_clean = np.abs(signal_clean)
 
-        rk.plot_mat(self.signal_ft0-1e-3,extent=[self.E_lo,self.E_hi,em_lo,em_hi],saveloc='single_output/pipeline_diag/model_ft.png')
-        rk.plot_mat(signal_clean-1e-6,extent=[self.E_lo,self.E_hi,-self.T_reach,self.T_reach],saveloc='single_output/pipeline_diag/model_sig.png')
+        rk.plot_mat(self.signal_ft0-1e-3,extent=[self.E_lo,self.E_hi,em_lo,em_hi],saveloc='single_output_temp/pipeline_diag/model_ft.png')
+        rk.plot_mat(signal_clean-1e-6,extent=[self.E_lo,self.E_hi,-self.T_reach,self.T_reach],saveloc='single_output_temp/pipeline_diag/model_sig.png')
 
         # if self.if_coherent:
         #     sp_xuv_E = rk.sp_tot(self.xuvs, self.E_up/hbar)
@@ -408,7 +409,7 @@ class RK_experiment:
         rk.plot_mat(self.signal, extent=[self.E_lo,self.E_hi,-self.T_reach,self.T_reach],
                 caption='Peak SB counts: %i\nN_T: %i\nN_E: %i\nT_res: %.2f fs\nE_res: %.3f eV'%(
                     self.peak_sb_counts,self.N_T,self.N_E,2*self.T_reach/self.N_T,self.E_res),
-                saveloc='single_output/pipeline_diag/measured_signal.png',xlabel='Kinetic energy $E_f$ (eV)',ylabel='Time delay $\\tau$ (fs)',mode='abs',title='Simulated noisy signal')
+                saveloc='single_output_temp/pipeline_diag/measured_signal.png',xlabel='Kinetic energy $E_f$ (eV)',ylabel='Time delay $\\tau$ (fs)',mode='abs',title='Simulated noisy signal')
 
     def process_and_detrend(self):
         
@@ -416,7 +417,7 @@ class RK_experiment:
         self.signal_sb_FT, self.OM_T, em_lo, em_hi = rk.CFT(self.T_range, self.signal_sb, use_window=False, zero_pad=self.zero_pad)
 
         rk.plot_mat(self.signal_FT, extent=[self.E_lo,self.E_hi,em_lo,em_hi],
-                saveloc='single_output/pipeline_diag/signal_FT.png', show=False)
+                saveloc='single_output_temp/pipeline_diag/signal_FT.png', show=False)
         
         ### ROI SLICE FRACTS
 
@@ -436,7 +437,7 @@ class RK_experiment:
         signal_sb_FT_ROI, em_axis_mid, i0, i1, ef_axis_mid, e0, e1 = rk.extract_midslice(self.signal_sb_FT, self.OMt_slice_fracts, hbar*self.OM_T[:,0], self.Ef_slice_fracts, self.E)
         
         rk.plot_mat(signal_sb_FT_ROI, extent=[self.x_lo,self.x_hi,self.y_lo*hbar,self.y_hi*hbar],
-                saveloc='single_output/pipeline_diag/signal_FT_sb_ROI.png', xlabel='Kinetic energy $E_f$ (eV)',ylabel='Indirect energy $\\hbar \\omega_\\tau$ (eV)', show=False,title='Sideband region of interest before KB correction', 
+                saveloc='single_output_temp/pipeline_diag/signal_FT_sb_ROI.png', xlabel='Kinetic energy $E_f$ (eV)',ylabel='Indirect energy $\\hbar \\omega_\\tau$ (eV)', show=False,title='Sideband region of interest before KB correction', 
                 caption=f'RES = {np.sum(np.abs(self.signal_ft0_ROI - signal_sb_FT_ROI)) / np.sum(np.abs(self.signal_ft0_ROI)):.4f}')
 
     def kb_correct(self):
@@ -459,18 +460,18 @@ class RK_experiment:
 
         signal_sb_FT_ROI, em_axis_mid, i0, i1, ef_axis_mid, e0, e1 = rk.extract_midslice(self.signal_sb_FT, self.OMt_slice_fracts, hbar*self.OM_T[:,0], self.Ef_slice_fracts, self.E)
         rk.plot_mat(signal_sb_FT_ROI - 1e-5, extent=[self.x_lo,self.x_hi,self.y_lo*hbar,self.y_hi*hbar],
-                saveloc='single_output/pipeline_diag/signal_FT_sb_KB_corr.png', xlabel='Kinetic energy $E_f$ (eV)',ylabel='Indirect energy $\\hbar \\omega_\\tau$ (eV)', show=False,title='Sideband region of interest after KB correction', 
+                saveloc='single_output_temp/pipeline_diag/signal_FT_sb_KB_corr.png', xlabel='Kinetic energy $E_f$ (eV)',ylabel='Indirect energy $\\hbar \\omega_\\tau$ (eV)', show=False,title='Sideband region of interest after KB correction', 
                 caption=f'RES = {np.sum(np.abs(self.signal_ft0_ROI - signal_sb_FT_ROI)) / np.sum(np.abs(self.signal_ft0_ROI)):.4f}')
 
         # self.signal_sb_FT = median_filter(np.real(self.signal_sb_FT),size=(3,3)) + 1j*median_filter(np.imag(self.signal_sb_FT),size=(3,3))
 
         # signal_sb_FT_ROI, em_axis_mid, i0, i1, ef_axis_mid, e0, e1 = rk.extract_midslice(self.signal_sb_FT, self.OMt_slice_fracts, hbar*self.OM_T[:,0], self.Ef_slice_fracts, self.E)
         # rk.plot_mat(signal_sb_FT_ROI - 1e-5, extent=[self.x_lo,self.x_hi,self.y_lo*hbar,self.y_hi*hbar],
-        #         saveloc='single_output/pipeline_diag/signal_FT_sb_KB_corr_median.png', xlabel='Kinetic energy $E_f$ (eV)',ylabel='Indirect energy $\\hbar \\omega_\\tau$ (eV)', show=False,title='FT of the sideband signal', 
+        #         saveloc='single_output_temp/pipeline_diag/signal_FT_sb_KB_corr_median.png', xlabel='Kinetic energy $E_f$ (eV)',ylabel='Indirect energy $\\hbar \\omega_\\tau$ (eV)', show=False,title='FT of the sideband signal', 
         #         caption=f'RES = {np.sum(np.abs(self.signal_ft0_ROI - signal_sb_FT_ROI)) / np.sum(np.abs(self.signal_ft0_ROI)):.4f}')
 
         rk.plot_mat(np.abs(self.signal_ft0_ROI -  signal_sb_FT_ROI ) / np.max(np.abs(self.signal_ft0_ROI)), extent=[self.E_lo,self.E_hi,hbar*self.OM_T[0,0],hbar*self.OM_T[-1,0]],
-                saveloc='single_output/pipeline_diag/signal_FT_sb_KB_corr_diff.png', xlabel='Kinetic energy $E_f$ (eV)',ylabel='Indirect energy $\\hbar \\omega_\\tau$ (eV)', show=False,title='FT of the sideband signal', 
+                saveloc='single_output_temp/pipeline_diag/signal_FT_sb_KB_corr_diff.png', xlabel='Kinetic energy $E_f$ (eV)',ylabel='Indirect energy $\\hbar \\omega_\\tau$ (eV)', show=False,title='FT of the sideband signal', 
                 caption=f'RES = {np.sum(np.abs(self.signal_ft0_ROI - signal_sb_FT_ROI)) / np.sum(np.abs(self.signal_ft0_ROI)):.4f}')
 
     def probe_sp_correct(self):
@@ -505,11 +506,11 @@ class RK_experiment:
         self.sigma_rho = np.abs(self.sigma_rho).astype(float)
 
         rk.plot_mat(self.sigma_rho, extent=[self.E_rho[0,0]-self.om_ref*hbar,self.E_rho[0,-1]-self.om_ref*hbar,self.OM_T_rho[1,0]*hbar,self.OM_T_rho[-1,0]*hbar], cmap='plasma',
-                 saveloc='single_output/rhos/sigmas.png', xlabel='Kinetic energy $E_f$ (eV)', ylabel='Indirect energy $\\hbar \\omega_\\tau$ (eV)',
+                 saveloc='single_output_temp/rhos/sigmas.png', xlabel='Kinetic energy $E_f$ (eV)', ylabel='Indirect energy $\\hbar \\omega_\\tau$ (eV)',
                  title='$\\sigma(E_f,\\hbar \\omega_\\tau )$', show=False, mode='abs')
 
         rk.plot_mat(self.signal_sb_FT_corrected_rho - 1e-3, extent=[self.E_rho[0,0]-self.om_ref*hbar,self.E_rho[0,-1]-self.om_ref*hbar,self.OM_T_rho[1,0]*hbar,self.OM_T_rho[-1,0]*hbar], cmap='plasma',
-                 saveloc='single_output/rhos/rho_rec_unproj.png', xlabel='Kinetic energy $E_f$ (eV)', ylabel='Indirect energy $\\hbar \\omega_\\tau$ (eV)',
+                 saveloc='single_output_temp/rhos/rho_rec_unproj.png', xlabel='Kinetic energy $E_f$ (eV)', ylabel='Indirect energy $\\hbar \\omega_\\tau$ (eV)',
                  title='$\\tilde S_{corr}(E_f,\\omega_\\tau)$', show=False, square=True)
 
         return
@@ -535,15 +536,15 @@ class RK_experiment:
         rho_raw_sigma = rho_raw_sigma/raw_trace
 
         rk.plot_mat(rho_raw - 1e-4, extent=[self.rho_lo,self.rho_hi,self.rho_lo,self.rho_hi], cmap='plasma',
-                 saveloc='single_output/rhos/rho_raw', xlabel='Energy $\\varepsilon_2$ [eV]', ylabel='Energy $\\varepsilon_1$ [eV]',
+                 saveloc='single_output_temp/rhos/rho_raw', xlabel='Energy $\\varepsilon_2$ [eV]', ylabel='Energy $\\varepsilon_1$ [eV]',
                  title='$\\tilde S_{corr}(\\varepsilon_2,\\varepsilon_1)$', show=False, square=True)
         
         rk.plot_mat(rho_raw_sigma, extent=[self.rho_lo,self.rho_hi,self.rho_lo,self.rho_hi], cmap='plasma',
-                 saveloc='single_output/rhos/rho_raw_sigma', xlabel='Energy $\\varepsilon_2$ [eV]', ylabel='Energy $\\varepsilon_1$ [eV]',
+                 saveloc='single_output_temp/rhos/rho_raw_sigma', xlabel='Energy $\\varepsilon_2$ [eV]', ylabel='Energy $\\varepsilon_1$ [eV]',
                  title='$\\sigma (\\varepsilon_2,\\varepsilon_1)$', show=False, mode='abs')
 
         rk.plot_mat(ideal_rho - 1e-4, extent=[self.rho_lo,self.rho_hi,self.rho_lo,self.rho_hi], cmap='plasma',
-                 saveloc='single_output/rhos/rho_ideal.png', xlabel='Energy $\\varepsilon_2$ [eV]', ylabel='Energy $\\varepsilon_1$ [eV]',
+                 saveloc='single_output_temp/rhos/rho_ideal.png', xlabel='Energy $\\varepsilon_2$ [eV]', ylabel='Energy $\\varepsilon_1$ [eV]',
                  title='Initial photoelectron density matrix', show=False, square=True)
         
         if self.ifWide:
@@ -551,17 +552,15 @@ class RK_experiment:
             fid0 = rk.fidelity(ideal_rho, inferred_rho)
 
             rk.plot_mat(inferred_rho - 1e-4, extent=[self.rho_lo,self.rho_hi,self.rho_lo,self.rho_hi], cmap='plasma',
-                    saveloc='single_output/rhos/rho_inferred.png', xlabel='Energy $\\varepsilon_2$ [eV]', ylabel='Energy $\\varepsilon_1$ [eV]',
+                    saveloc='single_output_temp/rhos/rho_inferred.png', xlabel='Energy $\\varepsilon_2$ [eV]', ylabel='Energy $\\varepsilon_1$ [eV]',
                     title='Inferred density matrix', show=False, caption='F=%.3f'%fid0, square=True)
 
             rk.plot_mat((ideal_rho - inferred_rho) / np.max(np.abs(ideal_rho)), extent=[self.rho_lo,self.rho_hi,self.rho_lo,self.rho_hi], cmap='plasma',
-                    saveloc='single_output/rhos/rho_diff.png', xlabel='Energy $\\varepsilon_2$ [eV]', ylabel='Energy $\\varepsilon_1$ [eV]',
+                    saveloc='single_output_temp/rhos/rho_diff.png', xlabel='Energy $\\varepsilon_2$ [eV]', ylabel='Energy $\\varepsilon_1$ [eV]',
                     title='$(\\rho_0 - \\rho_{\\text{inferred}}) / \\text{max}(|\\rho_0|) $', show=False, square=True)
             
         else:
             selected_indices = self.sigma_rho.flatten() > 0
-
-            from MCMCrho import Bayesian_MCMC
 
             amps_hat, mus_hat, sigmas_hat, betas_hat, taus_hat, lambdas_hat, gamma_hat, eta_hat = Bayesian_MCMC(E1.flatten()[selected_indices],E2.flatten()[selected_indices],
                         self.signal_sb_FT_corrected_rho.flatten()[selected_indices],self.sigma_rho.flatten()[selected_indices],n_peaks=2)
@@ -575,11 +574,11 @@ class RK_experiment:
             fid0 = rk.fidelity(ideal_rho, inferred_rho)
 
             rk.plot_mat(inferred_rho - 1e-4, extent=[self.rho_lo,self.rho_hi,self.rho_lo,self.rho_hi], cmap='plasma',
-                    saveloc='single_output/rhos/rho_inferred.png', xlabel='Energy $\\varepsilon_2$ [eV]', ylabel='Energy $\\varepsilon_1$ [eV]',
+                    saveloc='single_output_temp/rhos/rho_inferred.png', xlabel='Energy $\\varepsilon_2$ [eV]', ylabel='Energy $\\varepsilon_1$ [eV]',
                     title='Inferred density matrix', show=False, caption='F=%.3f'%fid0, square=True)
 
             rk.plot_mat((ideal_rho - inferred_rho) / np.max(np.abs(ideal_rho)), extent=[self.rho_lo,self.rho_hi,self.rho_lo,self.rho_hi], cmap='plasma',
-                    saveloc='single_output/rhos/rho_diff.png', xlabel='Energy $\\varepsilon_2$ [eV]', ylabel='Energy $\\varepsilon_1$ [eV]',
+                    saveloc='single_output_temp/rhos/rho_diff.png', xlabel='Energy $\\varepsilon_2$ [eV]', ylabel='Energy $\\varepsilon_1$ [eV]',
                     title='$(\\rho_0 - \\rho_{\\text{inferred}}) / \\text{max}(|\\rho_0|) $', show=False, square=True)
 
 if __name__ == "__main__":

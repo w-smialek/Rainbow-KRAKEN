@@ -142,8 +142,6 @@ def model(x, y, sigma_obs, z_obs=None, n_peaks=2):
         numpyro.sample('obs_imag', dist.Normal(z_imag_expected, sigma_eff), obs=jnp.imag(z_obs) if z_obs is not None else None)
 
 def Bayesian_MCMC(x_obs, y_obs, z_obs, sigma_obs, n_peaks=2):
-    print("Generating synthetic complex data...")
-    # Generate data with known parameters
     
     print("\nSetting up NUTS MCMC...")
     nuts_kernel = NUTS(model)
@@ -235,7 +233,7 @@ def Bayesian_MCMC(x_obs, y_obs, z_obs, sigma_obs, n_peaks=2):
 
     fig.suptitle('Posterior distributions of fitted parameters', fontsize=30, y=1.02, weight='bold')
     plt.tight_layout()
-    plt.savefig('single_output/MCMCrho/mcmc_posterior.png', dpi=400, bbox_inches='tight')
+    plt.savefig('single_output_temp/MCMCrho/mcmc_posterior.png', dpi=400, bbox_inches='tight')
     plt.close(fig)
 
     # Observed data diagnostics mapped to a full grid; unobserved entries stay at zero.

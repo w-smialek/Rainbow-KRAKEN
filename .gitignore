@@ -1,3 +1,3 @@
 # Ignore everything inside the single_output directory
-# /single_output/
-# Keep the directory itself by tracking a .gitkeep file (create it if needed)
+/__pycache__/
+/single_output_temp/
