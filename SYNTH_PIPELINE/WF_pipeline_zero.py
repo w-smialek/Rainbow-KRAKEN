@@ -427,7 +427,7 @@ class RK_experiment:
                 saveloc='single_output_temp/pipeline_diag/signal_FT_sb_KB_corr.png', xlabel='Kinetic energy $E_f$ (eV)',ylabel='Indirect energy $\\hbar \\omega_\\tau$ (eV)', show=False,title='Sideband region of interest after KB correction', 
                 caption=f'RES = {np.sum(np.abs(self.signal_ft0_ROI - signal_sb_FT_ROI)) / np.sum(np.abs(self.signal_ft0_ROI)):.4f}')
 
-        self.signal_sb_FT = median_filter(np.real(self.signal_sb_FT),size=(3,3)) + 1j*median_filter(np.imag(self.signal_sb_FT),size=(3,3))
+        # self.signal_sb_FT = median_filter(np.real(self.signal_sb_FT),size=(3,3)) + 1j*median_filter(np.imag(self.signal_sb_FT),size=(3,3))
 
         rk.plot_mat(np.abs(self.signal_ft0_ROI -  signal_sb_FT_ROI ) / np.max(np.abs(self.signal_ft0_ROI)), extent=[self.E_lo,self.E_hi,hbar*self.OM_T[0,0],hbar*self.OM_T[-1,0]],
                 saveloc='single_output_temp/pipeline_diag/signal_FT_sb_KB_corr_diff.png', xlabel='Kinetic energy $E_f$ (eV)',ylabel='Indirect energy $\\hbar \\omega_\\tau$ (eV)', show=False,title='FT of the sideband signal', 
@@ -439,10 +439,10 @@ class RK_experiment:
             raise RuntimeError('define_model() must be called before probe_reconstruct() to set fixed rho parameters.')
 
         sig_power = np.sum(np.abs(self.signal_sb_FT),axis=1)
-        dzeta  = 0.02 * np.max(sig_power)
+        dzeta  = 0.01 * np.max(sig_power)
 
         x_mask = (self.E[0, :] > self.x_lo) & (self.E[0, :] < self.x_hi)
-        y_mask =  (sig_power > dzeta) & (np.abs(self.OM_T*hbar)[:,0] < 0.5)
+        y_mask =  (sig_power > dzeta) & (np.abs(self.OM_T*hbar)[:,0] < 0.5) & (self.OM_T[:,0] > np.min(np.abs(self.OM_T[:,0])))
 
         self.E_zero = self.E[np.ix_(y_mask, x_mask)]
         self.OM_T_zero = self.OM_T[np.ix_(y_mask, x_mask)]
@@ -535,7 +535,7 @@ class RK_experiment:
                 tol=1e-6,
                 rng_seed=0,
                 lambda1=0.0,
-                lambda2=0.0
+                lambda2=0.0005
             )
             # Interpolate the optimized discrete vector to the full probe frequency grid if necessary
             opt_probe_interp = np.interp(self.om_probe, om_probe_zero, np.real(opt_probe)) + \
@@ -554,9 +554,6 @@ class RK_experiment:
         fit_power = np.sum(np.abs(self.sp_probe_inferred_complex)**2)
         self.sp_probe_inferred_complex = self.sp_probe_inferred_complex * np.sqrt(true_power/fit_power)
         
-        print(np.sum(np.abs(self.sp_probe)**2))
-        print(np.sum(np.abs(self.sp_probe_inferred_complex)**2))
-
         probe_energy = self.om_probe*hbar
         true_mag = np.abs(self.sp_probe)
         fit_mag = np.abs(self.sp_probe_inferred_complex)
@@ -573,16 +570,44 @@ class RK_experiment:
         true_phase_plot = np.where(true_phase_mask, true_phase, np.nan)
         fit_phase_plot = np.where(fit_phase_mask, fit_phase, np.nan)
 
-        line_true_amp, = ax_amp.plot(probe_energy, true_mag, label='True probe |mag|', linewidth=1.2)
-        line_fit_amp, = ax_amp.plot(probe_energy, fit_mag, '--', label='Inferred probe |mag|', linewidth=1.2)
+        line_true_amp, = ax_amp.plot(
+            probe_energy,
+            true_mag,
+            label='True probe |mag|',
+            linewidth=1.3,
+            linestyle='-',
+            color='tab:blue',
+        )
+        line_fit_amp, = ax_amp.plot(
+            probe_energy,
+            fit_mag,
+            label='Inferred probe |mag|',
+            linewidth=1.0,
+            linestyle='-',
+            color='tab:orange',
+        )
         ax_amp.set_xlabel('Energy [eV]')
         ax_amp.set_ylabel('Amplitude [arb. u.]')
         ax_amp.set_title('Probe spectrum: true vs inferred')
         ax_amp.grid(True, alpha=0.3)
         ax_amp.set_xlim([0.7,2.5])
 
-        line_true_phase, = ax_phase.plot(probe_energy, true_phase_plot, label='True phase', linewidth=0.9)
-        line_fit_phase, = ax_phase.plot(probe_energy, fit_phase_plot, '--', label='Inferred phase', linewidth=0.9)
+        line_true_phase, = ax_phase.plot(
+            probe_energy,
+            true_phase_plot,
+            label='True phase',
+            linewidth=1.0,
+            linestyle=(0, (1, 1)),
+            color='tab:blue',
+        )
+        line_fit_phase, = ax_phase.plot(
+            probe_energy,
+            fit_phase_plot,
+            label='Inferred phase',
+            linewidth=0.8,
+            linestyle=(0, (1, 1)),
+            color='tab:orange',
+        )
         ax_phase.set_ylabel('Phase [rad]')
         ax_phase.set_ylim([-np.pi, np.pi])
         ax_phase.set_yticks([-np.pi, -np.pi/2, 0.0, np.pi/2, np.pi])
@@ -592,7 +617,6 @@ class RK_experiment:
         ax_amp.legend(lines, labels, loc='best')
 
         res_val = np.sum(np.abs(self.sp_probe - self.sp_probe_inferred_complex)**2) / np.sum(np.abs(self.sp_probe)**2)
-        print(res_val)
         ax_amp.text(0.02, 0.98, f"RES = {res_val:.4f}", transform=ax_amp.transAxes,
         fontsize=10, verticalalignment='top', horizontalalignment='left',
         color='white', weight='bold',
@@ -664,9 +688,9 @@ if __name__ == "__main__":
     probe_phase_chirp = 1.0
 
     A_probe = 0.6
-    a_probes = [1.0,0.2]
-    om_probes = [1.55/hbar,1.58/hbar]
-    s_probes = [0.10/hbar,0.03/hbar]
+    a_probes = [0.4,0.3,0.3]
+    om_probes = [1.50/hbar,1.55/hbar,1.64/hbar]
+    s_probes = [0.03/hbar,0.03/hbar,0.03/hbar]
     probe_phase = 0.0
     probe_phase_grad = 2.5
     probe_phase_chirp = 2.5
