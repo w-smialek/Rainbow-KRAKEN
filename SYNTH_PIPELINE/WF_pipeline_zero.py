@@ -32,6 +32,7 @@ import matplotlib.pyplot as plt
 from scipy.signal import fftconvolve
 from scipy.ndimage import median_filter
 import rkraken1 as rk
+from matplotlib import patheffects as pe
 
 # Reduced Planck constant in eV*fs (approx CODATA): ħ = 6.582119569e-16 eV·s
 hbar = 6.582119569e-1
@@ -54,13 +55,49 @@ def plot_spectra(om_pr,om_x,sp_pr,sp_ref,sp_x):
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))
     
     # Left subplot: Probe and Reference spectra
-    ax1.plot(om_pr * hbar, sp_pr, label='Probe spectrum', linewidth=2)
-    ax1.plot(om_pr * hbar, sp_ref, label='Reference spectrum', linewidth=2)
+    probe_abs = np.abs(sp_pr)
+    ref_abs = np.abs(sp_ref)
+    line_probe_abs, = ax1.plot(om_pr * hbar, probe_abs, label='Probe |spectrum|', linewidth=2)
+    line_ref_abs, = ax1.plot(om_pr * hbar, ref_abs, label='Reference |spectrum|', linewidth=2)
+
+    # Overlay phase on a second y-axis; hide low-SNR regions below 5% of each peak.
+    ax1_phase = ax1.twinx()
+    probe_phase = np.angle(sp_pr)
+    ref_phase = np.angle(sp_ref)
+    probe_phase_mask = probe_abs >= 0.05 * np.max(probe_abs)
+    ref_phase_mask = ref_abs >= 0.05 * np.max(ref_abs)
+    probe_phase_plot = np.where(probe_phase_mask, probe_phase, np.nan)
+    ref_phase_plot = np.where(ref_phase_mask, ref_phase, np.nan)
+    line_probe_phase, = ax1_phase.plot(
+        om_pr * hbar,
+        probe_phase_plot,
+        '--',
+        linewidth=1.2,
+        alpha=0.8,
+        label='Probe phase',
+        color='tab:green',
+    )
+    line_ref_phase, = ax1_phase.plot(
+        om_pr * hbar,
+        ref_phase_plot,
+        '--',
+        linewidth=1.2,
+        alpha=0.8,
+        label='Reference phase',
+        color='tab:red',
+    )
+
     ax1.set_xlabel('Energy [eV]',fontweight='bold')
     ax1.set_ylabel('Amplitude [arb. u.]',fontweight='bold')
+    ax1_phase.set_ylabel('Phase [rad]', fontweight='bold')
+    ax1_phase.set_ylim([-np.pi, np.pi])
+    ax1_phase.set_yticks([-np.pi, -np.pi/2, 0.0, np.pi/2, np.pi])
     ax1.set_title('Probe and Reference Spectra',fontweight='bold',fontsize=12)
-    ax1.set_xlim([1,2])
-    ax1.legend()
+    ax1.set_xlim([0.8,2.5])
+
+    lines = [line_probe_abs, line_ref_abs, line_probe_phase, line_ref_phase]
+    labels = [line.get_label() for line in lines]
+    ax1.legend(lines, labels, loc='best')
     ax1.grid(True, alpha=0.3)
     
     # Right subplot: XUV spectrum
@@ -82,11 +119,12 @@ class RK_experiment:
     """Rainbow-KRAKEN experiment class for full pipeline processing."""
     
     def __init__(self,E_lo=60.0,E_hi=63.5,T_reach=50,E_res=0.025,N_T=240,p_E=4,alpha=0.05,b=1,sb_lo=24.7,sb_hi=28,harmq_lo=22,harmq_hi=24.7,
-                 if_coherent=True,mask_lo=0.8,mask_hi=2.2,donor_lo=2.5,E_range=None,A_ref=1,om_ref=1.55/hbar,s_ref=0.02/hbar):
+                 if_coherent=True,mask_lo=0.8,mask_hi=2.2,donor_lo=2.5,E_range=None,A_ref=1,om_ref=1.55/hbar,s_ref=0.02/hbar,ifMCMC=False):
 
         self.ifexp = False
         self.ifWF = True
         self.ifWide = False
+        self.ifMCMC = ifMCMC
 
         # Field parameters
         self.E_lo = E_lo
@@ -139,6 +177,9 @@ class RK_experiment:
         
         # Random number generator
         self.rng = np.random.default_rng()
+
+        # Probe model complexity for Bayesian reconstruction.
+        self.n_probe_peaks = 1
         
         # Initialize grids and pulses
         self.prepare_grid(E_range=None)
@@ -156,11 +197,32 @@ class RK_experiment:
         self.E_up_range = np.linspace(self.E_lo, self.E_hi, self.N_E_up)
         self.E_up, self.T_up = np.meshgrid(self.E_up_range, self.T_range)
 
-    def define_pulses(self,A_probe,a_probes,om_probes,s_probes):
+    def define_pulses(
+        self,
+        A_probe,
+        a_probes,
+        om_probes,
+        s_probes,
+        probe_phase=0.0,
+        probe_phase_grad=0.0,
+        probe_phase_chirp=0.0,
+    ):
         # Define probe pulse configurations (time-dependent, tau=T)
+        n_probe = len(a_probes)
+        if not (len(om_probes) == n_probe and len(s_probes) == n_probe):
+            raise ValueError('a_probes, om_probes, and s_probes must have the same length')
+
         probes_list = []
-        for i in range(len(a_probes)):
-            probe_pulse = (self.T, A_probe*a_probes[i], om_probes[i], s_probes[i], 0)
+        for i in range(n_probe):
+            probe_pulse = (
+                self.T,
+                A_probe * a_probes[i],
+                om_probes[i],
+                s_probes[i],
+                probe_phase,
+                probe_phase_grad,
+                probe_phase_chirp,
+            )
             probes_list.append(probe_pulse)
         self.probes = tuple(probes_list)
 
@@ -176,6 +238,15 @@ class RK_experiment:
                            [0.0,1.0]])
         etas = np.array([[1.0,0.0],
                          [0.0,1.0]])
+        
+        # amps = [1.0]
+        # mus = [25.0+self.om_ref*hbar]
+        # sigmas = [0.08]
+        # betas = [3]
+        # taus = [1]
+        # lambdas = [0]
+        # gammas = np.array([[1.0]])
+        # etas = np.array([[1.0]])
 
         # Keep known rho parameters for probe-only Bayesian inference.
         self.rho_params = {
@@ -314,6 +385,8 @@ class RK_experiment:
 
         self.x_lo = 24.0 + self.om_ref*hbar
         self.x_hi = 26.0 + self.om_ref*hbar
+        self.x_lo = 24.5 + self.om_ref*hbar
+        self.x_hi = 25.5 + self.om_ref*hbar
 
         self.y_lo = 1.0/hbar
         self.y_hi = 2.0/hbar
@@ -366,7 +439,7 @@ class RK_experiment:
             raise RuntimeError('define_model() must be called before probe_reconstruct() to set fixed rho parameters.')
 
         sig_power = np.sum(np.abs(self.signal_sb_FT),axis=1)
-        dzeta  = 0.1 * np.max(sig_power)
+        dzeta  = 0.02 * np.max(sig_power)
 
         x_mask = (self.E[0, :] > self.x_lo) & (self.E[0, :] < self.x_hi)
         y_mask =  (sig_power > dzeta) & (np.abs(self.OM_T*hbar)[:,0] < 0.5)
@@ -397,65 +470,160 @@ class RK_experiment:
         # OM_P_zero = OM_P[np.ix_(y_mask, x_mask)]
         # OM_X_zero = OM_X[np.ix_(y_mask, x_mask)]
 
-        from MCMCprobe import Bayesian_MCMC as Bayesian_MCMC_probe
+        if self.ifMCMC:
+            from MCMCprobe import Bayesian_MCMC as Bayesian_MCMC_probe
+            probe_amps_hat, probe_means_hat, probe_sigmas_hat, probe_phase_grad_hat, probe_chirp_hat, z_fit_zero = Bayesian_MCMC_probe(
+                om_p=OM_P_zero,
+                om_x=OM_X_zero,
+                om_t=self.OM_T_zero,
+                z_obs=self.signal_sb_FT_zero,
+                sigma_obs=self.sigma_zero,
+                rho_params=self.rho_params,
+                om_ref=self.om_ref,
+                n_probe_peaks=self.n_probe_peaks,
+                num_warmup=2000,
+                num_samples=1000,
+                num_chains=1,
+                rng_seed=0,
+                save_prefix='single_output_temp/pipeline_diag/probe_mcmc',
+            )
 
-        probe_amp_hat, probe_mean_hat, probe_sigma_hat, z_fit_zero = Bayesian_MCMC_probe(
-            om_p=OM_P_zero,
-            om_x=OM_X_zero,
-            om_t=self.OM_T_zero,
-            z_obs=self.signal_sb_FT_zero,
-            sigma_obs=self.sigma_zero,
-            rho_params=self.rho_params,
-            om_ref=self.om_ref,
-            hbar=hbar,
-            num_warmup=1000,
-            num_samples=2000,
-            num_chains=1,
-            rng_seed=0,
-            save_prefix='single_output_temp/pipeline_diag/probe_mcmc',
-        )
+            self.probe_amps_hat = np.asarray(probe_amps_hat)
+            self.probe_means_hat = np.asarray(probe_means_hat)
+            self.probe_sigmas_hat = np.asarray(probe_sigmas_hat)
+            self.probe_phase_grad_hat = float(probe_phase_grad_hat)
+            self.probe_chirp_hat = float(probe_chirp_hat)
 
-        self.probe_amp_hat = probe_amp_hat
-        self.probe_mean_hat = probe_mean_hat
-        self.probe_sigma_hat = probe_sigma_hat
-        self.signal_sb_FT_zero_fit = z_fit_zero
+            # Backward-compatible scalar aliases for n_probe_peaks == 1.
+            self.probe_amp_hat = float(self.probe_amps_hat[0])
+            self.probe_mean_hat = float(self.probe_means_hat[0])
+            self.probe_sigma_hat = float(self.probe_sigmas_hat[0])
+            self.signal_sb_FT_zero_fit = z_fit_zero
 
-        # Reconstruct 1D probe spectrum from inferred single-Gaussian parameters.
-        sigma_eff = max(self.probe_sigma_hat, 1e-12)
-        self.sp_probe_inferred = self.probe_amp_hat * np.exp(
-            -0.5 * ((self.om_probe - self.probe_mean_hat) / sigma_eff) ** 2
-        )
+            # Reconstruct 1D inferred probe field: N-Gaussian magnitude + global phase gradient/chirp.
+            sp_mag_inferred = np.zeros_like(self.om_probe, dtype=float)
+            for amp_now, mean_now, sigma_now in zip(self.probe_amps_hat, self.probe_means_hat, self.probe_sigmas_hat):
+                sigma_eff = max(float(sigma_now), 1e-12)
+                sp_mag_inferred += float(amp_now) * np.exp(-0.5 * ((self.om_probe - float(mean_now)) / sigma_eff) ** 2)
 
-        fig, ax = plt.subplots(figsize=(8, 4.5))
-        ax.plot(self.om_probe*hbar, rk.normalize_abs(np.abs(self.sp_probe)), label='True probe', linewidth=2)
-        ax.plot(self.om_probe*hbar, rk.normalize_abs(self.sp_probe_inferred), '--', label='MCMC inferred probe', linewidth=2)
-        ax.set_xlabel('Energy [eV]')
-        ax.set_ylabel('Amplitude [arb. u.]')
-        ax.set_title('Probe spectrum: true vs MCMC inferred')
-        ax.grid(True, alpha=0.3)
-        ax.legend()
-        plt.tight_layout()
+            domega = self.om_probe - self.om_ref
+            probe_phase = self.probe_phase_grad_hat * domega + 0.5 * self.probe_chirp_hat * domega**2
+            self.sp_probe_inferred = sp_mag_inferred
+            self.sp_probe_inferred_complex = sp_mag_inferred * np.exp(1j * probe_phase)
+            
+            print(
+                'Inferred probe parameters (N-Gaussian magnitude + global phase terms):',
+                f'amps={self.probe_amps_hat},',
+                f'means={self.probe_means_hat},',
+                f'sigmas={self.probe_sigmas_hat},',
+                f'phase_grad={self.probe_phase_grad_hat:.6g},',
+                f'chirp={self.probe_chirp_hat:.6g}'
+            )
+        else:
+            from LBFGSprobe import LBFGS_probe
+            opt_probe, z_fit_zero = LBFGS_probe(
+                om_p=OM_P_zero,
+                om_x=OM_X_zero,
+                om_t=self.OM_T_zero,
+                z_obs=self.signal_sb_FT_zero,
+                sigma_obs=self.sigma_zero,
+                rho_params=self.rho_params,
+                om_ref=self.om_ref,
+                n_probe_peaks=self.n_probe_peaks,
+                obs_mask=None,
+                maxiter=500,
+                tol=1e-6,
+                rng_seed=0,
+                lambda1=0.0,
+                lambda2=0.0
+            )
+            # Interpolate the optimized discrete vector to the full probe frequency grid if necessary
+            opt_probe_interp = np.interp(self.om_probe, om_probe_zero, np.real(opt_probe)) + \
+                               1j * np.interp(self.om_probe, om_probe_zero, np.imag(opt_probe))
+            
+            self.sp_probe_inferred_complex = opt_probe_interp
+            self.sp_probe_inferred = np.abs(opt_probe_interp)
+            self.signal_sb_FT_zero_fit = z_fit_zero
+            
+            print("Inferred probe field from discrete L-BFGS completed.")
+
+        fig, ax_amp = plt.subplots(1, 1, figsize=(8, 4.5))
+        ax_phase = ax_amp.twinx()
+
+        true_power = np.sum(np.abs(self.sp_probe)**2)
+        fit_power = np.sum(np.abs(self.sp_probe_inferred_complex)**2)
+        self.sp_probe_inferred_complex = self.sp_probe_inferred_complex * np.sqrt(true_power/fit_power)
+        
+        print(np.sum(np.abs(self.sp_probe)**2))
+        print(np.sum(np.abs(self.sp_probe_inferred_complex)**2))
+
+        probe_energy = self.om_probe*hbar
+        true_mag = np.abs(self.sp_probe)
+        fit_mag = np.abs(self.sp_probe_inferred_complex)
+        
+        # Calculate the relative global phase difference using maximum amplitude point
+        idx_max = np.argmax(true_mag)
+        phase_offset = np.angle(self.sp_probe[idx_max]) - np.angle(self.sp_probe_inferred_complex[idx_max])
+        self.sp_probe_inferred_complex = self.sp_probe_inferred_complex * np.exp(1j * phase_offset)
+
+        true_phase = np.angle(self.sp_probe)
+        fit_phase = np.angle(self.sp_probe_inferred_complex)
+        true_phase_mask = true_mag >= 0.05 * np.max(true_mag)
+        fit_phase_mask = fit_mag >= 0.05 * np.max(fit_mag)
+        true_phase_plot = np.where(true_phase_mask, true_phase, np.nan)
+        fit_phase_plot = np.where(fit_phase_mask, fit_phase, np.nan)
+
+        line_true_amp, = ax_amp.plot(probe_energy, true_mag, label='True probe |mag|', linewidth=1.2)
+        line_fit_amp, = ax_amp.plot(probe_energy, fit_mag, '--', label='Inferred probe |mag|', linewidth=1.2)
+        ax_amp.set_xlabel('Energy [eV]')
+        ax_amp.set_ylabel('Amplitude [arb. u.]')
+        ax_amp.set_title('Probe spectrum: true vs inferred')
+        ax_amp.grid(True, alpha=0.3)
+        ax_amp.set_xlim([0.7,2.5])
+
+        line_true_phase, = ax_phase.plot(probe_energy, true_phase_plot, label='True phase', linewidth=0.9)
+        line_fit_phase, = ax_phase.plot(probe_energy, fit_phase_plot, '--', label='Inferred phase', linewidth=0.9)
+        ax_phase.set_ylabel('Phase [rad]')
+        ax_phase.set_ylim([-np.pi, np.pi])
+        ax_phase.set_yticks([-np.pi, -np.pi/2, 0.0, np.pi/2, np.pi])
+
+        lines = [line_true_amp, line_fit_amp, line_true_phase, line_fit_phase]
+        labels = [line.get_label() for line in lines]
+        ax_amp.legend(lines, labels, loc='best')
+
+        res_val = np.sum(np.abs(self.sp_probe - self.sp_probe_inferred_complex)**2) / np.sum(np.abs(self.sp_probe)**2)
+        print(res_val)
+        ax_amp.text(0.02, 0.98, f"RES = {res_val:.4f}", transform=ax_amp.transAxes,
+        fontsize=10, verticalalignment='top', horizontalalignment='left',
+        color='white', weight='bold',
+        path_effects=[pe.withStroke(linewidth=2, foreground='black')])
+
+        plt.tight_layout(rect=[0, 0.03, 1, 1])
         plt.savefig('single_output_temp/pipeline_diag/probe_spectrum_fit.png', dpi=300)
         plt.close(fig)
 
-        rk.plot_mat(
-            np.abs(self.signal_sb_FT_zero - self.signal_sb_FT_zero_fit)/np.max(np.abs(self.signal_sb_FT_zero_fit)),
-            extent=[self.E_zero[0,0]-self.om_ref*hbar, self.E_zero[0,-1]-self.om_ref*hbar, self.OM_T_zero[1,0]*hbar, self.OM_T_zero[-1,0]*hbar],
-            cmap='plasma',
-            saveloc='single_output_temp/pipeline_diag/probe_zeroomega_abs_residual.png',
-            xlabel='Kinetic energy $E_f$ (eV)',
-            ylabel='Indirect energy $\\hbar \\omega_\\tau$ (eV)',
-            title='Zero-omega fit residual |data - model|',
-            show=False,
-            mode='abs',
-        )
+        if self.ifMCMC:
 
-        print(
-            'Inferred probe parameters (single Gaussian):',
-            f'amp={self.probe_amp_hat:.6g},',
-            f'mean={self.probe_mean_hat:.6g},',
-            f'sigma={self.probe_sigma_hat:.6g}'
-        )
+            rk.plot_mat(
+                np.abs(self.signal_sb_FT_zero - self.signal_sb_FT_zero_fit)/np.max(np.abs(self.signal_sb_FT_zero_fit)),
+                extent=[self.E_zero[0,0]-self.om_ref*hbar, self.E_zero[0,-1]-self.om_ref*hbar, self.OM_T_zero[1,0]*hbar, self.OM_T_zero[-1,0]*hbar],
+                cmap='plasma',
+                saveloc='single_output_temp/pipeline_diag/probe_zeroomega_abs_residual.png',
+                xlabel='Kinetic energy $E_f$ (eV)',
+                ylabel='Indirect energy $\\hbar \\omega_\\tau$ (eV)',
+                title='Zero-omega fit residual |data - model|',
+                show=False,
+                mode='abs',
+            )
+
+            print(
+                'Inferred probe parameters (N-Gaussian magnitude + global phase terms):',
+                f'amps={self.probe_amps_hat},',
+                f'means={self.probe_means_hat},',
+                f'sigmas={self.probe_sigmas_hat},',
+                f'phase_grad={self.probe_phase_grad_hat:.6g},',
+                f'chirp={self.probe_chirp_hat:.6g}'
+            )
 
 if __name__ == "__main__":
 
@@ -477,15 +645,36 @@ if __name__ == "__main__":
 
     # Define pulses
 
-    # A_probe = 0.6
-    # a_probes = [1.0,0.05,0.05]
-    # om_probes = [1.55/hbar,1.52/hbar,1.58/hbar]
-    # s_probes = [0.15/hbar,0.02/hbar,0.02/hbar]
+    A_probe = 0.6
+    a_probes = [1.0,0.1,0.15]
+    om_probes = [1.55/hbar,1.46/hbar,1.58/hbar]
+    s_probes = [0.10/hbar,0.02/hbar,0.04/hbar]
 
     A_probe = 0.6
-    a_probes = [1.0]
-    om_probes = [1.55/hbar]
-    s_probes = [0.08/hbar]
+    a_probes = [1.0,0.2,0.3]
+    om_probes = [1.55/hbar,1.46/hbar,1.59/hbar]
+    s_probes = [0.10/hbar,0.02/hbar,0.04/hbar]
+
+    A_probe = 0.6
+    a_probes = [1.0,0.2,0.2]
+    om_probes = [1.55/hbar,1.20/hbar,2.00/hbar]
+    s_probes = [0.15/hbar,0.04/hbar,0.07/hbar]
+    probe_phase = 1.0
+    probe_phase_grad = 1.0
+    probe_phase_chirp = 1.0
+
+    A_probe = 0.6
+    a_probes = [1.0,0.2]
+    om_probes = [1.55/hbar,1.58/hbar]
+    s_probes = [0.10/hbar,0.03/hbar]
+    probe_phase = 0.0
+    probe_phase_grad = 2.5
+    probe_phase_chirp = 2.5
+
+    # A_probe = 0.6
+    # a_probes = [1.0]
+    # om_probes = [1.55/hbar]
+    # s_probes = [0.08/hbar]
 
     # A_probe = 0.6  # WIDE PROBE VARIANT
     # a_probes = [1.0]
@@ -507,8 +696,17 @@ if __name__ == "__main__":
 
     experiment.ifWF = False
     experiment.ifWide = False
+    experiment.n_probe_peaks = 2#len(a_probes)
 
-    experiment.define_pulses(A_probe,a_probes,om_probes,s_probes)
+    experiment.define_pulses(
+        A_probe,
+        a_probes,
+        om_probes,
+        s_probes,
+        probe_phase=probe_phase,
+        probe_phase_grad=probe_phase_grad,
+        probe_phase_chirp=probe_phase_chirp,
+    )
     experiment.define_model()
     experiment.generate_signal()
     experiment.process_and_detrend()

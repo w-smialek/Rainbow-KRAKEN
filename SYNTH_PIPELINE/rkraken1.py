@@ -583,6 +583,59 @@ def spectrum_fun(A,om0,s,om):
     retval = A/(2*s)*np.exp(-(om-om0)**2/(2*s**2))
     return retval  # Positive-freq part
 
+
+def _unpack_pulse_tuple(pulse):
+    """Normalize pulse tuples to 7 fields.
+
+    Supported input tuple layouts:
+      (tau, amp, om0, sigma, phi0)
+      (tau, amp, om0, sigma, phi0, phase_grad)
+      (tau, amp, om0, sigma, phi0, phase_grad, phase_chirp)
+
+    Returns
+    -------
+    tau, amp, om0, sigma, phi0, phase_grad, phase_chirp
+    """
+    n_fields = len(pulse)
+    if n_fields == 5:
+        tau, amp, om0, sigma, phi0 = pulse
+        return tau, amp, om0, sigma, phi0, 0.0, 0.0
+    if n_fields == 6:
+        tau, amp, om0, sigma, phi0, phase_grad = pulse
+        return tau, amp, om0, sigma, phi0, phase_grad, 0.0
+    if n_fields == 7:
+        tau, amp, om0, sigma, phi0, phase_grad, phase_chirp = pulse
+        return tau, amp, om0, sigma, phi0, phase_grad, phase_chirp
+
+    raise ValueError(
+        "Pulse tuple must have 5, 6, or 7 entries: "
+        "(tau, amp, om0, sigma, phi0[, phase_grad[, phase_chirp]])"
+    )
+
+
+def _pack_pulse_tuple(n_fields, tau, amp, om0, sigma, phi0, phase_grad, phase_chirp):
+    """Pack pulse fields preserving the original tuple length convention."""
+    if n_fields <= 5:
+        return (tau, amp, om0, sigma, phi0)
+    if n_fields == 6:
+        return (tau, amp, om0, sigma, phi0, phase_grad)
+    return (tau, amp, om0, sigma, phi0, phase_grad, phase_chirp)
+
+
+def _dominant_peak_center(pulses):
+    """Return center frequency of the component with largest amplitude."""
+    if len(pulses) == 0:
+        raise ValueError("At least one pulse component is required")
+
+    amplitudes = []
+    centers = []
+    for pulse in pulses:
+        _, amp, om0, _, _, _, _ = _unpack_pulse_tuple(pulse)
+        amplitudes.append(float(np.abs(amp)))
+        centers.append(float(om0))
+
+    return centers[int(np.argmax(amplitudes))]
+
 def sqrt_probes(probes):
     """Square-root each Gaussian component in a probes tuple.
 
@@ -591,17 +644,38 @@ def sqrt_probes(probes):
     which is again a Gaussian with A_new = sqrt(2*A), s_new = s*sqrt(2).
     """
     out = []
-    for (T_k, a_k, om0_k, s_k, phi_k) in probes:
+    for pulse in probes:
+        n_fields = len(pulse)
+        T_k, a_k, om0_k, s_k, phi_k, phase_grad_k, phase_chirp_k = _unpack_pulse_tuple(pulse)
         a_new = 2*np.sqrt(a_k*s_k)
         s_new = s_k * np.sqrt(2)
-        out.append((T_k, a_new, om0_k, s_new, phi_k))
+        out.append(
+            _pack_pulse_tuple(
+                n_fields,
+                T_k,
+                a_new,
+                om0_k,
+                s_new,
+                phi_k,
+                phase_grad_k,
+                phase_chirp_k,
+            )
+        )
     return tuple(out)
 
 def sp_tot(gausses,om):
-    retval = np.zeros_like(om)
+    om = np.asarray(om)
+    retval = np.zeros_like(om, dtype=np.complex128)
+    if len(gausses) == 0:
+        return retval
+
+    om_ref = _dominant_peak_center(gausses)
+    domega = om - om_ref
+
     for gauss in gausses:
-        _,a0,om0,s0,_ = gauss
-        retval += spectrum_fun(a0,om0,s0,om)
+        _, a0, om0, s0, phi0, phase_grad, phase_chirp = _unpack_pulse_tuple(gauss)
+        phase = phi0 + phase_grad * domega + 0.5 * phase_chirp * domega**2
+        retval += spectrum_fun(a0, om0, s0, om) * np.exp(1j * phase)
     return retval
 
 def extract_midslice(sig_full,slice_fracts,sliced_range,e_slice_fracts=None,e_sliced_range=None):
@@ -801,10 +875,37 @@ def plotc(ar):
     plt.plot(np.imag(ar),linewidth=0.8)
     plt.show()
 
-def nfit_params_to_probes(params, T):
+def nfit_params_to_probes(params, T, phi0=0.0, phase_grad=0.0, phase_chirp=0.0):
+    """Convert n-Gaussian fit parameters to probe tuples with phase terms.
+
+    Parameters
+    ----------
+    params : array-like
+        Flat parameter vector [A1, om1, s1, A2, om2, s2, ...].
+    T : array-like
+        Delay grid carried by each probe component.
+    phi0, phase_grad, phase_chirp : float or array-like
+        Optional phase polynomial coefficients per component. Scalars are
+        broadcast to all components.
+    """
     probes = []
-    for k in range(len(params)//3):
-        probes.append((T,params[3*k],params[3*k+1],params[3*k+2],0))
+    n_comp = len(params) // 3
+    phi0_arr = np.broadcast_to(np.asarray(phi0, dtype=float), (n_comp,))
+    grad_arr = np.broadcast_to(np.asarray(phase_grad, dtype=float), (n_comp,))
+    chirp_arr = np.broadcast_to(np.asarray(phase_chirp, dtype=float), (n_comp,))
+
+    for k in range(n_comp):
+        probes.append(
+            (
+                T,
+                params[3*k],
+                params[3*k+1],
+                params[3*k+2],
+                float(phi0_arr[k]),
+                float(grad_arr[k]),
+                float(chirp_arr[k]),
+            )
+        )
     return tuple(probes)
 
 def reconstruct_WirtFlow(sig_measrd,sp_probe,sp_xuv,om_probe,om_xuv,T,b_est,
@@ -1120,9 +1221,9 @@ def modulating_function_multi(om_t,ene_Eg,pulse_params_x,probes,big_sigma=0):
     for xuv_now in pulse_params_x:
         for probe in probes:
 
-            tau_x,A_x,om0_x,s_x,phi_x = xuv_now
+            tau_x, A_x, om0_x, s_x, phi_x, _, _ = _unpack_pulse_tuple(xuv_now)
 
-            tau_p,A_p,om0_p,s_p,phi_p = probe
+            tau_p, A_p, om0_p, s_p, phi_p, _, _ = _unpack_pulse_tuple(probe)
             s_pp = s_p+big_sigma
 
             # Frequency-domain widths combine as s = sqrt(s_x^2 + s_p^2)
@@ -1147,7 +1248,7 @@ def normalize_params(gauss_params, om):
     Normalize a tuple of Gaussian parameters so their sum integrates to 1.
     
     Args:
-        gauss_params: tuple of tuples, each (tau, A, om0, s, phi)
+        gauss_params: tuple of pulse tuples
         om: array of omega values for integration
         
     Returns:
@@ -1158,7 +1259,8 @@ def normalize_params(gauss_params, om):
     
     # Compute integral using trapezoidal rule
     d_om = om[1] - om[0]
-    integral = np.sum(total_spectrum) * d_om
+    # Use spectral magnitude because total_spectrum can be complex when phase is enabled.
+    integral = np.sum(np.abs(total_spectrum)) * d_om
     
     if integral == 0.0 or not np.isfinite(integral):
         # Spectrum has no overlap with the grid — return unmodified params
@@ -1174,10 +1276,23 @@ def normalize_params(gauss_params, om):
 
     # Scale all amplitudes by the normalization factor
     norm_factor = 1.0 / integral
-    normalized = tuple(
-        (tau, A * norm_factor, om0, s, phi)
-        for tau, A, om0, s, phi in gauss_params
-    )
+    normalized = []
+    for pulse in gauss_params:
+        n_fields = len(pulse)
+        tau, A, om0, s, phi, phase_grad, phase_chirp = _unpack_pulse_tuple(pulse)
+        normalized.append(
+            _pack_pulse_tuple(
+                n_fields,
+                tau,
+                A * norm_factor,
+                om0,
+                s,
+                phi,
+                phase_grad,
+                phase_chirp,
+            )
+        )
+    normalized = tuple(normalized)
     
     return normalized
 
@@ -1494,7 +1609,8 @@ def pulse_emit(probes):
     Parameters:
     -----------
     probes : tuple
-        Tuple of pulse tuples, each in format (tau, amplitude, omega, sigma, phi)
+        Tuple of pulse tuples in format
+        (tau, amplitude, omega, sigma, phi0[, phase_grad[, phase_chirp]])
     
     Returns:
     --------
@@ -1503,8 +1619,18 @@ def pulse_emit(probes):
     """
     flipped_probes = []
     for probe in probes:
-        tau, amplitude, omega, sigma, phi = probe
-        flipped_probe = (tau, amplitude, -omega, sigma, phi)
+        n_fields = len(probe)
+        tau, amplitude, omega, sigma, phi, phase_grad, phase_chirp = _unpack_pulse_tuple(probe)
+        flipped_probe = _pack_pulse_tuple(
+            n_fields,
+            tau,
+            amplitude,
+            -omega,
+            sigma,
+            phi,
+            phase_grad,
+            phase_chirp,
+        )
         flipped_probes.append(flipped_probe)
     
     return tuple(flipped_probes)

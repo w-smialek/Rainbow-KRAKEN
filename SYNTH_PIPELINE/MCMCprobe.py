@@ -69,21 +69,6 @@ def _safe_real_denom(x, eps=1e-12):
     return jnp.where(jnp.abs(x) < eps, sign * eps, x)
 
 
-def _fftconvolve_same_last_axis(a, b):
-    """Linear convolution with SciPy-like mode='same' along the last axis."""
-    n_a = a.shape[-1]
-    n_b = b.shape[-1]
-    n_full = n_a + n_b - 1
-
-    fa = jnp.fft.fft(a, n=n_full, axis=-1)
-    fb = jnp.fft.fft(b, n=n_full, axis=-1)
-    full = jnp.fft.ifft(fa * fb, axis=-1)
-
-    start = (n_b - 1) // 2
-    end = start + n_a
-    return full[..., start:end]
-
-
 def _fftconvolve_same_last_axis_precomputed_left_fft(a_fft, b, n_a):
     """Same-mode convolution when FFT(a) is precomputed along the last axis."""
     n_b = b.shape[-1]
