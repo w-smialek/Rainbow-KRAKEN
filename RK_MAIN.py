@@ -1,12 +1,11 @@
 from RK_experiment import RK_experiment, hbar
-
+import numpy as np
 
 E_lo = 24.5
 E_hi = 28.0
 T_reach = 150
 E_res = 0.01
 N_T = 501
-p_E = 4
 alpha = 30000
 b = 1
 
@@ -14,20 +13,6 @@ sideband_lo = 25.5
 sideband_hi = 28.0
 harmq_lo = 24.5
 harmq_hi = 25.5
-
-if_coherent = True
-
-# Probe pulse definition (latest configuration from WF_pipeline_zero.py).
-A_probe = 0.6
-a_probes = [1.0, 0.3]
-om_probes = [1.55 / hbar, 1.66 / hbar]
-s_probes = [0.10 / hbar, 0.05 / hbar]
-probe_phase = 1.0
-probe_phase_grad = 2.5
-probe_phase_chirp = 2.5
-probe_phase = 0.0
-probe_phase_grad = 0.0
-probe_phase_chirp = 0.0
 
 A_ref = 1.0
 om_ref = 1.50 / hbar
@@ -39,33 +24,53 @@ experiment = RK_experiment(
     T_reach=T_reach,
     E_res=E_res,
     N_T=N_T,
-    p_E=p_E,
     alpha=alpha,
     b=b,
     sb_lo=sideband_lo,
     sb_hi=sideband_hi,
     harmq_lo=harmq_lo,
     harmq_hi=harmq_hi,
-    if_coherent=if_coherent,
     A_ref=A_ref,
     om_ref=om_ref,
     s_ref=s_ref,
 )
 
-experiment.ifWF = False
-experiment.ifWide = False
+# Probe pulse definition
+A_probe = 0.6
+probe_params = {
+    'amps': np.asarray([1.0, 0.3]) * A_probe,
+    'oms': np.asarray([1.55 / hbar, 1.66 / hbar]),
+    'sigmas': np.asarray([0.10 / hbar, 0.05 / hbar]),
+    'phi0': 0.0,
+    'phase_grad': 0.0,
+    'phase_chirp': 0.0
+}
 
-experiment.define_pulses(
-    A_probe,
-    a_probes,
-    om_probes,
-    s_probes,
-    probe_phase=probe_phase,
-    probe_phase_grad=probe_phase_grad,
-    probe_phase_chirp=probe_phase_chirp,
-)
+# Build the density matrix parameters
+amps = [1.0/np.sqrt(2), 1.0]
+mus = [25.0 - 0.18 + om_ref * hbar, 25.0 + om_ref * hbar]
+sigmas = [0.08, 0.08]
+betas = [3, 3]
+taus = [1, 1]
+lambdas = [0, 0]
+gammas = np.array([[1.0, 0.0],
+                   [0.0, 1.0]])
+etas = np.array([[1.0, 0.0],
+                 [0.0, 1.0]])
 
-experiment.define_model()
+rho_params = {
+    'amps': np.asarray(amps, dtype=float),
+    'mus': np.asarray(mus, dtype=float),
+    'sigmas': np.asarray(sigmas, dtype=float),
+    'betas': np.asarray(betas, dtype=float),
+    'taus': np.asarray(taus, dtype=float),
+    'lambdas': np.asarray(lambdas, dtype=float),
+    'gammas': np.asarray(gammas, dtype=np.complex128),
+    'etas': np.asarray(etas, dtype=float),
+}
+
+experiment.define_pulses(probe_params)
+experiment.define_model(rho_params)
 experiment.generate_signal()
 experiment.process_and_detrend()
 experiment.kb_correct()

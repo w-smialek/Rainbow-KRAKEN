@@ -267,11 +267,9 @@ def LBFGS_probe(
     sigma_obs,
     rho_params,
     om_ref,
-    n_probe_peaks=1, # unused, vector matches length instead
     obs_mask=None,
     maxiter=2000,
     tol=1e-6,
-    rng_seed=0,
     lambda1=0.0,
     lambda2=0.0
 ):

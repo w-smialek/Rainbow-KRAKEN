@@ -142,11 +142,11 @@ def model(x, y, sigma_obs, z_obs=None, n_peaks=2):
         numpyro.sample('obs_real', dist.Normal(z_real_expected, sigma_eff), obs=jnp.real(z_obs) if z_obs is not None else None)
         numpyro.sample('obs_imag', dist.Normal(z_imag_expected, sigma_eff), obs=jnp.imag(z_obs) if z_obs is not None else None)
 
-def Bayesian_MCMC(x_obs, y_obs, z_obs, sigma_obs, n_peaks=2, suf=''):
+def Bayesian_MCMC(x_obs, y_obs, z_obs, sigma_obs, n_peaks=2, num_warmup=1000, num_samples=2000, num_chains=1):
     
     print("\nSetting up NUTS MCMC...")
     nuts_kernel = NUTS(model)
-    mcmc = MCMC(nuts_kernel, num_warmup=1000, num_samples=2000, num_chains=1)
+    mcmc = MCMC(nuts_kernel, num_warmup=num_warmup, num_samples=num_samples, num_chains=num_chains)
     # mcmc = MCMC(nuts_kernel, num_warmup=10, num_samples=20, num_chains=1)
     
     print("Running MCMC to obtain posterior distributions...")
@@ -244,7 +244,7 @@ def Bayesian_MCMC(x_obs, y_obs, z_obs, sigma_obs, n_peaks=2, suf=''):
 
     fig.suptitle('Posterior distributions of fitted parameters', fontsize=30, y=1.02, weight='bold')
     plt.tight_layout()
-    plt.savefig(f'single_output_temp/MCMCrho/mcmc_posterior{suf}.png', dpi=200, bbox_inches='tight')
+    plt.savefig('single_output_temp/MCMCrho/mcmc_posterior.png', dpi=200, bbox_inches='tight')
     plt.close(fig)
 
     gamma_hat = _build_hermitian_gamma(n_peaks, jnp.array(gamma_mag_hat), jnp.array(gamma_phase_hat))

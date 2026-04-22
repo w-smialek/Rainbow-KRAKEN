@@ -193,7 +193,8 @@ class RK_experiment:
         self.E_up_range = np.linspace(self.E_lo, self.E_hi, self.N_E_up)
         self.E_up, self.T_up = np.meshgrid(self.E_up_range, self.T_range)
 
-    def define_pulses(self,A_probe,a_probes,om_probes,s_probes):
+    def define_pulses(self, probe_params):
+        self.probe_params = probe_params
         # # Define XUV pulse configurations (stationary, tau=0)
         # xuvs_list = []
         # for i in range(len(a_xuvs)):
@@ -261,7 +262,7 @@ class RK_experiment:
 
         ref_mask = self.A_ref*((self.om_probe >= self.om_ref - self.s_ref) & (self.om_probe <= self.om_ref + self.s_ref)).astype(float)
 
-        self.sp_probe = rk.sp_tot(self.probes, self.om_probe)
+        self.sp_probe = self.sp_tot( self.om_probe)
         self.sp_ref = self.sp_probe*ref_mask
         # self.sp_xuv = rk.sp_tot(self.xuvs, self.om_xuv)
 
@@ -271,7 +272,7 @@ class RK_experiment:
 
         # ref_mask_up = self.A_ref*((self.om_probe_up >= self.om_ref - self.s_ref) & (self.om_probe_up <= self.om_ref + self.s_ref)).astype(float)        
 
-        # self.sp_probe_up = rk.sp_tot(self.probes, self.om_probe_up)
+        # self.sp_probe_up = self.sp_tot( self.om_probe_up)
         # self.sp_ref_up = self.sp_probe_up*ref_mask_up
         # self.sp_xuv_up = rk.sp_tot(self.xuvs, self.om_xuv_up)
 
@@ -289,8 +290,8 @@ class RK_experiment:
         OM_P = np.tile(self.om_probe, (self.N_T, 1))
         OM_X = np.tile(self.om_xuv, (self.N_T, 1))
 
-        a_ref = self.A_ref * rk.sp_tot(self.probes,self.om_ref) / self.om_ref
-        a_pr = rk.sp_tot(self.probes,self.OM_T) / rk.regularize_omega(self.OM_T)
+        a_ref = self.A_ref * self.sp_tot(self.om_ref) / self.om_ref
+        a_pr = self.sp_tot(self.OM_T) / rk.regularize_omega(self.OM_T)
 
         d_en = (self.om_probe[1] - self.om_probe[0])*hbar
         omega_cols = (np.arange(self.N_E) - (self.N_E - 1) / 2.0) * d_en
@@ -318,8 +319,8 @@ class RK_experiment:
 
         in_1 = self.rho_f((OM_X - self.OM_T + self.om_ref)*hbar, (OM_X + self.om_ref)*hbar)
         in_2_denom = (OM_P + self.OM_T) * OM_P # CAN PRODUCE DIVISION BY ZERO!!
-        in_2_num = (rk.sp_tot(self.probes, OM_P + self.OM_T)
-            * np.conj(rk.sp_tot(self.probes,OM_P)))
+        in_2_num = (self.sp_tot( OM_P + self.OM_T)
+            * np.conj(self.sp_tot(OM_P)))
         in_2 = (in_2_num
                 / in_2_denom)
         
@@ -477,11 +478,11 @@ class RK_experiment:
     def probe_sp_correct(self):
         
         if self.ifWide:
-            dzeta = 0.1 * np.max(np.abs(rk.sp_tot(self.probes,self.OM_T))) # WIDE PROBE VARIANT
+            dzeta = 0.1 * np.max(np.abs(self.sp_tot(self.OM_T))) # WIDE PROBE VARIANT
         else:
-            dzeta = 0.05 * np.max(np.abs(rk.sp_tot(self.probes,self.OM_T)))
+            dzeta = 0.05 * np.max(np.abs(self.sp_tot(self.OM_T)))
 
-        probe_modulation = rk.sp_tot(self.probes,self.OM_T) / np.maximum(self.OM_T,0.01)
+        probe_modulation = self.sp_tot(self.OM_T) / np.maximum(self.OM_T,0.01)
 
         where_off = probe_modulation < dzeta
         probe_modulation[where_off] = dzeta

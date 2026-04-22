@@ -197,7 +197,8 @@ class RK_experiment:
         self.E_up_range = np.linspace(self.E_lo, self.E_hi, self.N_E_up)
         self.E_up, self.T_up = np.meshgrid(self.E_up_range, self.T_range)
 
-    def define_pulses(
+    def define_pulses(self, probe_params):
+        self.probe_params = probe_params
         self,
         A_probe,
         a_probes,
@@ -276,7 +277,7 @@ class RK_experiment:
 
         ref_mask = self.A_ref*((self.om_probe >= self.om_ref - self.s_ref) & (self.om_probe <= self.om_ref + self.s_ref)).astype(float)
 
-        self.sp_probe = rk.sp_tot(self.probes, self.om_probe)
+        self.sp_probe = self.sp_tot( self.om_probe)
         self.sp_ref = self.sp_probe*ref_mask
 
         ### PLOT the upsampled spectra with probe/ref on one axis, xuv on another
@@ -290,8 +291,8 @@ class RK_experiment:
         OM_P = np.tile(self.om_probe, (self.N_T, 1))
         OM_X = np.tile(self.om_xuv, (self.N_T, 1))
 
-        a_ref = self.A_ref * rk.sp_tot(self.probes,self.om_ref) / self.om_ref
-        a_pr = rk.sp_tot(self.probes,self.OM_T) / rk.regularize_omega(self.OM_T)
+        a_ref = self.A_ref * self.sp_tot(self.om_ref) / self.om_ref
+        a_pr = self.sp_tot(self.OM_T) / rk.regularize_omega(self.OM_T)
 
         d_en = (self.om_probe[1] - self.om_probe[0])*hbar
         omega_cols = (np.arange(self.N_E) - (self.N_E - 1) / 2.0) * d_en
@@ -319,8 +320,8 @@ class RK_experiment:
 
         in_1 = self.rho_f((OM_X - self.OM_T + self.om_ref)*hbar, (OM_X + self.om_ref)*hbar)
         in_2_denom = (OM_P + self.OM_T) * OM_P # CAN PRODUCE DIVISION BY ZERO!!
-        in_2_num = (rk.sp_tot(self.probes, OM_P + self.OM_T)
-            * np.conj(rk.sp_tot(self.probes,OM_P)))
+        in_2_num = (self.sp_tot( OM_P + self.OM_T)
+            * np.conj(self.sp_tot(OM_P)))
         in_2 = (in_2_num
                 / in_2_denom)
         

@@ -9,9 +9,90 @@ from scipy.optimize import brentq
 from scipy.interpolate import RectBivariateSpline
 from scipy.linalg import sqrtm
 
-
 # Reduced Planck constant in eV*fs (approx CODATA): hbar = 6.582119569e-16 eV*s
 hbar = 6.582119569e-1
+from numpy import pi
+
+
+def rho_peak(x,mu,sigma,beta,tau):
+    return 1/(2*pi*sigma**2)**(0.25) * np.exp(-(1/(4*sigma**2) - 1j*beta/2)*(x - mu)**2 + 1j*tau*(x - mu))
+
+
+def rho_model(e1,e2,amps,mus,sigmas,betas,taus,lambdas,gammas,etas):
+    retval = 0
+    for k in range(len(mus)):
+        for l in range(len(mus)):
+            D_kl = np.exp( - lambdas[k]**2/2 * (e1 - mus[k])**2 - lambdas[l]**2/2 * (e2 - mus[l])**2 + etas[k,l] * lambdas[k] * lambdas[l] * (e1 - mus[k]) * (e2 - mus[l]))
+            retval += (amps[k] * amps[l] * gammas[k,l] * rho_peak(e1,mus[k],sigmas[k],betas[k],taus[k]) 
+                       * np.conj(rho_peak(e2,mus[l],sigmas[l],betas[l],taus[l])) * D_kl)
+
+    return retval
+
+
+def plot_spectra(om_pr,om_x,sp_pr,sp_ref,sp_x):
+
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))
+    
+    # Left subplot: Probe and Reference spectra
+    probe_abs = np.abs(sp_pr)
+    ref_abs = np.abs(sp_ref)
+    line_probe_abs, = ax1.plot(om_pr * hbar, probe_abs, label='Probe |spectrum|', linewidth=2)
+    line_ref_abs, = ax1.plot(om_pr * hbar, ref_abs, label='Reference |spectrum|', linewidth=2)
+
+    # Overlay phase on a second y-axis; hide low-SNR regions below 5% of each peak.
+    ax1_phase = ax1.twinx()
+    probe_phase = np.angle(sp_pr)
+    ref_phase = np.angle(sp_ref)
+    probe_phase_mask = probe_abs >= 0.05 * np.max(probe_abs)
+    ref_phase_mask = ref_abs >= 0.05 * np.max(ref_abs)
+    probe_phase_plot = np.where(probe_phase_mask, probe_phase, np.nan)
+    ref_phase_plot = np.where(ref_phase_mask, ref_phase, np.nan)
+    line_probe_phase, = ax1_phase.plot(
+        om_pr * hbar,
+        probe_phase_plot,
+        '--',
+        linewidth=1.2,
+        alpha=0.8,
+        label='Probe phase',
+        color='tab:green',
+    )
+    line_ref_phase, = ax1_phase.plot(
+        om_pr * hbar,
+        ref_phase_plot,
+        '--',
+        linewidth=1.2,
+        alpha=0.8,
+        label='Reference phase',
+        color='tab:red',
+    )
+
+    ax1.set_xlabel('Energy [eV]',fontweight='bold')
+    ax1.set_ylabel('Amplitude [arb. u.]',fontweight='bold')
+    ax1_phase.set_ylabel('Phase [rad]', fontweight='bold')
+    ax1_phase.set_ylim([-np.pi, np.pi])
+    ax1_phase.set_yticks([-np.pi, -np.pi/2, 0.0, np.pi/2, np.pi])
+    ax1.set_title('Probe and Reference Spectra',fontweight='bold',fontsize=12)
+    ax1.set_xlim([0.8,2.5])
+
+    lines = [line_probe_abs, line_ref_abs, line_probe_phase, line_ref_phase]
+    labels = [line.get_label() for line in lines]
+    ax1.legend(lines, labels, loc='best')
+    ax1.grid(True, alpha=0.3)
+    
+    # Right subplot: XUV spectrum
+    ax2.plot(om_x * hbar, sp_x, label='Photoelectron populations', linewidth=2, color='purple')
+    ax2.set_xlabel('Energy [eV]',fontweight='bold')
+    ax2.set_ylabel('Signal strength [arb. u.]',fontweight='bold')
+    ax2.set_title('Photoelectron populations',fontweight='bold',fontsize=12)
+    ax2.set_xlim([24,26])
+    ax2.grid(True, alpha=0.3)
+    fig.suptitle('IR spectrum and photelectron signal', fontsize=20, weight='bold')
+    
+    plt.tight_layout()
+    plt.savefig('single_output_temp/spectra/input_spectra.png', dpi=300)
+    plt.close()
+
+    return
 
 
 def CFT(T_range, signal, use_window=True, inverse=False, zero_pad=0):
@@ -273,56 +354,6 @@ def spectrum_fun(A, om0, s, om):
     return retval
 
 
-def _unpack_pulse_tuple(pulse):
-    """Normalize pulse tuples to 7 fields."""
-    n_fields = len(pulse)
-    if n_fields == 5:
-        tau, amp, om0, sigma, phi0 = pulse
-        return tau, amp, om0, sigma, phi0, 0.0, 0.0
-    if n_fields == 6:
-        tau, amp, om0, sigma, phi0, phase_grad = pulse
-        return tau, amp, om0, sigma, phi0, phase_grad, 0.0
-    if n_fields == 7:
-        tau, amp, om0, sigma, phi0, phase_grad, phase_chirp = pulse
-        return tau, amp, om0, sigma, phi0, phase_grad, phase_chirp
-
-    raise ValueError(
-        "Pulse tuple must have 5, 6, or 7 entries: "
-        "(tau, amp, om0, sigma, phi0[, phase_grad[, phase_chirp]])"
-    )
-
-
-def _dominant_peak_center(pulses):
-    """Return center frequency of the component with largest amplitude."""
-    if len(pulses) == 0:
-        raise ValueError("At least one pulse component is required")
-
-    amplitudes = []
-    centers = []
-    for pulse in pulses:
-        _, amp, om0, _, _, _, _ = _unpack_pulse_tuple(pulse)
-        amplitudes.append(float(np.abs(amp)))
-        centers.append(float(om0))
-
-    return centers[int(np.argmax(amplitudes))]
-
-
-def sp_tot(gausses, om):
-    om = np.asarray(om)
-    retval = np.zeros_like(om, dtype=np.complex128)
-    if len(gausses) == 0:
-        return retval
-
-    om_ref = _dominant_peak_center(gausses)
-    domega = om - om_ref
-
-    for gauss in gausses:
-        _, a0, om0, s0, phi0, phase_grad, phase_chirp = _unpack_pulse_tuple(gauss)
-        phase = phi0 + phase_grad * domega + 0.5 * phase_chirp * domega**2
-        retval += spectrum_fun(a0, om0, s0, om) * np.exp(1j * phase)
-    return retval
-
-
 def extract_midslice(sig_full, slice_fracts, sliced_range, e_slice_fracts=None, e_sliced_range=None):
     if e_slice_fracts is None:
         n_t, n_e = sig_full.shape
@@ -351,23 +382,6 @@ def extract_midslice(sig_full, slice_fracts, sliced_range, e_slice_fracts=None, 
     sig_mid = sig_full[i0:i1, e_i0:e_i1]
 
     return sig_mid, axis_mid, i0, i1, e_axis_mid, e_i0, e_i1
-
-
-def synth_baseline_n(sp_pr, sp_x, om_pr, om_x, T, mode="same"):
-    d_om = om_pr[1] - om_pr[0]
-
-    phase_pr = np.exp(1j * om_pr * T)
-    phase_x = np.exp(1j * 0 * T)
-
-    f1 = sp_pr * phase_pr
-    f2 = -sp_x * phase_x / om_x
-    conv1 = fftconvolve(f1, f2, mode=mode, axes=1) * d_om
-
-    f1 = sp_x * phase_x
-    f2 = -sp_pr * phase_pr / om_pr
-    conv2 = fftconvolve(f1, f2, mode=mode, axes=1) * d_om
-
-    return conv1 + conv2
 
 
 def koay_basser_correction(M_obs, mean_noise_power, lambda_thresh=1, only_floor=False):
@@ -449,14 +463,6 @@ def resample(spec_corrected, rho_hi, rho_lo, om_ref, E, OM_T, N_NEW):
     Sig_cc_cubic_mesh = new_Sig_cc_interp(re_spline, im_spline, EPS1, EPS2)
 
     return Sig_cc_cubic_mesh, small_sig, extent, [idy_min, idy_max, idx_min, idx_max], E1, E2
-
-
-def downsample(sig, p):
-    n, m = sig.shape
-    if m % p != 0:
-        raise ValueError("Number of columns must be divisible by p")
-    k = m // p
-    return sig.reshape(n, k, p).mean(axis=2)
 
 
 def project_to_density_matrix(M, smooth_sigma=1.5):
