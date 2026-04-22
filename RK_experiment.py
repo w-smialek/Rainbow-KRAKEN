@@ -29,6 +29,7 @@ modified before running the pipeline methods.
 import numpy as np
 import os
 import shutil
+import gc
 from numpy import pi
 import matplotlib.pyplot as plt
 from scipy.signal import fftconvolve
@@ -388,8 +389,8 @@ class RK_experiment:
 
         self.x_lo = 24.0 + self.om_ref*hbar
         self.x_hi = 26.0 + self.om_ref*hbar
-        self.x_lo = 24.5 + self.om_ref*hbar
-        self.x_hi = 25.5 + self.om_ref*hbar
+        # self.x_lo = 24.5 + self.om_ref*hbar
+        # self.x_hi = 25.5 + self.om_ref*hbar
 
         self.y_lo = 1.0/hbar
         self.y_hi = 2.0/hbar
@@ -573,7 +574,7 @@ class RK_experiment:
 
     def probe_sp_correct(self):
 
-        dzeta = 0.15 if self.ifWide else 0.15
+        dzeta = 0.35 if self.ifWide else 0.25
 
         sp_true = rk.sp_tot(self.probes,self.OM_T)
 
@@ -582,6 +583,13 @@ class RK_experiment:
         sp_rec = np.repeat(sp_rec_col[:, np.newaxis], self.OM_T.shape[1], axis=1)
 
         self.rhodata, self.rhodata_roi, self.rhosigma, self.rhosigma_roi, self.E_roi, self.OM_T_roi = self._apply_correction(sp_true,dzeta)
+
+        om_row_idx = np.argmin(np.abs(self.OM_T_roi[:, 0] - self.om_ref))
+        dE = self.E_roi[0, 1] - self.E_roi[0, 0]
+        roi_norm = np.sum(np.abs(self.rhodata_roi)[om_row_idx, :]) * dE
+
+        self.rhodata_roi = self.rhodata_roi / roi_norm
+        self.rhosigma_roi = self.rhosigma_roi / roi_norm
 
         rk.plot_mat(self.rhosigma_roi, extent=[self.E_roi[0,0]-self.om_ref*hbar,self.E_roi[0,-1]-self.om_ref*hbar,self.OM_T_roi[1,0]*hbar,self.OM_T_roi[-1,0]*hbar], cmap='plasma',
                  saveloc='single_output_temp/rhos/sigmas.png', xlabel='Kinetic energy $E_f$ (eV)', ylabel='Indirect energy $\\hbar \\omega_\\tau$ (eV)',
@@ -593,6 +601,12 @@ class RK_experiment:
 
         self.rhodata_rec, self.rhodata_roi_rec, self.rhosigma_rec, self.rhosigma_roi_rec, self.E_roi_rec, self.OM_T_roi_rec = self._apply_correction(sp_rec,dzeta)
 
+        om_row_idx = np.argmin(np.abs(self.OM_T_roi_rec[:, 0] - self.om_ref))
+        roi_norm = np.sum(np.abs(self.rhodata_roi_rec)[om_row_idx, :]) * dE
+
+        self.rhodata_roi_rec = self.rhodata_roi_rec / roi_norm
+        self.rhosigma_roi_rec = self.rhosigma_roi_rec / roi_norm
+
         rk.plot_mat(self.rhosigma_roi_rec, extent=[self.E_roi_rec[0,0]-self.om_ref*hbar,self.E_roi_rec[0,-1]-self.om_ref*hbar,self.OM_T_roi_rec[1,0]*hbar,self.OM_T_roi_rec[-1,0]*hbar], cmap='plasma',
                  saveloc='single_output_temp/rhos/sigmas_rec.png', xlabel='Kinetic energy $E_f$ (eV)', ylabel='Indirect energy $\\hbar \\omega_\\tau$ (eV)',
                  title='$\\sigma(E_f,\\hbar \\omega_\\tau )$', show=False, mode='abs')
@@ -602,133 +616,72 @@ class RK_experiment:
                  title='$\\tilde S_{corr}(E_f,\\omega_\\tau)$', show=False, square=True)
 
         return
-
-
-    # @staticmethod
-    # def _interp_complex(x, x_grid, y_complex):
-    #     return np.interp(x, x_grid, np.real(y_complex), left=0.0, right=0.0) + 1j * np.interp(
-    #         x, x_grid, np.imag(y_complex), left=0.0, right=0.0
-    #     )
-
-    # def _apply_probe_modulation_correction(self, probe_modulation, dzeta):
-    #     mod_abs = np.abs(probe_modulation)
-    #     where_off = mod_abs < dzeta
-
-    #     safe_mod = probe_modulation.copy()
-    #     safe_mod[where_off] = dzeta
-
-    #     sig_corr = self.signal_sb_FT / safe_mod
-    #     sig_corr[where_off] = 0
-
-    #     sigma_corr = self.sigma / np.maximum(mod_abs, dzeta)
-    #     sigma_corr[where_off] = 0
-
-    #     return sig_corr, sigma_corr
-
-    # def probe_sp_correct(self):
-
-    #     probe_mod_true = rk.sp_tot(self.probes, self.OM_T) / np.maximum(self.OM_T, 0.01)
-    #     probe_mod_inferred = self._interp_complex(self.OM_T, self.om_probe, self.sp_probe_inferred_complex) / np.maximum(self.OM_T, 0.01)
-
-    #     if self.ifWide:
-    #         dzeta_true = 0.1 * np.max(np.abs(probe_mod_true))
-    #         dzeta_inferred = 0.1 * np.max(np.abs(probe_mod_inferred))
-    #     else:
-    #         dzeta_true = 0.05 * np.max(np.abs(probe_mod_true))
-    #         dzeta_inferred = 0.05 * np.max(np.abs(probe_mod_inferred))
-
-    #     self.signal_sb_FT_corrected_true, self.sigma_true = self._apply_probe_modulation_correction(probe_mod_true, dzeta_true)
-    #     self.signal_sb_FT_corrected_inferred, self.sigma_inferred = self._apply_probe_modulation_correction(probe_mod_inferred, dzeta_inferred)
-
-    #     if self.ifWide:
-    #         self.signal_sb_FT_corrected_true = median_filter(np.real(self.signal_sb_FT_corrected_true), size=(3, 3)) + 1j * median_filter(np.imag(self.signal_sb_FT_corrected_true), size=(3, 3))
-    #         self.signal_sb_FT_corrected_inferred = median_filter(np.real(self.signal_sb_FT_corrected_inferred), size=(3, 3)) + 1j * median_filter(np.imag(self.signal_sb_FT_corrected_inferred), size=(3, 3))
-
-    #     # Use inferred-probe correction for downstream reconstruction and keep true-probe correction for diagnostics.
-    #     self.signal_sb_FT_corrected = self.signal_sb_FT_corrected_inferred
-    #     self.sigma_corrected = self.sigma_inferred
-
-    #     x_mask = (self.E[0, :] > self.x_lo) & (self.E[0, :] < self.x_hi)
-    #     y_mask_true = np.abs(probe_mod_true[:, 0]) > dzeta_true
-    #     y_mask_inferred = np.abs(probe_mod_inferred[:, 0]) > dzeta_inferred
-
-    #     self.E_rho_true = self.E[np.ix_(y_mask_true, x_mask)]
-    #     self.OM_T_rho_true = self.OM_T[np.ix_(y_mask_true, x_mask)]
-    #     self.sigma_rho_true = np.abs(self.sigma_true[np.ix_(y_mask_true, x_mask)]).astype(float)
-    #     self.signal_sb_FT_corrected_rho_true = self.signal_sb_FT_corrected_true[np.ix_(y_mask_true, x_mask)]
-
-    #     self.E_rho = self.E[np.ix_(y_mask_inferred, x_mask)]
-    #     self.OM_T_rho = self.OM_T[np.ix_(y_mask_inferred, x_mask)]
-    #     self.signal_sb_FT_corrected_rho = self.signal_sb_FT_corrected[np.ix_(y_mask_inferred, x_mask)]
-    #     self.sigma_rho = np.abs(self.sigma_corrected[np.ix_(y_mask_inferred, x_mask)]).astype(float)
-
-    #     rk.plot_mat(self.sigma_rho, extent=[self.E_rho[0,0]-self.om_ref*hbar,self.E_rho[0,-1]-self.om_ref*hbar,self.OM_T_rho[1,0]*hbar,self.OM_T_rho[-1,0]*hbar], cmap='plasma',
-    #              saveloc='single_output_temp/rhos/sigmas.png', xlabel='Kinetic energy $E_f$ (eV)', ylabel='Indirect energy $\\hbar \\omega_\\tau$ (eV)',
-    #              title='$\\sigma(E_f,\\hbar \\omega_\\tau )$', show=False, mode='abs')
-
-    #     rk.plot_mat(self.signal_sb_FT_corrected_rho - 1e-3, extent=[self.E_rho[0,0]-self.om_ref*hbar,self.E_rho[0,-1]-self.om_ref*hbar,self.OM_T_rho[1,0]*hbar,self.OM_T_rho[-1,0]*hbar], cmap='plasma',
-    #              saveloc='single_output_temp/rhos/rho_rec_unproj.png', xlabel='Kinetic energy $E_f$ (eV)', ylabel='Indirect energy $\\hbar \\omega_\\tau$ (eV)',
-    #              title='$\\tilde S_{corr}(E_f,\\omega_\\tau)$ using inferred probe', show=False, square=True)
-
-    #     rk.plot_mat(self.signal_sb_FT_corrected_rho_true - 1e-3, extent=[self.E_rho_true[0,0]-self.om_ref*hbar,self.E_rho_true[0,-1]-self.om_ref*hbar,self.OM_T_rho_true[1,0]*hbar,self.OM_T_rho_true[-1,0]*hbar], cmap='plasma',
-    #              saveloc='single_output_temp/rhos/rho_rec_unproj_true_probe.png', xlabel='Kinetic energy $E_f$ (eV)', ylabel='Indirect energy $\\hbar \\omega_\\tau$ (eV)',
-    #              title='$\\tilde S_{corr}(E_f,\\omega_\\tau)$ using true probe', show=False, square=True)
-
-    #     corr_delta = self.signal_sb_FT_corrected_true - self.signal_sb_FT_corrected_inferred
-    #     corr_rel = np.sum(np.abs(corr_delta)) / np.maximum(np.sum(np.abs(self.signal_sb_FT_corrected_true)), 1e-12)
-    #     self.probe_correction_rel_res = float(corr_rel)
-
-    #     rk.plot_mat(np.abs(corr_delta) / np.maximum(np.max(np.abs(self.signal_sb_FT_corrected_true)), 1e-12),
-    #              extent=[self.E_lo,self.E_hi,hbar*self.OM_T[0,0],hbar*self.OM_T[-1,0]],
-    #              saveloc='single_output_temp/rhos/rho_rec_unproj_true_vs_inferred_diff.png',
-    #              xlabel='Kinetic energy $E_f$ (eV)', ylabel='Indirect energy $\\hbar \\omega_\\tau$ (eV)',
-    #              title='Relative difference between true and inferred probe corrections',
-    #              show=False, mode='abs', caption='RES=%.4f'%self.probe_correction_rel_res)
-
-    def _run_density_branch(self, branch_tag, signal_corrected, sigma_corrected, signal_roi, sigma_roi, E_rho, OM_T_rho):
-        E1 = E_rho - OM_T_rho*hbar + self.om_ref*hbar - self.om_ref*hbar
-        E2 = E_rho - self.om_ref*hbar
+    
+    def mcmc_fit(self):
 
         N_NEW = 100
         rho_raw, _, _, _, E1interp, E2interp = rk.resample(
-            signal_corrected, self.rho_hi, self.rho_lo, self.om_ref, self.E, self.OM_T, N_NEW)
+            self.rhodata, self.rho_hi, self.rho_lo, self.om_ref, self.E, self.OM_T, N_NEW)
         rho_raw_sigma, _, _, _, E1interp, E2interp = rk.resample(
-            sigma_corrected, self.rho_hi, self.rho_lo, self.om_ref, self.E, self.OM_T, N_NEW)
-
-        ideal_rho = self.rho_f(E1interp + self.om_ref*hbar, E2interp + self.om_ref*hbar)
-        ideal_rho = ideal_rho/np.trace(ideal_rho)
-
+            self.rhosigma, self.rho_hi, self.rho_lo, self.om_ref, self.E, self.OM_T, N_NEW)
+        
         raw_trace = np.trace(rho_raw)
         rho_raw = rho_raw/raw_trace
         rho_raw_sigma = rho_raw_sigma/raw_trace
 
-        rk.plot_mat(rho_raw - 1e-4, extent=[self.rho_lo,self.rho_hi,self.rho_lo,self.rho_hi], cmap='plasma',
-                 saveloc=f'single_output_temp/rhos/rho_raw_{branch_tag}', xlabel='Energy $\\varepsilon_2$ [eV]', ylabel='Energy $\\varepsilon_1$ [eV]',
-                 title=f'$\\tilde S_{{corr}}(\\varepsilon_2,\\varepsilon_1)$ [{branch_tag}]', show=False, square=True)
+        ideal_rho = self.rho_f(E1interp + self.om_ref*hbar, E2interp + self.om_ref*hbar)
+        ideal_rho = ideal_rho/np.trace(ideal_rho)
 
+        rk.plot_mat(rho_raw - 1e-4, extent=[self.rho_lo,self.rho_hi,self.rho_lo,self.rho_hi], cmap='plasma',
+                saveloc='single_output_temp/rhos/rho_raw', xlabel='Energy $\\varepsilon_2$ [eV]', ylabel='Energy $\\varepsilon_1$ [eV]',
+                title='$\\tilde S_{corr}(\\varepsilon_2,\\varepsilon_1)$', show=False, square=True)
+        
         rk.plot_mat(rho_raw_sigma, extent=[self.rho_lo,self.rho_hi,self.rho_lo,self.rho_hi], cmap='plasma',
-                 saveloc=f'single_output_temp/rhos/rho_raw_sigma_{branch_tag}', xlabel='Energy $\\varepsilon_2$ [eV]', ylabel='Energy $\\varepsilon_1$ [eV]',
-                 title=f'$\\sigma (\\varepsilon_2,\\varepsilon_1)$ [{branch_tag}]', show=False, mode='abs')
+                saveloc='single_output_temp/rhos/rho_raw_sigma', xlabel='Energy $\\varepsilon_2$ [eV]', ylabel='Energy $\\varepsilon_1$ [eV]',
+                title='$\\sigma (\\varepsilon_2,\\varepsilon_1)$', show=False, mode='abs')
 
         rk.plot_mat(ideal_rho - 1e-4, extent=[self.rho_lo,self.rho_hi,self.rho_lo,self.rho_hi], cmap='plasma',
-                 saveloc=f'single_output_temp/rhos/rho_ideal_{branch_tag}.png', xlabel='Energy $\\varepsilon_2$ [eV]', ylabel='Energy $\\varepsilon_1$ [eV]',
-                 title=f'Initial photoelectron density matrix [{branch_tag}]', show=False, square=True)
+                saveloc='single_output_temp/rhos/rho_ideal.png', xlabel='Energy $\\varepsilon_2$ [eV]', ylabel='Energy $\\varepsilon_1$ [eV]',
+                title='Initial photoelectron density matrix', show=False, square=True)
 
-        inferred_params = None
+        rho_raw_rec, _, _, _, E1interp, E2interp = rk.resample(
+            self.rhodata_rec, self.rho_hi, self.rho_lo, self.om_ref, self.E, self.OM_T, N_NEW)
+        rho_raw_sigma_rec, _, _, _, E1interp, E2interp = rk.resample(
+            self.rhosigma_rec, self.rho_hi, self.rho_lo, self.om_ref, self.E, self.OM_T, N_NEW)
+        
+        raw_trace = np.trace(rho_raw_rec)
+        rho_raw_rec = rho_raw_rec/raw_trace
+        rho_raw_sigma_rec = rho_raw_sigma_rec/raw_trace
+
+        rk.plot_mat(rho_raw - 1e-4, extent=[self.rho_lo,self.rho_hi,self.rho_lo,self.rho_hi], cmap='plasma',
+                saveloc='single_output_temp/rhos/rho_raw_rec', xlabel='Energy $\\varepsilon_2$ [eV]', ylabel='Energy $\\varepsilon_1$ [eV]',
+                title='$\\tilde S_{corr}(\\varepsilon_2,\\varepsilon_1)$', show=False, square=True)
+        
+        rk.plot_mat(rho_raw_sigma, extent=[self.rho_lo,self.rho_hi,self.rho_lo,self.rho_hi], cmap='plasma',
+                saveloc='single_output_temp/rhos/rho_raw_sigma_rec', xlabel='Energy $\\varepsilon_2$ [eV]', ylabel='Energy $\\varepsilon_1$ [eV]',
+                title='$\\sigma (\\varepsilon_2,\\varepsilon_1)$', show=False, mode='abs')
+
+
+        E1 = self.E_roi - self.OM_T_roi*hbar
+        E2 = self.E_roi - self.om_ref*hbar
+
         if self.ifWide:
             inferred_rho = rk.project_to_density_matrix(rho_raw,4)
         else:
-            selected_indices = sigma_roi.flatten() > 0
+            selected_indices = self.rhosigma_roi.flatten() > 0
+
+            print(E1.shape, E2.shape, self.rhodata_roi.shape, self.rhosigma_roi.shape)
+            print(selected_indices.shape)
+
+            gc.collect()
 
             amps_hat, mus_hat, sigmas_hat, betas_hat, taus_hat, lambdas_hat, gamma_hat, eta_hat = Bayesian_MCMC(
                 E1.flatten()[selected_indices],
                 E2.flatten()[selected_indices],
-                signal_roi.flatten()[selected_indices],
-                sigma_roi.flatten()[selected_indices],
+                self.rhodata_roi.flatten()[selected_indices],
+                self.rhosigma_roi.flatten()[selected_indices],
                 n_peaks=2
             )
-
-            inferred_params = (amps_hat, mus_hat, sigmas_hat, betas_hat, taus_hat, lambdas_hat, gamma_hat, eta_hat)
 
             def rho_inferred(e1,e2):
                 return rho_model(e1,e2,amps_hat,mus_hat,sigmas_hat,betas_hat,taus_hat,lambdas_hat,gamma_hat,eta_hat)
@@ -736,116 +689,49 @@ class RK_experiment:
             inferred_rho = rho_inferred(E1interp, E2interp)
             inferred_rho = inferred_rho/np.trace(inferred_rho)
 
-            posterior_src = 'single_output_temp/MCMCrho/mcmc_posterior.png'
-            posterior_dst = f'single_output_temp/MCMCrho/mcmc_posterior_{branch_tag}.png'
-            if os.path.exists(posterior_src):
-                shutil.copyfile(posterior_src, posterior_dst)
-
-        fid0 = rk.fidelity(ideal_rho, inferred_rho)
+        fid = rk.fidelity(ideal_rho, inferred_rho)
 
         rk.plot_mat(inferred_rho - 1e-4, extent=[self.rho_lo,self.rho_hi,self.rho_lo,self.rho_hi], cmap='plasma',
-                saveloc=f'single_output_temp/rhos/rho_inferred_{branch_tag}.png', xlabel='Energy $\\varepsilon_2$ [eV]', ylabel='Energy $\\varepsilon_1$ [eV]',
-                title=f'Inferred density matrix [{branch_tag}]', show=False, caption='F=%.3f'%fid0, square=True)
-
-        rk.plot_mat((ideal_rho - inferred_rho) / np.maximum(np.max(np.abs(ideal_rho)), 1e-12), extent=[self.rho_lo,self.rho_hi,self.rho_lo,self.rho_hi], cmap='plasma',
-                saveloc=f'single_output_temp/rhos/rho_diff_{branch_tag}.png', xlabel='Energy $\\varepsilon_2$ [eV]', ylabel='Energy $\\varepsilon_1$ [eV]',
-                title=f'$(\\rho_0 - \\rho_{{\\text{{inferred}}}}) / \\text{{max}}(|\\rho_0|)$ [{branch_tag}]', show=False, square=True)
-
-        return {
-            'ideal_rho': ideal_rho,
-            'rho_raw': rho_raw,
-            'rho_raw_sigma': rho_raw_sigma,
-            'inferred_rho': inferred_rho,
-            'fidelity': float(fid0),
-            'inferred_params': inferred_params,
-        }
-
-    def mcmc_fit(self):
-        true_branch = self._run_density_branch(
-            'true_probe',
-            self.signal_sb_FT_corrected_true,
-            self.sigma_true,
-            self.signal_sb_FT_corrected_rho_true,
-            self.sigma_rho_true,
-            self.E_rho_true,
-            self.OM_T_rho_true,
-        )
-
-        # inferred_branch = self._run_density_branch(
-        #     'reconstructed_probe',
-        #     self.signal_sb_FT_corrected,
-        #     self.sigma_corrected,
-        #     self.signal_sb_FT_corrected_rho,
-        #     self.sigma_rho,
-        #     self.E_rho,
-        #     self.OM_T_rho,
-        # )
-
-        # rho_raw_rel_diff = np.sum(np.abs(true_branch['rho_raw'] - inferred_branch['rho_raw'])) / np.maximum(np.sum(np.abs(true_branch['rho_raw'])), 1e-12)
-        # rho_inferred_rel_diff = np.sum(np.abs(true_branch['inferred_rho'] - inferred_branch['inferred_rho'])) / np.maximum(np.sum(np.abs(true_branch['inferred_rho'])), 1e-12)
-
-        # rk.plot_mat((true_branch['inferred_rho'] - inferred_branch['inferred_rho']) / np.maximum(np.max(np.abs(true_branch['ideal_rho'])), 1e-12),
-        #         extent=[self.rho_lo,self.rho_hi,self.rho_lo,self.rho_hi], cmap='plasma',
-        #         saveloc='single_output_temp/rhos/rho_inferred_true_vs_reconstructed_diff.png',
-        #         xlabel='Energy $\\varepsilon_2$ [eV]', ylabel='Energy $\\varepsilon_1$ [eV]',
-        #         title='$(\\rho_{\\text{true probe}}-\\rho_{\\text{reconstructed probe}}) / \\text{max}(|\\rho_0|)$',
-        #         show=False, square=True, caption='RES=%.4f'%rho_inferred_rel_diff)
-
-        # rk.plot_mat((true_branch['rho_raw'] - inferred_branch['rho_raw']) / np.maximum(np.max(np.abs(true_branch['rho_raw'])), 1e-12),
-        #         extent=[self.rho_lo,self.rho_hi,self.rho_lo,self.rho_hi], cmap='plasma',
-        #         saveloc='single_output_temp/rhos/rho_raw_true_vs_reconstructed_diff.png',
-        #         xlabel='Energy $\\varepsilon_2$ [eV]', ylabel='Energy $\\varepsilon_1$ [eV]',
-        #         title='$(\\tilde S_{corr}^{\\text{true}}-\\tilde S_{corr}^{\\text{reconstructed}})/\\text{max}$',
-        #         show=False, square=True, caption='RES=%.4f'%rho_raw_rel_diff)
+                saveloc=f'single_output_temp/rhos/rho_inferred.png', xlabel='Energy $\\varepsilon_2$ [eV]', ylabel='Energy $\\varepsilon_1$ [eV]',
+                title=f'Inferred density matrix', show=False, caption='F=%.3f'%fid, square=True)
 
 
 
+        E1 = self.E_roi_rec - self.OM_T_roi_rec*hbar
+        E2 = self.E_roi_rec - self.om_ref*hbar
 
+        if self.ifWide:
+            inferred_rho = rk.project_to_density_matrix(rho_raw_rec,4)
+        else:
+            selected_indices = self.rhosigma_roi_rec.flatten() > 0
 
+            print(E1.shape, E2.shape, self.rhodata_roi_rec.shape, self.rhosigma_roi_rec.shape)
+            print(selected_indices.shape)
 
+            gc.collect()
 
-        # comparison_metrics = {
-        #     'probe_reconstruction_res': float(getattr(self, 'probe_reconstruction_res', np.nan)),
-        #     'probe_correction_rel_res': float(getattr(self, 'probe_correction_rel_res', np.nan)),
-        #     'fidelity_true_probe': float(true_branch['fidelity']),
-        #     'fidelity_reconstructed_probe': float(inferred_branch['fidelity']),
-        #     'fidelity_delta_true_minus_reconstructed': float(true_branch['fidelity'] - inferred_branch['fidelity']),
-        #     'rho_raw_rel_diff_true_vs_reconstructed': float(rho_raw_rel_diff),
-        #     'rho_inferred_rel_diff_true_vs_reconstructed': float(rho_inferred_rel_diff),
-        # }
-        # self.downstream_comparison_metrics = comparison_metrics
+            amps_hat, mus_hat, sigmas_hat, betas_hat, taus_hat, lambdas_hat, gamma_hat, eta_hat = Bayesian_MCMC(
+                E1.flatten()[selected_indices],
+                E2.flatten()[selected_indices],
+                self.rhodata_roi_rec.flatten()[selected_indices],
+                self.rhosigma_roi_rec.flatten()[selected_indices],
+                n_peaks=2,
+                suf='_rec'
+            )
 
-        # with open('single_output_temp/rhos/downstream_comparison_metrics.txt', 'w', encoding='utf-8') as fout:
-        #     for key in sorted(comparison_metrics.keys()):
-        #         fout.write(f'{key}: {comparison_metrics[key]:.10e}\\n')
+            def rho_inferred(e1,e2):
+                return rho_model(e1,e2,amps_hat,mus_hat,sigmas_hat,betas_hat,taus_hat,lambdas_hat,gamma_hat,eta_hat)
 
-        # # Preserve legacy outputs as reconstructed-probe branch defaults.
-        # rk.plot_mat(inferred_branch['rho_raw'] - 1e-4, extent=[self.rho_lo,self.rho_hi,self.rho_lo,self.rho_hi], cmap='plasma',
-        #          saveloc='single_output_temp/rhos/rho_raw', xlabel='Energy $\\varepsilon_2$ [eV]', ylabel='Energy $\\varepsilon_1$ [eV]',
-        #          title='$\\tilde S_{corr}(\\varepsilon_2,\\varepsilon_1)$', show=False, square=True)
+            inferred_rho_rec = rho_inferred(E1interp, E2interp)
+            inferred_rho_rec = inferred_rho_rec/np.trace(inferred_rho_rec)
 
-        # rk.plot_mat(inferred_branch['rho_raw_sigma'], extent=[self.rho_lo,self.rho_hi,self.rho_lo,self.rho_hi], cmap='plasma',
-        #          saveloc='single_output_temp/rhos/rho_raw_sigma', xlabel='Energy $\\varepsilon_2$ [eV]', ylabel='Energy $\\varepsilon_1$ [eV]',
-        #          title='$\\sigma (\\varepsilon_2,\\varepsilon_1)$', show=False, mode='abs')
+        fid_rec = rk.fidelity(ideal_rho, inferred_rho_rec)
 
-        # rk.plot_mat(inferred_branch['ideal_rho'] - 1e-4, extent=[self.rho_lo,self.rho_hi,self.rho_lo,self.rho_hi], cmap='plasma',
-        #          saveloc='single_output_temp/rhos/rho_ideal.png', xlabel='Energy $\\varepsilon_2$ [eV]', ylabel='Energy $\\varepsilon_1$ [eV]',
-        #          title='Initial photoelectron density matrix', show=False, square=True)
+        rk.plot_mat(inferred_rho_rec - 1e-4, extent=[self.rho_lo,self.rho_hi,self.rho_lo,self.rho_hi], cmap='plasma',
+                saveloc=f'single_output_temp/rhos/rho_inferred_rec.png', xlabel='Energy $\\varepsilon_2$ [eV]', ylabel='Energy $\\varepsilon_1$ [eV]',
+                title=f'Inferred density matrix', show=False, caption='F=%.3f'%fid_rec, square=True)
 
-        # rk.plot_mat(inferred_branch['inferred_rho'] - 1e-4, extent=[self.rho_lo,self.rho_hi,self.rho_lo,self.rho_hi], cmap='plasma',
-        #         saveloc='single_output_temp/rhos/rho_inferred.png', xlabel='Energy $\\varepsilon_2$ [eV]', ylabel='Energy $\\varepsilon_1$ [eV]',
-        #         title='Inferred density matrix', show=False, caption='F=%.3f'%inferred_branch['fidelity'], square=True)
-
-        # rk.plot_mat((inferred_branch['ideal_rho'] - inferred_branch['inferred_rho']) / np.maximum(np.max(np.abs(inferred_branch['ideal_rho'])), 1e-12), extent=[self.rho_lo,self.rho_hi,self.rho_lo,self.rho_hi], cmap='plasma',
-        #         saveloc='single_output_temp/rhos/rho_diff.png', xlabel='Energy $\\varepsilon_2$ [eV]', ylabel='Energy $\\varepsilon_1$ [eV]',
-        #         title='$(\\rho_0 - \\rho_{\\text{inferred}}) / \\text{max}(|\\rho_0|) $', show=False, square=True)
-
-        # self.fidelity = inferred_branch['fidelity']
-        # self.inferred_rho = inferred_branch['inferred_rho']
-        # if inferred_branch['inferred_params'] is not None:
-        #     self.inferred_params = inferred_branch['inferred_params']
-        # self.branch_true = true_branch
-        # self.branch_reconstructed = inferred_branch
+        return
 
     def run_full_pipeline(self):
         self.generate_signal()

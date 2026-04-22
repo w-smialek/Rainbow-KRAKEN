@@ -298,6 +298,8 @@ def LBFGS_probe(
     init_params = (jnp.real(v_init), jnp.imag(v_init))
     
     res = solver.run(init_params=init_params)
+
+    jax.clear_caches()
     
     opt_f_real, opt_f_imag = res.params
     opt_f = opt_f_real + 1j * opt_f_imag
@@ -305,5 +307,5 @@ def LBFGS_probe(
     z_fit = forward_model_discrete(opt_f_real, opt_f_imag, om_grid, om_p, om_t, zero_ctx)
     
     # Return discrete probe field over its spectral grid directly.
-    return opt_f, np.asarray(z_fit)
+    return np.asarray(opt_f), np.asarray(z_fit)
 

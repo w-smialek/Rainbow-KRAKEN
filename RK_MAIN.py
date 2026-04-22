@@ -7,7 +7,7 @@ T_reach = 150
 E_res = 0.01
 N_T = 501
 p_E = 4
-alpha = 10000
+alpha = 30000
 b = 1
 
 sideband_lo = 25.5
@@ -25,9 +25,12 @@ s_probes = [0.10 / hbar, 0.05 / hbar]
 probe_phase = 1.0
 probe_phase_grad = 2.5
 probe_phase_chirp = 2.5
+probe_phase = 0.0
+probe_phase_grad = 0.0
+probe_phase_chirp = 0.0
 
 A_ref = 1.0
-om_ref = 1.45 / hbar
+om_ref = 1.50 / hbar
 s_ref = 0.025 / hbar
 
 experiment = RK_experiment(
@@ -68,4 +71,4 @@ experiment.process_and_detrend()
 experiment.kb_correct()
 experiment.probe_reconstruct()
 experiment.probe_sp_correct()
-# experiment.mcmc_fit()
+experiment.mcmc_fit()

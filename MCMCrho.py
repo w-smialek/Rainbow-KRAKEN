@@ -6,6 +6,7 @@ import numpyro.distributions as dist
 from numpyro.infer import MCMC, NUTS
 import numpy as np
 import matplotlib.pyplot as plt
+import gc
 
 def _circular_mean(angles, axis=0):
     """Return circular mean for angles in radians, robust to +/-pi wrap."""
@@ -90,7 +91,7 @@ def model(x, y, sigma_obs, z_obs=None, n_peaks=2):
     """
     # Priors per peak (same prior family for each component).
     amps_now = numpyro.sample(
-        'amps', dist.Uniform(0.0, 1000.0).expand([n_peaks]).to_event(1))
+        'amps', dist.Uniform(0.0, 1.0).expand([n_peaks]).to_event(1))
     mus_now = numpyro.sample(
         'mus', dist.Uniform(24.0, 26.0).expand([n_peaks]).to_event(1))
     sigmas_now = numpyro.sample(
@@ -141,7 +142,7 @@ def model(x, y, sigma_obs, z_obs=None, n_peaks=2):
         numpyro.sample('obs_real', dist.Normal(z_real_expected, sigma_eff), obs=jnp.real(z_obs) if z_obs is not None else None)
         numpyro.sample('obs_imag', dist.Normal(z_imag_expected, sigma_eff), obs=jnp.imag(z_obs) if z_obs is not None else None)
 
-def Bayesian_MCMC(x_obs, y_obs, z_obs, sigma_obs, n_peaks=2):
+def Bayesian_MCMC(x_obs, y_obs, z_obs, sigma_obs, n_peaks=2, suf=''):
     
     print("\nSetting up NUTS MCMC...")
     nuts_kernel = NUTS(model)
@@ -164,6 +165,7 @@ def Bayesian_MCMC(x_obs, y_obs, z_obs, sigma_obs, n_peaks=2):
     
     # Extract posterior samples
     samples = mcmc.get_samples()
+
     amps_samples = np.array(samples['amps'])
     mus_samples = np.array(samples['mus'])
     sigmas_samples = np.array(samples['sigmas'])
@@ -173,6 +175,15 @@ def Bayesian_MCMC(x_obs, y_obs, z_obs, sigma_obs, n_peaks=2):
     gamma_mag_samples = np.array(samples['gamma_mag']) if n_peaks > 1 else np.zeros((amps_samples.shape[0], 0))
     gamma_phase_samples = np.array(samples['gamma_phase']) if n_peaks > 1 else np.zeros((amps_samples.shape[0], 0))
     eta_off_diag_samples = np.array(samples['eta_off_diag']) if n_peaks > 1 else np.zeros((amps_samples.shape[0], 0))
+
+    # Drop JAX-backed MCMC state once NumPy copies are materialized.
+    del samples
+    del mcmc
+    del nuts_kernel
+    del rng_key
+    gc.collect()
+    jax.clear_caches()
+
 
     amps_hat = np.mean(amps_samples, axis=0)
     mus_hat = np.mean(mus_samples, axis=0)
@@ -233,16 +244,8 @@ def Bayesian_MCMC(x_obs, y_obs, z_obs, sigma_obs, n_peaks=2):
 
     fig.suptitle('Posterior distributions of fitted parameters', fontsize=30, y=1.02, weight='bold')
     plt.tight_layout()
-    plt.savefig('single_output_temp/MCMCrho/mcmc_posterior.png', dpi=400, bbox_inches='tight')
+    plt.savefig(f'single_output_temp/MCMCrho/mcmc_posterior{suf}.png', dpi=200, bbox_inches='tight')
     plt.close(fig)
-
-    # Observed data diagnostics mapped to a full grid; unobserved entries stay at zero.
-    x_grid = np.unique(np.sort(x_obs))
-    y_grid = np.unique(np.sort(y_obs))
-    extent = [x_grid.min(), x_grid.max(), y_grid.min(), y_grid.max()]
-
-    # Final inferred matrix from posterior-mean parameters.
-    Xg, Yg = np.meshgrid(x_grid, y_grid)
 
     gamma_hat = _build_hermitian_gamma(n_peaks, jnp.array(gamma_mag_hat), jnp.array(gamma_phase_hat))
     eta_hat = _build_symmetric_eta(n_peaks, jnp.array(eta_off_diag_hat))
@@ -255,18 +258,5 @@ def Bayesian_MCMC(x_obs, y_obs, z_obs, sigma_obs, n_peaks=2):
             jnp.array(lambdas_hat),
             gamma_hat,
             eta_hat)
-
-    z_inf = rho_model(
-        jnp.array(Xg),
-        jnp.array(Yg),
-        jnp.array(amps_hat),
-        jnp.array(mus_hat),
-        jnp.array(sigmas_hat),
-        jnp.array(betas_hat),
-        jnp.array(taus_hat),
-        jnp.array(lambdas_hat),
-        gamma_hat,
-        eta_hat,
-    )
 
     return amps_hat, mus_hat, sigmas_hat, betas_hat, taus_hat, lambdas_hat, gamma_hat, eta_hat
