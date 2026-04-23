@@ -1,3 +1,5 @@
 # Ignore everything inside the single_output directory
 /__pycache__/
 /single_output_temp/
+/plot_output/
+/fonts/
