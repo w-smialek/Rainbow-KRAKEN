@@ -203,49 +203,25 @@ def Bayesian_MCMC(x_obs, y_obs, z_obs, sigma_obs, n_peaks=2, num_warmup=1000, nu
         gamma_phase_hat = np.array([])
         eta_off_diag_hat = np.array([])
     
-    # Plot posterior diagnostics for all fitted parameters.
-    posterior_panels = []
-
+    # Save posterior samples to npz file
+    posterior_data = {}
     for k in range(n_peaks):
-        posterior_panels.append((f'$D_{{{k+1}{k+1}}}$', amps_samples[:, k]))
-        posterior_panels.append((f'$\\mu_{k+1}$', mus_samples[:, k]))
-        posterior_panels.append((f'$\\sigma_{k+1}$', sigmas_samples[:, k]))
-        posterior_panels.append((f'$\\beta_{k+1}$', betas_samples[:, k]))
-        posterior_panels.append((f'$\\tau_{k+1}$', taus_samples[:, k]))
-        posterior_panels.append((f'$\\gamma_{k+1}$', lambdas_samples[:, k]))
+        posterior_data[f'amps_{k}'] = amps_samples[:, k]
+        posterior_data[f'mus_{k}'] = mus_samples[:, k]
+        posterior_data[f'sigmas_{k}'] = sigmas_samples[:, k]
+        posterior_data[f'betas_{k}'] = betas_samples[:, k]
+        posterior_data[f'taus_{k}'] = taus_samples[:, k]
+        posterior_data[f'lambdas_{k}'] = lambdas_samples[:, k]
 
     pair_idx = 0
     for i in range(n_peaks):
         for j in range(i + 1, n_peaks):
-            posterior_panels.append((f'$|D_{{{i+1}{j+1}}}| / \\sqrt{{D_{{{i+1}{i+1}}} D_{{{j+1}{j+1}}}}}$', gamma_mag_samples[:, pair_idx]))
-            posterior_panels.append((f'$\\text{{arg}}(D_{{{i+1}{j+1}}})$', gamma_phase_samples[:, pair_idx]))
-            posterior_panels.append((f'$\\eta_{{{i+1}{j+1}}}$', eta_off_diag_samples[:, pair_idx]))
+            posterior_data[f'gamma_mag_{i}_{j}'] = gamma_mag_samples[:, pair_idx]
+            posterior_data[f'gamma_phase_{i}_{j}'] = gamma_phase_samples[:, pair_idx]
+            posterior_data[f'eta_offdiag_{i}_{j}'] = eta_off_diag_samples[:, pair_idx]
             pair_idx += 1
 
-    n_panels = len(posterior_panels)
-    n_cols = 4
-    n_rows = int(np.ceil(n_panels / n_cols))
-    fig, axs = plt.subplots(n_rows, n_cols, figsize=(4.2 * n_cols, 2.8 * n_rows))
-    axs = np.atleast_1d(axs).ravel()
-
-    for ax, (label, values) in zip(axs, posterior_panels):
-        if label.startswith('arg('):
-            values_wrapped = ((values + np.pi) % (2.0 * np.pi)) - np.pi
-            ax.hist(values_wrapped, bins=np.linspace(-np.pi, np.pi, 41), density=True, alpha=0.75, color='tab:blue')
-            ax.axvline(_circular_mean(values_wrapped), color='black', linestyle='--', linewidth=1.0)
-            ax.set_xlim(-np.pi, np.pi)
-        else:
-            ax.hist(values, bins=40, density=True, alpha=0.75, color='tab:blue')
-            ax.axvline(np.mean(values), color='black', linestyle='--', linewidth=1.0)
-        ax.set_title(label, fontsize=20, y=1.04)
-
-    for ax in axs[n_panels:]:
-        ax.axis('off')
-
-    fig.suptitle('Posterior distributions of fitted parameters', fontsize=30, y=1.02, weight='bold')
-    plt.tight_layout()
-    plt.savefig(f'single_output_temp/6mcmc/mcmc_posterior{suffix}.png', dpi=200, bbox_inches='tight')
-    plt.close(fig)
+    np.savez_compressed(f'single_output_temp/6mcmc/mcmc_posterior{suffix}.npz', **posterior_data)
 
     gamma_hat = _build_hermitian_gamma(n_peaks, jnp.array(gamma_mag_hat), jnp.array(gamma_phase_hat))
     eta_hat = _build_symmetric_eta(n_peaks, jnp.array(eta_off_diag_hat))

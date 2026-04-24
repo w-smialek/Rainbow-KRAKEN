@@ -4,6 +4,7 @@ from matplotlib import patheffects as pe
 from matplotlib import ticker
 from matplotlib import font_manager as fm
 from pathlib import Path
+import re
 hbar = 6.582119569e-1
 
 
@@ -13,7 +14,7 @@ fm.fontManager.addfont(str(font_path1))
 fm.fontManager.addfont(str(font_path2))
 cmu_sans_bold = fm.FontProperties(fname=str(font_path1)).get_name()
 cmu_sans = fm.FontProperties(fname=str(font_path2)).get_name()
-plt.rcParams['font.family'] = cmu_sans_bold
+plt.rcParams['font.family'] = [cmu_sans_bold, 'DejaVu Sans']
 # plt.rcParams['font.family'] = cmu_sans
 # plt.rcParams['mathtext.fontset'] = 'cm'
 plt.rcParams['mathtext.fontset'] = 'dejavuserif'
@@ -21,6 +22,175 @@ plt.rc('axes', unicode_minus=False)
 
 def _phase_eps(complex_mat):
 	return complex_mat - 1e-4*np.mean(np.abs(complex_mat))
+
+def _circular_mean(angles, axis=0):
+    """Return circular mean for angles in radians, robust to +/-pi wrap."""
+    angles = np.asarray(angles)
+    if angles.size == 0:
+        return np.array([])
+    return np.angle(np.mean(np.exp(1j * angles), axis=axis))
+
+
+def _replace_offset_text_with_manual_copy(cbar_axis):
+	"""Capture the finalized offset text, hide the managed artist, and redraw it manually."""
+	offset_text = cbar_axis.yaxis.get_offset_text()
+	offset_string = offset_text.get_text()
+	if not offset_string:
+		return
+
+	fig = cbar_axis.figure
+	fig.canvas.draw()
+	renderer = fig.canvas.get_renderer()
+	bbox = offset_text.get_window_extent(renderer=renderer)
+
+	# Capture the finalized layout state before detaching the artist.
+	fontsize = offset_text.get_size()
+	color = offset_text.get_color()
+	rotation = offset_text.get_rotation()
+	fontfamily = offset_text.get_fontfamily()
+
+	# # Move the exponent outside the mathdefault-wrapped 10 so the exponent uses the native math font.
+	offset_string = re.sub(
+			r'\\mathdefault\{10\^\{(-?)(\d+)\}\}',
+			r'\\mathdefault{10}^{\1\\mathdefault{\2}}',
+			offset_string)
+
+	# Hide the original offset text so savefig/draw does not render it again.
+	# offset_text.set_visible(False)
+	offset_text.set_alpha(0.01)
+
+
+	manual_x, manual_y = fig.transFigure.inverted().transform((bbox.x0, bbox.y0))
+	manual_text = fig.text(
+		manual_x,
+		manual_y,
+		offset_string,
+		fontsize=fontsize,
+		color=color,
+		rotation=rotation,
+		ha='left',
+		va='bottom',
+		clip_on=False,
+	)
+	manual_text.set_fontfamily(fontfamily)
+
+def _rewrite_posterior_keys(npz_data):
+	"""Rewrite saved MCMC posterior keys to readable physics-style names."""
+	renamed = {}
+	for key in npz_data.files:
+		values = npz_data[key]
+
+		match = re.match(r'^amps_(\d+)$', key)
+		if match:
+			k = int(match.group(1)) + 1
+			renamed[f'$D_{{{k}{k}}}$'] = values
+			continue
+
+		match = re.match(r'^mus_(\d+)$', key)
+		if match:
+			k = int(match.group(1)) + 1
+			renamed[f'$\\mu_{k}$'] = values
+			continue
+
+		match = re.match(r'^sigmas_(\d+)$', key)
+		if match:
+			k = int(match.group(1)) + 1
+			renamed[f'$\\sigma_{k}$'] = values
+			continue
+
+		match = re.match(r'^betas_(\d+)$', key)
+		if match:
+			k = int(match.group(1)) + 1
+			renamed[f'$\\beta_{k}$'] = values
+			continue
+
+		match = re.match(r'^taus_(\d+)$', key)
+		if match:
+			k = int(match.group(1)) + 1
+			renamed[f'$\\tau_{k}$'] = values
+			continue
+
+		match = re.match(r'^lambdas_(\d+)$', key)
+		if match:
+			k = int(match.group(1)) + 1
+			renamed[f'$\\gamma_{k}$'] = values
+			continue
+
+		match = re.match(r'^gamma_mag_(\d+)_(\d+)$', key)
+		if match:
+			i = int(match.group(1)) + 1
+			j = int(match.group(2)) + 1
+			renamed[f'$|D_{{{i}{j}}}| / \\sqrt{{D_{{{i}{i}}} D_{{{j}{j}}}}}$'] = values
+			continue
+
+		match = re.match(r'^gamma_phase_(\d+)_(\d+)$', key)
+		if match:
+			i = int(match.group(1)) + 1
+			j = int(match.group(2)) + 1
+			renamed[f'$\\text{{arg}}(D_{{{i}{j}}})$'] = values
+			continue
+
+		match = re.match(r'^eta_offdiag_(\d+)_(\d+)$', key)
+		if match:
+			i = int(match.group(1)) + 1
+			j = int(match.group(2)) + 1
+			renamed[f'$\\eta_{{{i}{j}}}$'] = values
+			continue
+
+		# Keep unknown keys untouched.
+		renamed[key] = values
+
+	return renamed
+
+def plot_posterior(posterior_panels,save_path=None):
+	if isinstance(posterior_panels, dict):
+		posterior_panels = list(posterior_panels.items())
+
+	color_hist = '#0047AB' # 'tab:blue'
+
+	n_panels = len(posterior_panels)
+	n_cols = 4
+	n_rows = int(np.ceil(n_panels / n_cols))
+	fig, axs = plt.subplots(n_rows, n_cols, figsize=(4.2 * n_cols, 2.8 * n_rows))
+	axs = np.atleast_1d(axs).ravel()
+
+	for ax, (label, values) in zip(axs, posterior_panels):
+		if 'arg' in label:
+			values_wrapped = ((values + np.pi) % (2.0 * np.pi)) - np.pi
+			ax.hist(values_wrapped, bins=np.linspace(-np.pi, np.pi, 41), density=False, alpha=0.75, color=color_hist)
+			ax.axvline(_circular_mean(values_wrapped), color='black', linestyle='--', linewidth=1.0)
+			ax.set_xlim(-np.pi, np.pi)
+		else:
+			ax.hist(values, bins=40, density=False, alpha=0.75, color=color_hist)
+			ax.axvline(np.mean(values), color='black', linestyle='--', linewidth=1.0)
+
+		# ax.grid(True, alpha=0.3)
+		ax.grid(True, which='major', linestyle='--', linewidth=0.4, color='gray', alpha=0.35)
+
+		x_min, x_max = ax.get_xlim()
+		if np.isfinite(x_min) and np.isfinite(x_max) and x_max > x_min:
+			# Keep labels readable for narrow ranges: fewer ticks, max 3 decimals.
+			ax.xaxis.set_major_locator(ticker.MaxNLocator(nbins=4, min_n_ticks=4))
+			ticks = ax.get_xticks()
+			ticks = ticks[(ticks >= x_min) & (ticks <= x_max)]
+			decimals = 0
+			for d in range(4):
+				if np.allclose(ticks * (10 ** d), np.round(ticks * (10 ** d)), atol=1e-8):
+					decimals = d
+					break
+			else:
+				decimals = 3
+			ax.xaxis.set_major_formatter(ticker.FormatStrFormatter(f'%.{decimals}f'))
+		ax.set_title(label, fontsize=20, y=1.04)
+
+	for ax in axs[n_panels:]:
+		ax.axis('off')
+
+	fig.suptitle('Posterior distributions of fitted parameters', fontsize=30, y=1.02, weight='bold')
+	plt.tight_layout()
+	if save_path is not None:
+		plt.savefig(save_path, dpi=200, bbox_inches='tight')
+	plt.close()
 
 def plot_spectra(om_pr,
 				 sp_pr,
@@ -53,12 +223,21 @@ def plot_spectra(om_pr,
 	probe_abs = np.abs(sp_pr)
 	probe_phase = np.angle(sp_pr)
 
-	line_probe_abs, = ax1.plot(om_pr * hbar, probe_abs, label='Probe |spectrum|', linewidth=2)
+	# IR/Pump branch (infrared domain) - warm colors
+	color_probe = '#C41E3A' # '#D62728'      # Strong red-orange (crimson) - PRIMARY IR signal
+	color_reference = '#0047AB' # '#1F77B4'  # Professional blue - REFERENCE/CALIBRATION
+
+	# XUV/Probe branch (extreme UV domain) - distinct cool color  
+	color_xuv = '#6A0572' # '#2CA02C'        # Mossy green - clearly distinct from IR, represents higher energy
+
+	line_probe_abs, = ax1.plot(om_pr * hbar, probe_abs, 
+							label='Probe |spectrum|', linewidth=2, color=color_probe)
 
 	line_ref_abs = None
 	if sp_ref is not None:
 		ref_abs = np.abs(sp_ref)
-		line_ref_abs, = ax1.plot(om_pr * hbar, ref_abs, label='Reference |spectrum|', linewidth=2)
+		line_ref_abs, = ax1.plot(om_pr * hbar, ref_abs, 
+						   label='Reference |spectrum|', linewidth=2, color=color_reference)
 
 	ax1_phase = ax1.twinx()
 	probe_phase_mask = probe_abs >= phase_threshold * np.max(probe_abs)
@@ -66,11 +245,11 @@ def plot_spectra(om_pr,
 	line_probe_phase, = ax1_phase.plot(
 		om_pr * hbar,
 		probe_phase_plot,
-		'--',
+		linestyle=(0, (1, 1)),
 		linewidth=1.2,
 		alpha=0.8,
 		label='Probe phase',
-		color='tab:blue',
+		color=color_probe,
 	)
 
 	line_ref_phase = None
@@ -81,11 +260,11 @@ def plot_spectra(om_pr,
 		line_ref_phase, = ax1_phase.plot(
 			om_pr * hbar,
 			ref_phase_plot,
-			'--',
+			linestyle=(0, (1, 1)),
 			linewidth=1.2,
 			alpha=0.8,
 			label='Reference phase',
-			color='tab:orange',
+			color=color_reference,
 		)
 
 	if phase_ticks is None:
@@ -97,7 +276,8 @@ def plot_spectra(om_pr,
 	ax1.set_ylabel(y_label)
 	ax1.set_title(probe_title, fontsize=12)
 	ax1.set_xlim(probe_xlim)
-	ax1.grid(True, alpha=0.3)
+	# ax1.grid(True, alpha=0.3)
+	ax1.grid(True, which='major', linestyle='--', linewidth=0.4, color='gray', alpha=0.35)
 
 	ax1_phase.set_ylabel(phase_label)
 	ax1_phase.set_ylim([-np.pi, np.pi])
@@ -113,12 +293,13 @@ def plot_spectra(om_pr,
 	ax1.legend(legend_lines, legend_labels, loc='best')
 
 	if has_second_axis:
-		ax2.plot(om_x * hbar, sp_x, label='Photoelectron populations', linewidth=2, color='purple')
+		ax2.plot(om_x * hbar, sp_x, label='Photoelectron populations', linewidth=2, color=color_xuv)
 		ax2.set_xlabel(x_label)
 		ax2.set_ylabel('Signal strength [arb. u.]')
 		ax2.set_title(xuv_title, fontsize=12)
 		ax2.set_xlim(xuv_xlim)
-		ax2.grid(True, alpha=0.3)
+		# ax2.grid(True, alpha=0.3)
+		ax2.grid(True, which='major', linestyle='--', linewidth=0.4, color='gray', alpha=0.35)
 
 	if if_square:
 		ax1.set_box_aspect(1)
@@ -132,7 +313,6 @@ def plot_spectra(om_pr,
 	if show:
 		plt.show()
 	plt.close()
-
 	return
 
 def abs_plot(
@@ -147,6 +327,9 @@ def abs_plot(
 	y_tick_labels=None,
 	if_square=False,
 	magnitude_cmap='viridis',
+	caption=None,
+	ax_title = 'Magnitude',
+	cbar_title = 'Intensity'
 ):
 	# Compute magnitude for plotting
 	magnitude = np.abs(mat_abs)
@@ -156,7 +339,7 @@ def abs_plot(
 
 	# Plot Magnitude
 	im1 = ax.imshow(magnitude, origin='lower', extent=extent, aspect='auto', cmap=magnitude_cmap)
-	ax.set_title('Magnitude', fontsize=14)
+	ax.set_title(ax_title, fontsize=14)
 	ax.set_xlabel(x_label, fontsize=12)
 	ax.set_ylabel(y_label, fontsize=12)
 	if y_ticks is not None:
@@ -165,25 +348,37 @@ def abs_plot(
 		ax.set_yticklabels(y_tick_labels)
 	if if_square:
 		ax.set_box_aspect(1)
-	ax.grid(True, which='major', linestyle='--', linewidth=0.25, color='white', alpha=0.35)
+	if caption is not None:
+		ax.text(
+			0.02,
+			0.98,
+			caption,
+			transform=ax.transAxes,
+			fontsize=10,
+			verticalalignment="top",
+			horizontalalignment="left",
+			color="white",
+			weight="bold",
+			path_effects=[pe.withStroke(linewidth=2, foreground="black")],
+		)
+	ax.grid(True, which='major', linestyle='--', linewidth=0.25, color='gray', alpha=0.35)
 	cbar1 = plt.colorbar(im1, ax=ax, fraction=0.2, pad=0.0)
-	cbar1.ax.set_title('Intensity', fontsize=8, pad=4)
+	cbar1.ax.set_title(cbar_title, fontsize=8, pad=4)
 
 	sci_formatter = ticker.ScalarFormatter(useMathText=True)
 	sci_formatter.set_scientific(True)
 	sci_formatter.set_powerlimits((0, 0))
 	cbar1.formatter = sci_formatter
 	cbar1.update_ticks()
-	cbar1.ax.yaxis.get_offset_text().set_size(8)
-	# cbar1.ax.yaxis.get_offset_text().set_fontfamily('DejaVu Sans')
 
 	fig.tight_layout()
+	_replace_offset_text_with_manual_copy(cbar1.ax)
+
 	if save_path is not None:
 		fig.savefig(save_path, dpi=300, bbox_inches='tight')
 	if show:
 		plt.show()
 	plt.close()
-
 	return
 
 def complex_plot(
@@ -199,6 +394,8 @@ def complex_plot(
 	if_square=False,
 	magnitude_cmap='viridis',
 	phase_cmap='twilight_shifted',
+	caption=None,
+	cbar_title = 'Intensity'
 ):
 	# Compute magnitude and phase for plotting
 	magnitude = np.abs(mat_complex)
@@ -219,22 +416,35 @@ def complex_plot(
 	if if_square:
 		ax1.set_box_aspect(1)
 		ax2.set_box_aspect(1)
-	ax1.grid(True, which='major', linestyle='--', linewidth=0.25, color='white', alpha=0.35)
+	ax1.grid(True, which='major', linestyle='--', linewidth=0.35, color='gray', alpha=0.35)
 	cbar1 = plt.colorbar(im1, ax=ax1, fraction=0.2, pad=0.0)
-	cbar1.ax.set_title('Intensity', fontsize=8, pad=4)
+	cbar1.ax.set_title(cbar_title, fontsize=8, pad=4)
 
 	sci_formatter = ticker.ScalarFormatter(useMathText=True)
 	sci_formatter.set_scientific(True)
 	sci_formatter.set_powerlimits((0, 0))
 	cbar1.formatter = sci_formatter
 	cbar1.update_ticks()
-	cbar1.ax.yaxis.get_offset_text().set_size(8)
+
+	if caption is not None:
+		ax1.text(
+			0.02,
+			0.98,
+			caption,
+			transform=ax1.transAxes,
+			fontsize=13,
+			verticalalignment="top",
+			horizontalalignment="left",
+			color="white",
+			weight="bold",
+			path_effects=[pe.withStroke(linewidth=2, foreground="black")],
+		)
 
 	# Plot Phase
 	im2 = ax2.imshow(phase, origin='lower', extent=extent, aspect='auto', cmap=phase_cmap)
 	ax2.set_title('Phase', fontsize=14)
 	ax2.set_xlabel(x_label, fontsize=12)
-	ax2.grid(True, which='major', linestyle='--', linewidth=0.25, color='white', alpha=0.35)
+	ax2.grid(True, which='major', linestyle='--', linewidth=0.25, color='gray', alpha=0.35)
 	ax2.tick_params(axis='y', which='both', left=False, labelleft=False)
 	cbar2 = plt.colorbar(im2, ax=ax2, fraction=0.2, pad=0.0)
 	cbar2.ax.set_title('Phase\n(rad)', fontsize=8, pad=4)
@@ -244,13 +454,52 @@ def complex_plot(
 	cbar2.set_ticklabels(phase_tick_labels)
 
 	fig.tight_layout()
+	_replace_offset_text_with_manual_copy(cbar1.ax)
 	if save_path is not None:
 		fig.savefig(save_path, dpi=300, bbox_inches='tight')
 	if show:
 		plt.show()
 	plt.close()
-
 	return
+
+
+def create_stacked_overview_figure(im_paths, boxes, figsize, save_path=None, show=False):
+	"""Arrange already-rendered figures on a clean 3-row layout with no seam artifacts."""
+
+	imgs = []
+	for path in im_paths:
+		imgs.append(plt.imread(path))
+	# img_top = plt.imread('plot_output/1generate_signal/input_spectra.png')
+	# img_mid = plt.imread('plot_output/6mcmc/rho_ideal.png')
+	# img_bot = plt.imread('plot_output/1generate_signal/measured_timesig.png')
+
+	# fig = plt.figure(figsize=(12, 14))
+	fig = plt.figure(figsize=figsize)
+	fig.patch.set_alpha(0.0)
+
+	for im, box in zip(imgs,boxes):
+		ax = fig.add_axes(box)
+		ax.imshow(im)
+		ax.set_axis_off()
+		ax.set_facecolor((0, 0, 0, 0))
+
+	# # Explicit placement keeps layout simple and seam-free.
+	# # ax_top = fig.add_axes([0.03, 0.69, 0.94, 0.28])
+	# # ax_mid = fig.add_axes([0.03, 0.37, 0.94, 0.28])
+	# ax_top = fig.add_axes([0.03, 0.775, 0.94, 0.22])
+	# ax_mid = fig.add_axes([0.03, 0.52, 0.94, 0.23])
+	# # ax_bot = fig.add_axes([0.24, 0.05, 0.52, 0.28])
+	# ax_bot = fig.add_axes([0.10, 0.05, 0.8, 0.44])
+
+	# for ax, img in ((ax_top, img_top), (ax_mid, img_mid), (ax_bot, img_bot)):
+	# 	ax.imshow(img, interpolation='none')
+	# 	ax.set_axis_off()
+	# 	ax.set_facecolor((0, 0, 0, 0))
+
+	if save_path is not None:
+		fig.savefig(save_path, dpi=300, bbox_inches='tight', transparent=True)
+	plt.close()
+	return 
 
 ###
 ## 1GENERATE_SIGNAL
@@ -259,7 +508,7 @@ def complex_plot(
 file_path = 'single_output_temp/1generate_signal/input_spectra.npz'
 input_spectra = np.load(file_path)
 
-plot_spectra(
+input_spectra = plot_spectra(
 			om_pr = input_spectra['om_probe'],
 			sp_pr = input_spectra['sp_probe'],
 			sp_ref = input_spectra['sp_ref'],
@@ -267,6 +516,12 @@ plot_spectra(
 			sp_x = input_spectra['sp_xuv'],
 			save_path = 'plot_output/1generate_signal/input_spectra.png',
 			show=False,
+			title='IR spectrum and photelectron signal',
+			x_label='Energy [eV]',
+			y_label='Amplitude [arb. u.]',
+			phase_label='Phase [rad]',
+			probe_title='Probe and Reference Spectra',
+			xuv_title=r'Photoelectron populations $\rho(\varepsilon,\varepsilon)$',
 )
 
 file_path = 'single_output_temp/1generate_signal/exact_freqsig.npz'
@@ -305,17 +560,20 @@ abs_plot(
 file_path = 'single_output_temp/1generate_signal/measured_timesig.npz'
 measured_timesig = np.load(file_path)
 
-abs_plot(
+measured_timesig = abs_plot(
 	mat_abs=measured_timesig['mat_abs'],
 	extent=measured_timesig['extent'],
 	save_path='plot_output/1generate_signal/measured_timesig.png',
 	show=False,
-	title='Complex Array Plot',
-	x_label='X-axis Label (Placeholder)',
-	y_label='Y-axis Label (Placeholder)',
+	title='Time-resolved signal',
+	x_label='Kinetic energy [eV]',
+	y_label='Time [fs]',
 	# y_ticks=[-3.1,-1.55,0,1.55,3.1],
 	# y_tick_labels=[r'$-2\omega_r$',r'$-1\omega_r$',r'$0$',r'$1\omega_r$',r'$2\omega_r$'],
-	magnitude_cmap='turbo'
+	magnitude_cmap='turbo',
+	caption = f'SNR: {measured_timesig['P_SNR']:.1f}\nTime res: {measured_timesig['T_res']:.2f} fs\nEnergy res: {measured_timesig['E_res']:.2f} eV',
+	ax_title='Spectrometer counts',
+	cbar_title='Counts'
 )
 
 ###
@@ -351,13 +609,15 @@ complex_plot(
 	extent=KB_before['extent'],
 	save_path='plot_output/3kb_correct/KB_before.png',
 	show=False,
-	title='Complex Array Plot',
-	x_label='X-axis Label (Placeholder)',
-	y_label='Y-axis Label (Placeholder)',
+	title='Sideband ROI Before KB Correction',
+	x_label='Indirect energy [eV]',
+	y_label='Kinetic energy [eV]',
 	# y_ticks=[-3.1,-1.55,0,1.55,3.1],
 	# y_tick_labels=[r'$-2\omega_r$',r'$-1\omega_r$',r'$0$',r'$1\omega_r$',r'$2\omega_r$'],
 	magnitude_cmap='turbo',
-	phase_cmap='twilight_shifted'
+	phase_cmap='twilight_shifted',
+	caption = f'RES: {KB_before['RES']:.3f}',
+	cbar_title='Amplitude'
 )
 
 file_path = 'single_output_temp/3kb_correct/KB_after.npz'
@@ -368,13 +628,15 @@ complex_plot(
 	extent=KB_after['extent'],
 	save_path='plot_output/3kb_correct/KB_after.png',
 	show=False,
-	title='Complex Array Plot',
-	x_label='X-axis Label (Placeholder)',
-	y_label='Y-axis Label (Placeholder)',
+	title='Sideband ROI After KB Correction',
+	x_label='Indirect energy [eV]',
+	y_label='Kinetic energy [eV]',
 	# y_ticks=[-3.1,-1.55,0,1.55,3.1],
 	# y_tick_labels=[r'$-2\omega_r$',r'$-1\omega_r$',r'$0$',r'$1\omega_r$',r'$2\omega_r$'],
 	magnitude_cmap='turbo',
-	phase_cmap='twilight_shifted'
+	phase_cmap='twilight_shifted',
+	caption = f'RES: {KB_after['RES']:.3f}',
+	cbar_title='Amplitude'
 )
 
 file_path = 'single_output_temp/3kb_correct/zero_omega_comp.npz'
@@ -509,14 +771,14 @@ abs_plot(
 file_path = 'single_output_temp/6mcmc/rho_ideal.npz'
 rho_ideal = np.load(file_path)
 
-complex_plot(
+rho_ideal = complex_plot(
 	mat_complex=rho_ideal['mat_complex'],
 	extent=rho_ideal['extent'],
 	save_path='plot_output/6mcmc/rho_ideal.png',
 	show=False,
-	title='Complex Array Plot',
-	x_label='X-axis Label (Placeholder)',
-	y_label='Y-axis Label (Placeholder)',
+	title='Initial Photoelectron Density Matrix',
+	x_label=r'Energy $\varepsilon_2$ [eV]',
+	y_label=r'Energy $\varepsilon_1$ [eV]',
 	# y_ticks=[-3.1,-1.55,0,1.55,3.1],
 	# y_tick_labels=[r'$-2\omega_r$',r'$-1\omega_r$',r'$0$',r'$1\omega_r$',r'$2\omega_r$'],
 	magnitude_cmap='turbo',
@@ -597,6 +859,20 @@ abs_plot(
 # INFERRED
 #
 
+posterior_data_raw = np.load('single_output_temp/6mcmc/mcmc_posterior.npz')
+posterior_data = _rewrite_posterior_keys(posterior_data_raw)
+posterior_data_raw.close()
+
+plot_posterior(posterior_data,save_path='plot_output/6mcmc/mcmc_posterior.png')
+
+
+posterior_data_raw = np.load('single_output_temp/6mcmc/mcmc_posterior_rec.npz')
+posterior_data = _rewrite_posterior_keys(posterior_data_raw)
+posterior_data_raw.close()
+
+plot_posterior(posterior_data,save_path='plot_output/6mcmc/mcmc_posterior_rec.png')
+
+
 file_path = 'single_output_temp/6mcmc/rho_inferred.npz'
 rho_inferred = np.load(file_path)
 
@@ -629,4 +905,34 @@ complex_plot(
 	# y_tick_labels=[r'$-2\omega_r$',r'$-1\omega_r$',r'$0$',r'$1\omega_r$',r'$2\omega_r$'],
 	magnitude_cmap='turbo',
 	phase_cmap='twilight_shifted'
+)
+
+paths = ['plot_output/1generate_signal/input_spectra.png',
+		 'plot_output/6mcmc/rho_ideal.png',
+		 'plot_output/1generate_signal/measured_timesig.png']
+
+boxes = [[0.03, 0.775, 0.94, 0.22],
+		 [0.03, 0.52, 0.94, 0.23],
+		 [0.10, 0.05, 0.8, 0.44]]
+
+figsize = (12,20)
+
+overview_fig = create_stacked_overview_figure(
+	paths,boxes,figsize,
+	save_path='plot_output/sim_output.png',
+	show=False,
+)
+
+paths = ['plot_output/3kb_correct/KB_before.png',
+		 'plot_output/3kb_correct/KB_after.png']
+
+boxes = [[0.03, 0.52, 0.94, 0.42],
+		 [0.03, 0.05, 0.94, 0.42]]
+
+figsize = (12,10)
+
+overview_fig = create_stacked_overview_figure(
+	paths,boxes,figsize,
+	save_path='plot_output/KBcorr.png',
+	show=False,
 )
