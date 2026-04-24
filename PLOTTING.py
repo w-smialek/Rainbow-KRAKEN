@@ -717,23 +717,6 @@ if replot_images == True:
 		phase_cmap='twilight_shifted'
 	)
 
-	file_path = 'single_output_temp/5probe_corr/data_rho_rec.npz'
-	data_rho_rec = np.load(file_path)
-
-	complex_plot(
-		mat_complex=data_rho_rec['mat_complex'],
-		extent=data_rho_rec['extent'],
-		save_path='plot_output/5probe_corr/data_rho_rec.png',
-		show=False,
-		title='Complex Array Plot',
-		x_label='X-axis Label (Placeholder)',
-		y_label='Y-axis Label (Placeholder)',
-		# y_ticks=[-3.1,-1.55,0,1.55,3.1],
-		# y_tick_labels=[r'$-2\omega_r$',r'$-1\omega_r$',r'$0$',r'$1\omega_r$',r'$2\omega_r$'],
-		magnitude_cmap='turbo',
-		phase_cmap='twilight_shifted'
-	)
-
 	file_path = 'single_output_temp/5probe_corr/data_sigma.npz'
 	data_sigma = np.load(file_path)
 
@@ -741,22 +724,6 @@ if replot_images == True:
 		mat_abs=data_sigma['mat_abs'],
 		extent=data_sigma['extent'],
 		save_path='plot_output/5probe_corr/data_sigma.png',
-		show=False,
-		title='Complex Array Plot',
-		x_label='X-axis Label (Placeholder)',
-		y_label='Y-axis Label (Placeholder)',
-		# y_ticks=[-3.1,-1.55,0,1.55,3.1],
-		# y_tick_labels=[r'$-2\omega_r$',r'$-1\omega_r$',r'$0$',r'$1\omega_r$',r'$2\omega_r$'],
-		magnitude_cmap='turbo'
-	)
-
-	file_path = 'single_output_temp/5probe_corr/data_sigma_rec.npz'
-	data_sigma_rec = np.load(file_path)
-
-	abs_plot(
-		mat_abs=data_sigma_rec['mat_abs'],
-		extent=data_sigma_rec['extent'],
-		save_path='plot_output/5probe_corr/data_sigma_rec.png',
 		show=False,
 		title='Complex Array Plot',
 		x_label='X-axis Label (Placeholder)',
@@ -808,23 +775,6 @@ if replot_images == True:
 		phase_cmap='twilight_shifted'
 	)
 
-	file_path = 'single_output_temp/6mcmc/data_rho_interp_rec.npz'
-	data_rho_interp_rec = np.load(file_path)
-
-	complex_plot(
-		mat_complex=data_rho_interp_rec['mat_complex'],
-		extent=data_rho_interp_rec['extent'],
-		save_path='plot_output/6mcmc/data_rho_interp_rec.png',
-		show=False,
-		title='Complex Array Plot',
-		x_label='X-axis Label (Placeholder)',
-		y_label='Y-axis Label (Placeholder)',
-		# y_ticks=[-3.1,-1.55,0,1.55,3.1],
-		# y_tick_labels=[r'$-2\omega_r$',r'$-1\omega_r$',r'$0$',r'$1\omega_r$',r'$2\omega_r$'],
-		magnitude_cmap='turbo',
-		phase_cmap='twilight_shifted'
-	)
-
 	file_path = 'single_output_temp/6mcmc/data_sigma_interp.npz'
 	data_sigma_interp = np.load(file_path)
 
@@ -841,22 +791,6 @@ if replot_images == True:
 		magnitude_cmap='turbo'
 	)
 
-	file_path = 'single_output_temp/6mcmc/data_sigma_interp_rec.npz'
-	data_sigma_interp_rec = np.load(file_path)
-
-	abs_plot(
-		mat_abs=data_sigma_interp_rec['mat_abs'],
-		extent=data_sigma_interp_rec['extent'],
-		save_path='plot_output/6mcmc/data_sigma_interp_rec.png',
-		show=False,
-		title='Complex Array Plot',
-		x_label='X-axis Label (Placeholder)',
-		y_label='Y-axis Label (Placeholder)',
-		# y_ticks=[-3.1,-1.55,0,1.55,3.1],
-		# y_tick_labels=[r'$-2\omega_r$',r'$-1\omega_r$',r'$0$',r'$1\omega_r$',r'$2\omega_r$'],
-		magnitude_cmap='turbo'
-	)
-
 	#
 	# INFERRED
 	#
@@ -867,14 +801,6 @@ if replot_images == True:
 
 	plot_posterior(posterior_data,save_path='plot_output/6mcmc/mcmc_posterior.png')
 
-
-	posterior_data_raw = np.load('single_output_temp/6mcmc/mcmc_posterior_rec.npz')
-	posterior_data = _rewrite_posterior_keys(posterior_data_raw)
-	posterior_data_raw.close()
-
-	plot_posterior(posterior_data,save_path='plot_output/6mcmc/mcmc_posterior_rec.png')
-
-
 	file_path = 'single_output_temp/6mcmc/rho_inferred.npz'
 	rho_inferred = np.load(file_path)
 
@@ -883,8 +809,8 @@ if replot_images == True:
 		extent=rho_inferred['extent'],
 		save_path='plot_output/6mcmc/rho_inferred.png',
 		show=False,
-		title='Inferred Density Matrix',
-		# title='Projected Density Matrix', # FOR WIDE PROBE
+		# title='Inferred Density Matrix',
+		title='Projected Density Matrix', # FOR WIDE PROBE
 		x_label=r'Energy $\varepsilon_2$ [eV]',
 		y_label=r'Energy $\varepsilon_1$ [eV]',
 		# y_ticks=[-3.1,-1.55,0,1.55,3.1],
@@ -892,23 +818,6 @@ if replot_images == True:
 		magnitude_cmap='turbo',
 		phase_cmap='twilight_shifted',
 		caption = f'F = {rho_inferred['RES']:.3f}'
-	)
-
-	file_path = 'single_output_temp/6mcmc/rho_inferred_rec.npz'
-	rho_inferred_rec = np.load(file_path)
-
-	complex_plot(
-		mat_complex=rho_inferred_rec['mat_complex'],
-		extent=rho_inferred_rec['extent'],
-		save_path='plot_output/6mcmc/rho_inferred_rec.png',
-		show=False,
-		title='Complex Array Plot',
-		x_label='X-axis Label (Placeholder)',
-		y_label='Y-axis Label (Placeholder)',
-		# y_ticks=[-3.1,-1.55,0,1.55,3.1],
-		# y_tick_labels=[r'$-2\omega_r$',r'$-1\omega_r$',r'$0$',r'$1\omega_r$',r'$2\omega_r$'],
-		magnitude_cmap='turbo',
-		phase_cmap='twilight_shifted'
 	)
 
 ###
@@ -973,16 +882,18 @@ overview_fig = create_stacked_overview_figure(
 	show=False,
 )
 
-# paths = ['plot_output/6mcmc/data_rho_interp.png',
-# 		 'plot_output/6mcmc/rho_inferred.png']
+paths = ['plot_output/1generate_signal/input_spectra.png',
+		 'plot_output/6mcmc/data_rho_interp.png',
+		 'plot_output/6mcmc/rho_inferred.png']
 
-# boxes = [[0.03, 0.52, 0.94, 0.42],
-# 		 [0.03, 0.05, 0.94, 0.42]]
+boxes = [[0.03, 0.71, 0.94, 0.28],
+		 [0.03, 0.375, 0.94, 0.295],
+		 [0.03, 0.04, 0.94, 0.295]]
 
-# figsize = (12,10)
+figsize = (12,15)
 
-# overview_fig = create_stacked_overview_figure(
-# 	paths,boxes,figsize,
-# 	save_path='plot_output/projected_result.png',
-# 	show=False,
-# )	# CHANGE RHO_INFERRED TITLE FOR THAT!
+overview_fig = create_stacked_overview_figure(
+	paths,boxes,figsize,
+	save_path='plot_output/projected_result.png',
+	show=False,
+)	# CHANGE RHO_INFERRED TITLE FOR THAT!

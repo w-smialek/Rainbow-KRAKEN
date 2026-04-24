@@ -48,7 +48,7 @@ probe_params = {
 
 # Build the density matrix parameters
 amps = [1.0/np.sqrt(2), 1.0]
-mus = [25.0 - 0.18 + om_ref * hbar, 25.0 + om_ref * hbar]
+mus = [25.0 - 0.18, 25.0]
 sigmas = [0.08, 0.08]
 betas = [3, 3]
 taus = [1, 1]
