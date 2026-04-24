@@ -44,7 +44,7 @@ class RK_experiment:
     """Rainbow-KRAKEN experiment class for full pipeline processing."""
     
     def __init__(self,E_lo=60.0,E_hi=63.5,T_reach=50,E_res=0.025,N_T=240,alpha=0.05,b=1,sb_lo=24.7,sb_hi=28,harmq_lo=22,harmq_hi=24.7,
-                 A_ref=1,om_ref=1.55/hbar,s_ref=0.02/hbar):
+                 A_ref=1,om_ref=1.55/hbar,s_ref=0.02/hbar,ifWide=False):
 
         ###
         ### KEYWORD PARAMETERS
@@ -82,7 +82,7 @@ class RK_experiment:
         self.ifnoise = True
 
         # pipeline modes
-        self.ifWide = False
+        self.ifWide = ifWide
         self.median_filter_when = 1 if self.ifWide else 0 # 0 - never, 1 - after kbcorr, 2 - after spcorr
 
         # KB correction parameters
@@ -98,7 +98,7 @@ class RK_experiment:
         self.prrec_lambda2 = 0.005
 
         # Probe correction parameters / MCMC data region parameters
-        self.prcor_dzeta = 0.35 if self.ifWide else 0.25
+        self.prcor_dzeta = 0.05 if self.ifWide else 0.25
         self.rho_lo = 24.0 + om_ref*hbar
         self.rho_hi = 26.0 + om_ref*hbar
 
@@ -427,7 +427,9 @@ class RK_experiment:
 
         true_power = np.sum(np.abs(self.sp_probe)**2)
         fit_power = np.sum(np.abs(self.sp_probe_inferred_complex)**2)
-        fit_mag = np.abs(self.sp_probe_inferred_complex * np.sqrt(true_power/fit_power))
+        self.sp_probe_inferred_complex = self.sp_probe_inferred_complex * np.sqrt(true_power/fit_power)
+
+        fit_mag = np.abs(self.sp_probe_inferred_complex)
 
         idx_max = np.argmax(np.abs(self.sp_probe))
         phase_offset = np.angle(self.sp_probe[idx_max]) - np.angle(self.sp_probe_inferred_complex[idx_max])
