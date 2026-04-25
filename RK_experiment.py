@@ -490,7 +490,7 @@ class RK_experiment:
         rho_raw_sigma, _, _, _, _, _ = rk.resample(
             rhosigma, self.harmq_hi, self.harmq_lo, self.om_ref, self.E, self.OM_T, self.N_NEW)
         
-        raw_trace = np.trace(rho_raw)
+        raw_trace = np.trace(np.abs(rho_raw))
         rho_raw = rho_raw/raw_trace
         rho_raw_sigma = rho_raw_sigma/raw_trace
 

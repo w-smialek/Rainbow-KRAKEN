@@ -1,6 +1,7 @@
 from RK_experiment import RK_experiment, hbar
 import numpy as np
 import rkraken as rk
+from scipy.ndimage import median_filter
 
 def combine_scans(rho_rawA,rho_rawB,rho_raw_sigmaA,rho_raw_sigmaB):
     
@@ -22,7 +23,7 @@ E_hi = 28.0
 T_reach = 150
 E_res = 0.01
 N_T = 501
-alpha = 30000
+alpha = 1000
 b = 1
 
 sideband_lo = 25.5
@@ -31,8 +32,8 @@ harmq_lo = 24.5
 harmq_hi = 25.5
 
 # Build the density matrix parameters
-amps = [1.0/np.sqrt(2), 1.0]
-mus = [25.0 - 0.18, 25.0]
+amps = [1.0, 1.0]
+mus = [25.0 - 0.11, 25.0 + 0.11]
 sigmas = [0.06, 0.06]
 betas = [3, 3]
 taus = [1, 1]
@@ -57,8 +58,8 @@ rho_params = {
 A_probe = 0.6
 probe_params = {
     'amps': np.asarray([0.3,0.3,0.3]) * A_probe,
-    'oms': np.asarray([1.48 / hbar, 1.55 / hbar, 1.62 / hbar]),
-    'sigmas': np.asarray([0.04 / hbar, 0.04 / hbar, 0.04 / hbar]),
+    'oms': np.asarray([1.50 / hbar, 1.55 / hbar, 1.60 / hbar]),
+    'sigmas': np.asarray([0.035 / hbar, 0.035 / hbar, 0.035 / hbar]),
     'phi0': 0.0,
     'phase_grad': 0.0,
     'phase_chirp': 0.0
@@ -67,7 +68,7 @@ probe_params = {
 # Reference pulse definition
 
 A_ref = 1.0
-om_ref = 1.52 / hbar
+om_ref = 1.55 / hbar
 s_ref = 0.025 / hbar
 
 experiment = RK_experiment(
@@ -95,11 +96,13 @@ experiment.process_and_detrend()
 experiment.kb_correct()
 # experiment.probe_reconstruct()
 rhodata_roiA, rhosigma_roiA, E1A, E2A, rho_rawA, rho_raw_sigmaA = experiment.probe_sp_correct()
+# experiment.mcmc_fit()
+# exit()
 
 # Reference pulse definition
 
 A_ref = 1.0
-om_ref = 1.44 / hbar
+om_ref = 1.46 / hbar
 s_ref = 0.025 / hbar
 
 experiment = RK_experiment(
@@ -129,37 +132,37 @@ experiment.kb_correct()
 # experiment.probe_reconstruct()
 rhodata_roiB, rhosigma_roiB, E1B, E2B, rho_rawB, rho_raw_sigmaB = experiment.probe_sp_correct()
 # experiment.mcmc_fit()
+# exit()
 
 notcommon_regionA = ((E2A-E1A) < np.min(E2B-E1B)) | ((E2A-E1A) > np.max(E2B-E1B))
 rhodata_roiA_integrand = np.copy(rhodata_roiA)
 rhodata_roiA_integrand[notcommon_regionA] = 0
+rhodata_roiA_integrand = median_filter(np.abs(rhodata_roiA_integrand),size=(3,3))
 
 notcommon_regionB = ((E2B-E1B) < np.min(E2A-E1A)) | ((E2B-E1B) > np.max(E2A-E1A))
 rhodata_roiB_integrand = np.copy(rhodata_roiB)
 rhodata_roiB_integrand[notcommon_regionB] = 0
+rhodata_roiB_integrand = median_filter(np.abs(rhodata_roiB_integrand),size=(3,3))
 
-integralA = np.sum(np.abs(rhodata_roiA_integrand))
-integralB = np.sum(np.abs(rhodata_roiB_integrand))
+integralA = np.sum(rhodata_roiA_integrand)
+integralB = np.sum(rhodata_roiB_integrand)
 
 rhodata_roiA = rhodata_roiA * integralA/integralB
 rhosigma_roiA = rhosigma_roiA * integralA/integralB
 
 rho_rawC, rho_raw_sigmaC = combine_scans(rho_rawA,rho_rawB,rho_raw_sigmaA,rho_raw_sigmaB)
 
-# rk.plot_mat(rhodata_roiA,saveloc='rhodata_roiA.png')
-# rk.plot_mat(rhodata_roiB,saveloc='rhodata_roiB.png')
+rk.plot_mat(rho_rawA,saveloc='rho_rawA.png')
+rk.plot_mat(rho_rawB,saveloc='rho_rawB.png')
 
-# rk.plot_mat(rhosigma_roiA,saveloc='rhosigma_roiA.png')
-# rk.plot_mat(rhosigma_roiB,saveloc='rhosigma_roiB.png')
-
-# rk.plot_mat(rho_rawC,saveloc='rho_rawC.png')
-# rk.plot_mat(rho_raw_sigmaC,saveloc='rho_raw_sigmaC.png')
+rk.plot_mat(rho_rawC,saveloc='rho_rawC.png')
+rk.plot_mat(rho_raw_sigmaC,saveloc='rho_raw_sigmaC.png')
 
 experiment.rho_raw = rho_rawC
 experiment.rho_raw_sigma = rho_raw_sigmaC
-experiment.rhodata_roi = np.concatenate(rhodata_roiA.flatten(),rhodata_roiB.flatten())
-experiment.rhosigma_roi = np.concatenate(rhosigma_roiA.flatten(),rhosigma_roiB.flatten())
-experiment.E1 = np.concatenate(E1A.flatten(),E1B.flatten())
-experiment.E2 = np.concatenate(E2A.flatten(),E2B.flatten())
+experiment.rhodata_roi = np.concatenate((rhodata_roiA.flatten(),rhodata_roiB.flatten()))
+experiment.rhosigma_roi = np.concatenate((rhosigma_roiA.flatten(),rhosigma_roiB.flatten()))
+experiment.E1 = np.concatenate((E1A.flatten(),E1B.flatten()))
+experiment.E2 = np.concatenate((E2A.flatten(),E2B.flatten()))
 
 experiment.mcmc_fit()

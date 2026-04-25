@@ -146,7 +146,7 @@ def plot_posterior(posterior_panels,save_path=None):
 	if isinstance(posterior_panels, dict):
 		posterior_panels = list(posterior_panels.items())
 
-	color_hist = "#15008F" # 'tab:blue'
+	color_hist = "#231696" # 'tab:blue'
 
 	n_panels = len(posterior_panels)
 	n_cols = 4
@@ -328,18 +328,17 @@ def abs_plot(
 	if_square=False,
 	magnitude_cmap='viridis',
 	caption=None,
-	ax_title = 'Magnitude',
 	cbar_title = 'Magnitude'
 ):
 	# Compute magnitude for plotting
 	magnitude = np.abs(mat_abs)
 
 	fig, ax = plt.subplots(figsize=(6.5, 5))
-	fig.suptitle(title, fontsize=18, font=cmu_sans_bold)
+	# fig.suptitle(title, fontsize=18, font=cmu_sans_bold)
 
 	# Plot Magnitude
 	im1 = ax.imshow(magnitude, origin='lower', extent=extent, aspect='auto', cmap=magnitude_cmap)
-	ax.set_title(ax_title, fontsize=14)
+	ax.set_title(title, fontsize=18,y=1.02)
 	ax.set_xlabel(x_label, fontsize=12)
 	ax.set_ylabel(y_label, fontsize=12)
 	if y_ticks is not None:
@@ -463,45 +462,129 @@ def complex_plot(
 	return
 
 
-def create_stacked_overview_figure(im_paths, boxes, figsize, save_path=None, show=False):
-	"""Arrange already-rendered figures on a clean 3-row layout with no seam artifacts."""
+def create_stacked_overview_figure(im_paths, heights, gaps, fig_aspect, dpi=300, save_path=None):
+	"""Stack pre-rendered images row-by-row with explicit row heights and vertical gaps.
 
-	imgs = []
-	for path in im_paths:
-		imgs.append(plt.imread(path))
-	# img_top = plt.imread('plot_output/1generate_signal/input_spectra.png')
-	# img_mid = plt.imread('plot_output/6mcmc/rho_ideal.png')
-	# img_bot = plt.imread('plot_output/1generate_signal/measured_timesig.png')
+	Parameters
+	----------
+	im_paths : list[tuple[str, ...]]
+		Each tuple defines one row and contains the image paths in that row.
+	heights : list[float]
+		Row heights (arbitrary units, one per row).
+	gaps : list[float]
+		Vertical gaps including outer margins (len(im_paths) + 1).
+		gaps[0] is the top margin, gaps[-1] is the bottom margin,
+		and interior values are row-to-row separations.
+	fig_aspect : float
+		Figure aspect ratio defined as width / height.
+	dpi : int
+		DPI used when saving.
+	save_path : str | None
+		Output path.
+	"""
 
-	# fig = plt.figure(figsize=(12, 14))
-	fig = plt.figure(figsize=figsize)
+	if len(im_paths) != len(heights):
+		raise ValueError('im_paths and heights must have the same length.')
+	if len(gaps) != len(im_paths) + 1:
+		raise ValueError('gaps must have length len(im_paths) + 1.')
+	if fig_aspect <= 0:
+		raise ValueError('fig_aspect must be positive.')
+
+	rows = []
+	for row_paths in im_paths:
+		if len(row_paths) == 0:
+			raise ValueError('Each row in im_paths must contain at least one image path.')
+		row_imgs = [plt.imread(path) for path in row_paths]
+		row_aspects = []
+		for im in row_imgs:
+			if im.ndim < 2:
+				raise ValueError('Loaded image has invalid shape.')
+			h, w = im.shape[:2]
+			if h == 0:
+				raise ValueError('Loaded image height is zero.')
+			row_aspects.append(w / h)
+		rows.append((row_imgs, row_aspects))
+
+	total_height = float(np.sum(heights) + np.sum(gaps))
+	if total_height <= 0:
+		raise ValueError('Sum of heights and gaps must be positive.')
+
+	figure_width_units = fig_aspect * total_height
+
+	# Global uniform spacing used for all multi-image rows.
+	hgap_limits = []
+	for row_idx, (_, aspects) in enumerate(rows):
+		n_images = len(aspects)
+		if n_images <= 1:
+			continue
+		base_row_width = heights[row_idx] * float(np.sum(aspects))
+		hgap_limits.append((figure_width_units - base_row_width) / (n_images - 1))
+
+	if hgap_limits:
+		hgap_max = min(hgap_limits)
+		if hgap_max < 0:
+			raise ValueError('fig_aspect is too small for the provided row heights and image aspects.')
+		hgap = 0.9 * hgap_max
+	else:
+		hgap = 0.0
+
+	fig_height_in = total_height
+	fig_width_in = fig_aspect * fig_height_in
+	fig = plt.figure(figsize=(fig_width_in, fig_height_in))
 	fig.patch.set_alpha(0.0)
 
-	for im, box in zip(imgs,boxes):
-		ax = fig.add_axes(box)
-		ax.imshow(im)
-		ax.set_axis_off()
-		ax.set_facecolor((0, 0, 0, 0))
+	y_top = total_height - gaps[0]
+	for row_idx, (row_data, row_height, row_gap) in enumerate(zip(rows, heights, gaps[1:])):
+		row_imgs, row_aspects = row_data
+		n_images = len(row_imgs)
+		row_width = row_height * float(np.sum(row_aspects)) + hgap * max(0, n_images - 1)
+		if row_width > figure_width_units + 1e-12:
+			raise ValueError('A row does not fit within figure width. Increase fig_aspect or reduce heights.')
 
-	# # Explicit placement keeps layout simple and seam-free.
-	# # ax_top = fig.add_axes([0.03, 0.69, 0.94, 0.28])
-	# # ax_mid = fig.add_axes([0.03, 0.37, 0.94, 0.28])
-	# ax_top = fig.add_axes([0.03, 0.775, 0.94, 0.22])
-	# ax_mid = fig.add_axes([0.03, 0.52, 0.94, 0.23])
-	# # ax_bot = fig.add_axes([0.24, 0.05, 0.52, 0.28])
-	# ax_bot = fig.add_axes([0.10, 0.05, 0.8, 0.44])
+		x_cursor = 0.5 * (figure_width_units - row_width)
+		y_bottom = y_top - row_height
 
-	# for ax, img in ((ax_top, img_top), (ax_mid, img_mid), (ax_bot, img_bot)):
-	# 	ax.imshow(img, interpolation='none')
+		for im, im_aspect in zip(row_imgs, row_aspects):
+			ax_width = row_height * im_aspect
+			box = [
+				x_cursor / figure_width_units,
+				y_bottom / total_height,
+				ax_width / figure_width_units,
+				row_height / total_height,
+			]
+			ax = fig.add_axes(box)
+			ax.imshow(im)
+			ax.set_axis_off()
+			ax.set_facecolor((0, 0, 0, 0))
+			x_cursor += ax_width + (hgap if n_images > 1 else 0.0)
+
+		y_top = y_bottom - row_gap
+
+	if save_path is not None:
+		fig.savefig(save_path, dpi=dpi, transparent=True)
+	plt.close()
+	return
+
+	# imgs = []
+	# for path in im_paths:
+	# 	imgs.append(plt.imread(path))
+
+	# fig = plt.figure(figsize=figsize)
+	# fig.patch.set_alpha(0.0)
+
+	# for im, box in zip(imgs,boxes):
+	# 	ax = fig.add_axes(box)
+	# 	ax.imshow(im)
 	# 	ax.set_axis_off()
 	# 	ax.set_facecolor((0, 0, 0, 0))
 
-	if save_path is not None:
-		fig.savefig(save_path, dpi=300, bbox_inches='tight', transparent=True)
-	plt.close()
-	return 
+	# if save_path is not None:
+	# 	fig.savefig(save_path, dpi=300, bbox_inches='tight', transparent=True)
+	# plt.close()
+	# return 
 
-replot_images = True
+replot_images = False
+replot_thesis = True
 
 if replot_images == True:
 
@@ -576,7 +659,6 @@ if replot_images == True:
 		# y_tick_labels=[r'$-2\omega_r$',r'$-1\omega_r$',r'$0$',r'$1\omega_r$',r'$2\omega_r$'],
 		magnitude_cmap='turbo',
 		caption = f'SNR: {measured_timesig['P_SNR']:.1f}\nTime res: {measured_timesig['T_res']:.2f} fs\nEnergy res: {measured_timesig['E_res']:.2f} eV',
-		ax_title='Spectrometer counts',
 		cbar_title='Counts'
 	)
 
@@ -775,6 +857,19 @@ if replot_images == True:
 		phase_cmap='twilight_shifted'
 	)
 
+	abs_plot(
+		mat_abs=np.abs(data_rho_interp['mat_complex']),
+		extent=data_rho_interp['extent'],
+		save_path='plot_output/6mcmc/data_rho_interp_abs.png',
+		show=False,
+		title=r'$ \left| \tilde S_{\text{corr}} (\varepsilon_2,\varepsilon_1) \right| $',
+		x_label=r'Energy $\varepsilon_2$ [eV]',
+		y_label=r'Energy $\varepsilon_1$ [eV]',
+		# y_ticks=[-3.1,-1.55,0,1.55,3.1],
+		# y_tick_labels=[r'$-2\omega_r$',r'$-1\omega_r$',r'$0$',r'$1\omega_r$',r'$2\omega_r$'],
+		magnitude_cmap='turbo',
+	)
+
 	file_path = 'single_output_temp/6mcmc/data_sigma_interp.npz'
 	data_sigma_interp = np.load(file_path)
 
@@ -824,76 +919,103 @@ if replot_images == True:
 ### THESIS FIGURES
 ###
 
-paths = ['plot_output/1generate_signal/input_spectra.png',
-		 'plot_output/6mcmc/rho_ideal.png',
-		 'plot_output/1generate_signal/measured_timesig.png']
+if replot_thesis == True:
 
-boxes = [[0.03, 0.75, 0.94, 0.30],
-		 [0.03, 0.43, 0.94, 0.30],
-		 [0.03, 0.02, 0.94, 0.38]]
+	paths = [
+		('plot_output/1generate_signal/input_spectra.png',),
+		('plot_output/6mcmc/rho_ideal.png',),
+		('plot_output/1generate_signal/measured_timesig.png',),
+	]
+	heights = [3, 3.25, 3.5]
+	gaps = [0.3, 0.3, 0.3, 0.3]
 
-figsize = (12,17)
+	overview_fig = create_stacked_overview_figure(
+		paths,
+		heights,
+		gaps,
+		fig_aspect= 0.75,
+		dpi=300,
+		save_path='plot_output/sim_output.png',
+	)
 
-overview_fig = create_stacked_overview_figure(
-	paths,boxes,figsize,
-	save_path='plot_output/sim_output.png',
-	show=False,
-)
+	paths = [
+		('plot_output/3kb_correct/KB_before.png',),
+		('plot_output/3kb_correct/KB_after.png',),
+	]
+	heights = [3, 3]
+	gaps = [0.3, 0.3, 0.3]
 
-paths = ['plot_output/3kb_correct/KB_before.png',
-		 'plot_output/3kb_correct/KB_after.png']
+	overview_fig = create_stacked_overview_figure(
+		paths,
+		heights,
+		gaps,
+		fig_aspect=1,
+		dpi=400,
+		save_path='plot_output/KBcorr.png',
+	)
 
-boxes = [[0.03, 0.52, 0.94, 0.42],
-		 [0.03, 0.05, 0.94, 0.42]]
+	# paths = [
+	# 	('plot_output/6mcmc/data_rho_interp.png',),
+	# 	('plot_output/6mcmc/data_sigma_interp.png',),
+	# ]
+	# heights = [3, 3]
+	# gaps = [0.3, 0.3, 0.3]
 
-figsize = (12,10)
+	# overview_fig = create_stacked_overview_figure(
+	# 	paths,
+	# 	heights,
+	# 	gaps,
+	# 	fig_aspect=1,
+	# 	dpi=300,
+	# 	save_path='plot_output/Scorr_e1e2.png',
+	# )
 
-overview_fig = create_stacked_overview_figure(
-	paths,boxes,figsize,
-	save_path='plot_output/KBcorr.png',
-	show=False,
-)
+	paths = [
+		('plot_output/6mcmc/data_rho_interp_abs.png','plot_output/6mcmc/data_sigma_interp.png')
+	]
+	heights = [3]
+	gaps = [0.3, 0.3]
 
-paths = ['plot_output/6mcmc/data_rho_interp.png',
-		 'plot_output/6mcmc/data_sigma_interp.png']
+	overview_fig = create_stacked_overview_figure(
+		paths,
+		heights,
+		gaps,
+		fig_aspect=2,
+		dpi=500,
+		save_path='plot_output/Scorr_e1e2.png',
+	)
 
-boxes = [[0.03, 0.57, 0.94, 0.32],
-		 [0.03, 0.05, 0.94, 0.48]]
+	paths = [
+		('plot_output/6mcmc/mcmc_posterior.png',),
+		('plot_output/6mcmc/rho_inferred.png',),
+	]
+	heights = [3.16, 2]
+	gaps = [0.2, 0.3, 0.2]
 
-figsize = (12,12)
+	overview_fig = create_stacked_overview_figure(
+		paths,
+		heights,
+		gaps,
+		fig_aspect=0.9,
+		dpi=300,
+		save_path='plot_output/posterior_inferred.png',
+	)
 
-overview_fig = create_stacked_overview_figure(
-	paths,boxes,figsize,
-	save_path='plot_output/Scorr_e1e2.png',
-	show=False,
-)
+	exit()
 
-paths = ['plot_output/6mcmc/mcmc_posterior.png',
-		 'plot_output/6mcmc/rho_inferred.png']
+	paths = [
+		('plot_output/1generate_signal/input_spectra.png',),
+		('plot_output/6mcmc/data_rho_interp.png',),
+		('plot_output/6mcmc/rho_inferred.png',),
+	]
+	heights = [0.28, 0.295, 0.295]
+	gaps = [0.0, 0.04, 0.04, 0.0]
 
-boxes = [[0.03, 0.42, 0.94, 0.57],
-		 [0.03, 0.03, 0.94, 0.36]]
-
-figsize = (12,14)
-
-overview_fig = create_stacked_overview_figure(
-	paths,boxes,figsize,
-	save_path='plot_output/posterior_inferred.png',
-	show=False,
-)
-
-paths = ['plot_output/1generate_signal/input_spectra.png',
-		 'plot_output/6mcmc/data_rho_interp.png',
-		 'plot_output/6mcmc/rho_inferred.png']
-
-boxes = [[0.03, 0.71, 0.94, 0.28],
-		 [0.03, 0.375, 0.94, 0.295],
-		 [0.03, 0.04, 0.94, 0.295]]
-
-figsize = (12,15)
-
-overview_fig = create_stacked_overview_figure(
-	paths,boxes,figsize,
-	save_path='plot_output/projected_result.png',
-	show=False,
-)	# CHANGE RHO_INFERRED TITLE FOR THAT!
+	overview_fig = create_stacked_overview_figure(
+		paths,
+		heights,
+		gaps,
+		fig_aspect=12 / 15,
+		dpi=300,
+		save_path='plot_output/projected_result.png',
+	)	# CHANGE RHO_INFERRED TITLE FOR THAT!

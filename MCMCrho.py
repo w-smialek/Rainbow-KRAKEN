@@ -3,7 +3,9 @@ jax.config.update("jax_enable_x64", True)
 import jax.numpy as jnp
 import numpyro
 import numpyro.distributions as dist
+from numpyro.distributions import transforms
 from numpyro.infer import MCMC, NUTS
+from numpyro.infer.initialization import init_to_median
 import numpy as np
 import matplotlib.pyplot as plt
 import gc
@@ -27,6 +29,11 @@ def rho_model(e1, e2, amps, mus, sigmas, betas, taus, lambdas, gammas, etas):
     lambdas = jnp.asarray(lambdas)
     gammas = jnp.asarray(gammas)
     etas = jnp.asarray(etas)
+
+    # # Stabilize transformed-parameter tails during HMC initialization.
+    # amps = jnp.clip(amps, 1e-12, 1e6)
+    # sigmas = jnp.clip(sigmas, 1e-6, 1e2)
+    # lambdas = jnp.clip(lambdas, 1e-12, 1e3)
 
     ndim = e1.ndim
     pshape = (slice(None),) + (None,) * ndim
@@ -91,30 +98,71 @@ def model(x, y, sigma_obs, z_obs=None, n_peaks=2):
     """
     # Priors per peak (same prior family for each component).
     amps_now = numpyro.sample(
-        'amps', dist.Uniform(0.0, 1.0).expand([n_peaks]).to_event(1))
+        'amps',
+        dist.TransformedDistribution(
+            dist.Normal(np.log(1.5), 0.6).expand([n_peaks]).to_event(1),
+            transforms.ExpTransform(),
+        ),
+    )
     mus_now = numpyro.sample(
-        'mus', dist.Uniform(24.0, 26.0).expand([n_peaks]).to_event(1))
+        'mus',
+        dist.TransformedDistribution(
+            dist.Normal(0.0, 1.0).expand([n_peaks]).to_event(1),
+            [transforms.SigmoidTransform(), transforms.AffineTransform(24.0, 2.0)],
+        ),
+    )
     sigmas_now = numpyro.sample(
-        'sigmas', dist.Uniform(0.0,0.3).expand([n_peaks]).to_event(1))
+        'sigmas',
+        dist.TransformedDistribution(
+            dist.Normal(np.log(0.06), 0.35).expand([n_peaks]).to_event(1),
+            transforms.ExpTransform(),
+        ),
+    )
     betas_now = numpyro.sample(
-        'betas_now', dist.Normal(0.0, 8.0).expand([n_peaks]).to_event(1))
+        'betas_now', dist.Normal(0.0, 5.0).expand([n_peaks]).to_event(1))
     taus_now = numpyro.sample(
-        'taus_now', dist.Normal(0.0, 8.0).expand([n_peaks]).to_event(1))
+        'taus_now', dist.Normal(0.0, 2.5).expand([n_peaks]).to_event(1))
     lambdas_now = numpyro.sample(
-        'lambdas_now', dist.HalfNormal(4.0).expand([n_peaks]).to_event(1))
+        'lambdas_now',
+        dist.TransformedDistribution(
+            dist.Normal(np.log(4.0), 0.6).expand([n_peaks]).to_event(1),
+            transforms.ExpTransform(),
+        ),
+    )
 
     # Complex Hermitian gamma with unit diagonal and free off-diagonal entries.
     n_pairs = n_peaks * (n_peaks - 1) // 2
     if n_pairs > 0:
         # gamma_mag = numpyro.sample(
-        #     'gamma_mag', dist.Uniform(0.0, 1.0).expand([n_pairs]).to_event(1))
-        gamma_mag = numpyro.sample(
-            'gamma_mag', dist.HalfNormal(0.05).expand([n_pairs]).to_event(1))
-        gamma_phase = numpyro.sample(
-            'gamma_phase', dist.Uniform(-1.1*jnp.pi, 1.1*jnp.pi).expand([n_pairs]).to_event(1))
+        #     'gamma_mag',
+        #     dist.TransformedDistribution(
+        #         dist.Normal(0.0, 1.0).expand([n_pairs]).to_event(1),
+        #         transforms.SigmoidTransform(),
+        #     ),
+        # )
+        gamma_mag = numpyro.sample( # INCOHERENT PRIOR
+            'gamma_mag',
+            dist.TransformedDistribution(
+                dist.Normal(-2.0, 1.0).expand([n_pairs]).to_event(1),
+                transforms.SigmoidTransform(),
+            ),
+        )
+
+        gamma_phase_unwrapped = numpyro.sample(
+            'gamma_phase_unwrapped', dist.Normal(0.0, 1.0).expand([n_pairs]).to_event(1))
+        # Wrapped normal centered at zero.
+        gamma_phase = numpyro.deterministic(
+            'gamma_phase',
+            (gamma_phase_unwrapped + jnp.pi) % (2.0 * jnp.pi) - jnp.pi,
+        )
         gammas_now = _build_hermitian_gamma(n_peaks, gamma_mag, gamma_phase)
         eta_off_diag = numpyro.sample(
-            'eta_off_diag', dist.Uniform(-1.0, 1.0).expand([n_pairs]).to_event(1))
+            'eta_off_diag',
+            dist.TransformedDistribution(
+                dist.Normal(0.0, 1.0).expand([n_pairs]).to_event(1),
+                [transforms.SigmoidTransform(), transforms.AffineTransform(-1.0, 2.0)],
+            ),
+        )
         etas_now = _build_symmetric_eta(n_peaks, eta_off_diag)
     else:
         gammas_now = jnp.eye(1, dtype=jnp.complex128)
@@ -145,7 +193,7 @@ def model(x, y, sigma_obs, z_obs=None, n_peaks=2):
 def Bayesian_MCMC(x_obs, y_obs, z_obs, sigma_obs, n_peaks=2, num_warmup=1000, num_samples=2000, num_chains=1, suffix=''):
     
     print("\nSetting up NUTS MCMC...")
-    nuts_kernel = NUTS(model)
+    nuts_kernel = NUTS(model, init_strategy=init_to_median(num_samples=20))
     mcmc = MCMC(nuts_kernel, num_warmup=num_warmup, num_samples=num_samples, num_chains=num_chains)
     # mcmc = MCMC(nuts_kernel, num_warmup=10, num_samples=20, num_chains=1)
     
@@ -173,7 +221,8 @@ def Bayesian_MCMC(x_obs, y_obs, z_obs, sigma_obs, n_peaks=2, num_warmup=1000, nu
     taus_samples = np.array(samples['taus_now'])
     lambdas_samples = np.array(samples['lambdas_now'])
     gamma_mag_samples = np.array(samples['gamma_mag']) if n_peaks > 1 else np.zeros((amps_samples.shape[0], 0))
-    gamma_phase_samples = np.array(samples['gamma_phase']) if n_peaks > 1 else np.zeros((amps_samples.shape[0], 0))
+    gamma_phase_samples = np.array(samples['gamma_phase_unwrapped']) if n_peaks > 1 else np.zeros((amps_samples.shape[0], 0))
+    gamma_phase_samples = (gamma_phase_samples + np.pi) % (2.0 * np.pi) - np.pi
     eta_off_diag_samples = np.array(samples['eta_off_diag']) if n_peaks > 1 else np.zeros((amps_samples.shape[0], 0))
 
     # Drop JAX-backed MCMC state once NumPy copies are materialized.
