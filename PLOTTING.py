@@ -186,7 +186,7 @@ def plot_posterior(posterior_panels,save_path=None):
 	for ax in axs[n_panels:]:
 		ax.axis('off')
 
-	fig.suptitle('Posterior distributions of fitted parameters', fontsize=30, y=1.02, weight='bold')
+	fig.suptitle('Posterior Distributions of Fitted Parameters', fontsize=30, y=1.02, weight='bold')
 	plt.tight_layout()
 	if save_path is not None:
 		plt.savefig(save_path, dpi=200, bbox_inches='tight')
@@ -328,7 +328,8 @@ def abs_plot(
 	if_square=False,
 	magnitude_cmap='viridis',
 	caption=None,
-	cbar_title = 'Magnitude'
+	captionsize=16,
+	cbar_title='Magnitude'
 ):
 	# Compute magnitude for plotting
 	magnitude = np.abs(mat_abs)
@@ -353,12 +354,12 @@ def abs_plot(
 			0.98,
 			caption,
 			transform=ax.transAxes,
-			fontsize=10,
+			fontsize=captionsize,
 			verticalalignment="top",
 			horizontalalignment="left",
 			color="white",
 			weight="bold",
-			path_effects=[pe.withStroke(linewidth=2, foreground="black")],
+			path_effects=[pe.withStroke(linewidth=1.5, foreground="black")],
 		)
 	ax.grid(True, which='major', linestyle='--', linewidth=0.25, color='gray', alpha=0.35)
 	cbar1 = plt.colorbar(im1, ax=ax, fraction=0.2, pad=0.0)
@@ -394,6 +395,7 @@ def complex_plot(
 	magnitude_cmap='viridis',
 	phase_cmap='twilight_shifted',
 	caption=None,
+	captionsize=16,
 	cbar_title = 'Magnitude'
 ):
 	# Compute magnitude and phase for plotting
@@ -431,12 +433,12 @@ def complex_plot(
 			0.98,
 			caption,
 			transform=ax1.transAxes,
-			fontsize=14,
+			fontsize=captionsize,
 			verticalalignment="top",
 			horizontalalignment="left",
 			color="white",
 			weight="bold",
-			path_effects=[pe.withStroke(linewidth=2, foreground="black")],
+			path_effects=[pe.withStroke(linewidth=1.5, foreground="black")],
 		)
 
 	# Plot Phase
@@ -583,7 +585,7 @@ def create_stacked_overview_figure(im_paths, heights, gaps, fig_aspect, dpi=300,
 	# plt.close()
 	# return 
 
-replot_images = False
+replot_images = True
 replot_thesis = True
 
 if replot_images == True:
@@ -603,12 +605,12 @@ if replot_images == True:
 				sp_x = input_spectra['sp_xuv'],
 				save_path = 'plot_output/1generate_signal/input_spectra.png',
 				show=False,
-				title='IR spectrum and photelectron signal',
+				title='IR Spectrum and Photelectron Populations',
 				x_label='Energy [eV]',
 				y_label='Amplitude [arb. u.]',
 				phase_label='Phase [rad]',
 				probe_title='Probe and Reference Spectra',
-				xuv_title=r'Photoelectron populations $\rho(\varepsilon,\varepsilon)$',
+				xuv_title=r'Photoelectron Populations $\rho(\varepsilon,\varepsilon)$',
 	)
 
 	file_path = 'single_output_temp/1generate_signal/exact_freqsig.npz'
@@ -652,13 +654,14 @@ if replot_images == True:
 		extent=measured_timesig['extent'],
 		save_path='plot_output/1generate_signal/measured_timesig.png',
 		show=False,
-		title='Time-resolved signal',
+		title='Time-resolved Signal',
 		x_label='Kinetic energy [eV]',
 		y_label='Time [fs]',
 		# y_ticks=[-3.1,-1.55,0,1.55,3.1],
 		# y_tick_labels=[r'$-2\omega_r$',r'$-1\omega_r$',r'$0$',r'$1\omega_r$',r'$2\omega_r$'],
 		magnitude_cmap='turbo',
 		caption = f'SNR: {measured_timesig['P_SNR']:.1f}\nTime res: {measured_timesig['T_res']:.2f} fs\nEnergy res: {measured_timesig['E_res']:.2f} eV',
+		captionsize=13,
 		cbar_title='Counts'
 	)
 
@@ -904,14 +907,27 @@ if replot_images == True:
 		extent=rho_inferred['extent'],
 		save_path='plot_output/6mcmc/rho_inferred.png',
 		show=False,
-		# title='Inferred Density Matrix',
-		title='Projected Density Matrix', # FOR WIDE PROBE
+		title='Inferred Density Matrix',
 		x_label=r'Energy $\varepsilon_2$ [eV]',
 		y_label=r'Energy $\varepsilon_1$ [eV]',
 		# y_ticks=[-3.1,-1.55,0,1.55,3.1],
 		# y_tick_labels=[r'$-2\omega_r$',r'$-1\omega_r$',r'$0$',r'$1\omega_r$',r'$2\omega_r$'],
 		magnitude_cmap='turbo',
 		phase_cmap='twilight_shifted',
+		caption = f'F = {rho_inferred['RES']:.3f}'
+	)
+
+	abs_plot(
+		mat_abs=np.abs(rho_inferred['mat_complex']),
+		extent=rho_inferred['extent'],
+		save_path='plot_output/6mcmc/rho_inferred_abs.png',
+		show=False,
+		title='Projected Density Matrix',
+		x_label=r'Energy $\varepsilon_2$ [eV]',
+		y_label=r'Energy $\varepsilon_1$ [eV]',
+		# y_ticks=[-3.1,-1.55,0,1.55,3.1],
+		# y_tick_labels=[r'$-2\omega_r$',r'$-1\omega_r$',r'$0$',r'$1\omega_r$',r'$2\omega_r$'],
+		magnitude_cmap='turbo',
 		caption = f'F = {rho_inferred['RES']:.3f}'
 	)
 
@@ -934,7 +950,7 @@ if replot_thesis == True:
 		heights,
 		gaps,
 		fig_aspect= 0.75,
-		dpi=300,
+		dpi=400,
 		save_path='plot_output/sim_output.png',
 	)
 
@@ -950,7 +966,7 @@ if replot_thesis == True:
 		heights,
 		gaps,
 		fig_aspect=1,
-		dpi=400,
+		dpi=450,
 		save_path='plot_output/KBcorr.png',
 	)
 
@@ -997,25 +1013,22 @@ if replot_thesis == True:
 		heights,
 		gaps,
 		fig_aspect=0.9,
-		dpi=300,
+		dpi=600,
 		save_path='plot_output/posterior_inferred.png',
 	)
 
-	exit()
-
 	paths = [
 		('plot_output/1generate_signal/input_spectra.png',),
-		('plot_output/6mcmc/data_rho_interp.png',),
-		('plot_output/6mcmc/rho_inferred.png',),
+		('plot_output/6mcmc/data_rho_interp_abs.png','plot_output/6mcmc/rho_inferred_abs.png')
 	]
-	heights = [0.28, 0.295, 0.295]
-	gaps = [0.0, 0.04, 0.04, 0.0]
+	heights = [3.1,3.2]
+	gaps = [0.2, 0.3, 0.2]
 
 	overview_fig = create_stacked_overview_figure(
 		paths,
 		heights,
 		gaps,
-		fig_aspect=12 / 15,
-		dpi=300,
+		fig_aspect=1.1,
+		dpi=450,
 		save_path='plot_output/projected_result.png',
-	)	# CHANGE RHO_INFERRED TITLE FOR THAT!
+	)

@@ -3,11 +3,11 @@ import numpy as np
 
 E_lo = 24.5
 E_hi = 28.0
-T_reach = 150
+T_reach = 100
 E_res = 0.01
 N_T = 501
-alpha = 30000
-b = 1
+alpha = 10000
+b = 10
 
 sideband_lo = 25.5
 sideband_hi = 28.0
