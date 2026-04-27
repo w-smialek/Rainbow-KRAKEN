@@ -211,7 +211,9 @@ def plot_spectra(om_pr,
 				 phase_tick_labels=None,
 				 phase_threshold=0.05,
 				 show_ref_phase=False,
-				 if_square=False):
+				 if_square=False,
+				 caption=None,
+):
 
 	has_second_axis = sp_x is not None
 	if has_second_axis:
@@ -278,6 +280,19 @@ def plot_spectra(om_pr,
 	ax1.set_xlim(probe_xlim)
 	# ax1.grid(True, alpha=0.3)
 	ax1.grid(True, which='major', linestyle='--', linewidth=0.4, color='gray', alpha=0.35)
+
+	if caption is not None:
+		ax1.text(
+			0.02,
+			0.98,
+			caption,
+			transform=ax1.transAxes,
+			fontsize=15,
+			verticalalignment="top",
+			horizontalalignment="left",
+			color="black",
+			weight="bold"
+		)
 
 	ax1_phase.set_ylabel(phase_label)
 	ax1_phase.set_ylim([-np.pi, np.pi])
@@ -779,7 +794,8 @@ if replot_images == True:
 				phase_ticks=None,
 				phase_tick_labels=None,
 				phase_threshold=0.05,
-				show_ref_phase=True)
+				show_ref_phase=True,
+				caption = f'RES: {probe_sp_rec['RES']:.4f}')
 
 	###
 	## 5PROBE_CORR

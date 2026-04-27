@@ -211,7 +211,9 @@ def plot_spectra(om_pr,
 				 phase_tick_labels=None,
 				 phase_threshold=0.05,
 				 show_ref_phase=False,
-				 if_square=False):
+				 if_square=False,
+ 				 caption=None
+):
 
 	has_second_axis = sp_x is not None
 	if has_second_axis:
@@ -278,6 +280,20 @@ def plot_spectra(om_pr,
 	ax1.set_xlim(probe_xlim)
 	# ax1.grid(True, alpha=0.3)
 	ax1.grid(True, which='major', linestyle='--', linewidth=0.4, color='gray', alpha=0.35)
+
+
+	if caption is not None:
+		ax1.text(
+			0.02,
+			0.98,
+			caption,
+			transform=ax1.transAxes,
+			fontsize=15,
+			verticalalignment="top",
+			horizontalalignment="left",
+			color="black",
+			weight="bold"
+		)
 
 	ax1_phase.set_ylabel(phase_label)
 	ax1_phase.set_ylim([-np.pi, np.pi])
@@ -641,7 +657,7 @@ input_spectra = plot_spectra(
 			xuv_title=r'Photoelectron Populations $\rho(\varepsilon,\varepsilon)$',
 )
 
-for suffix in ['_it0','_it1']:
+for suffix in ['','_it1','_it2','_it3','_it4','_it5']:
 
 	file_path = f'single_output_temp/4probe_rec/probe_sp_rec{suffix}.npz'
 	probe_sp_rec = np.load(file_path)
@@ -649,7 +665,7 @@ for suffix in ['_it0','_it1']:
 	plot_spectra(probe_sp_rec['om_probe'],
 				probe_sp_rec['sp_probe'],
 				sp_ref=probe_sp_rec['sp_probe_rec'],
-				save_path='plot_output/4probe_rec/probe_sp_rec.png',
+				save_path=f'parameter_scan/pscan_output/probe_sp_rec{suffix}.png',
 				title='IR spectrum and photelectron signal',
 				x_label='Energy [eV]',
 				y_label='Amplitude [arb. u.]',
@@ -659,7 +675,9 @@ for suffix in ['_it0','_it1']:
 				phase_ticks=None,
 				phase_tick_labels=None,
 				phase_threshold=0.05,
-				show_ref_phase=True)
+				show_ref_phase=True,
+				caption = f'RES: {probe_sp_rec['RES']:.4f}'
+				)
 	
 	file_path = f'single_output_temp/6mcmc/rho_inferred{suffix}.npz'
 	rho_inferred = np.load(file_path)
@@ -672,8 +690,6 @@ for suffix in ['_it0','_it1']:
 		title='Inferred Density Matrix',
 		x_label=r'Energy $\varepsilon_2$ [eV]',
 		y_label=r'Energy $\varepsilon_1$ [eV]',
-		# y_ticks=[-3.1,-1.55,0,1.55,3.1],
-		# y_tick_labels=[r'$-2\omega_r$',r'$-1\omega_r$',r'$0$',r'$1\omega_r$',r'$2\omega_r$'],
 		magnitude_cmap='turbo',
 		phase_cmap='twilight_shifted',
 		caption = f'F = {rho_inferred['RES']:.3f}'

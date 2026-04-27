@@ -95,7 +95,7 @@ class RK_experiment:
         self.prrec_maxiter = 500
         self.prrec_tol = 1e-6
         self.prrec_lambda1 = 0.0
-        self.prrec_lambda2 = 0.0#0.005
+        self.prrec_lambda2 = 0.0005
 
         # Probe correction parameters / MCMC data region parameters
         self.prcor_dzeta = 0.05 if self.ifWide else 0.25
@@ -194,8 +194,6 @@ class RK_experiment:
         np.savez(f'single_output_temp/1generate_signal/input_spectra{suffix}.npz',
                  om_probe=self.om_probe,om_xuv=self.om_xuv,sp_probe=self.sp_probe,sp_ref=self.sp_ref,
                  sp_xuv=np.abs(self.rho_f(self.om_xuv*hbar + self.om_ref*hbar,self.om_xuv*hbar + self.om_ref*hbar)))
-
-        # rk.plot_spectra(self.om_probe,self.om_xuv,self.sp_probe,self.sp_ref,np.abs(self.rho_f(self.om_xuv*hbar + self.om_ref*hbar,self.om_xuv*hbar + self.om_ref*hbar)))
         
         ### SIMULATE SIGNAL
 
@@ -366,7 +364,13 @@ class RK_experiment:
                  P_SNR=self.P_SNR,N_T=self.N_T,N_E=self.N_E,T_res=2*self.T_reach/self.N_T,E_res=self.E_res)
 
 
-    def probe_reconstruct(self):
+    def probe_reconstruct(self,rho_params_rec=None,suffix=''):
+        
+        if rho_params_rec is None:
+            rho_params_rec = self.rho_params
+
+        mus = rho_params_rec['mus']
+        rho_params_rec['mus'] = np.array([mu + self.om_ref*hbar for mu in mus])
 
         sig_power = np.sum(np.abs(self.signal_sb_FT),axis=1)
 
@@ -379,15 +383,9 @@ class RK_experiment:
         sigma_zero = np.abs(sigma_zero).astype(float)
         signal_sb_FT_zero = self.signal_sb_FT[np.ix_(y_mask, x_mask)]
 
-        # rk.plot_mat(signal_sb_FT_zero - 1e-3, extent=[E_zero[0,0]-self.om_ref*hbar,E_zero[0,-1]-self.om_ref*hbar,OM_T_zero[1,0]*hbar,OM_T_zero[-1,0]*hbar], cmap='plasma',
-        #          saveloc='single_output_temp/LBFGS/zero_comp.png', xlabel='Kinetic energy $E_f$ (eV)', ylabel='Indirect energy $\\hbar \\omega_\\tau$ (eV)',
-        #          title='$\\tilde S_{corr}(E_f,\\omega_\\tau)$', show=False, square=True)
         np.savez('single_output_temp/3kb_correct/zero_omega_comp.npz',
                  mat_complex=signal_sb_FT_zero,extent=np.array([E_zero[0,0]-self.om_ref*hbar,E_zero[0,-1]-self.om_ref*hbar,OM_T_zero[1,0]*hbar,OM_T_zero[-1,0]*hbar]))
         
-        # rk.plot_mat(sigma_zero, extent=[E_zero[0,0]-self.om_ref*hbar,E_zero[0,-1]-self.om_ref*hbar,OM_T_zero[1,0]*hbar,OM_T_zero[-1,0]*hbar], cmap='plasma',
-        #          saveloc='single_output_temp/LBFGS/zero_comp_sigma.png', xlabel='Kinetic energy $E_f$ (eV)', ylabel='Indirect energy $\\hbar \\omega_\\tau$ (eV)',
-        #          title='$\\sigma(E_f,\\hbar \\omega_\\tau )$', show=False, mode='abs')
         np.savez('single_output_temp/3kb_correct/zero_omega_comp_sigma.npz',
                  mat_abs=sigma_zero,extent=np.array([E_zero[0,0]-self.om_ref*hbar,E_zero[0,-1]-self.om_ref*hbar,OM_T_zero[1,0]*hbar,OM_T_zero[-1,0]*hbar]))
         
@@ -409,7 +407,7 @@ class RK_experiment:
             om_t=OM_T_zero,
             z_obs=signal_sb_FT_zero,
             sigma_obs=sigma_zero,
-            rho_params=self.rho_params,
+            rho_params=rho_params_rec,
             om_ref=self.om_ref,
             obs_mask=None,
             maxiter=self.prrec_maxiter,
@@ -438,7 +436,7 @@ class RK_experiment:
 
         res_val = np.sum(np.abs(self.sp_probe - fit_mag*np.exp(1j*fit_phase))**2) / np.sum(np.abs(self.sp_probe)**2)
 
-        np.savez('single_output_temp/4probe_rec/probe_sp_rec.npz',
+        np.savez(f'single_output_temp/4probe_rec/probe_sp_rec{suffix}.npz',
                  om_probe=self.om_probe,sp_probe=self.sp_probe,sp_probe_rec=fit_mag*np.exp(1j*fit_phase),
                  RES=res_val)
 
@@ -452,6 +450,50 @@ class RK_experiment:
 
         om_t_epsilon = 0.01
         probe_modulation = ref_phase * sp / np.maximum(self.OM_T,om_t_epsilon)
+
+        mode = 1
+        if mode == 1:
+
+            dzeta_2 = 0.1
+
+            # Sum over energy axis and broadcast to full signal shape
+            signal_sum = np.sum(np.abs(self.signal_sb_FT*probe_modulation), axis=1)
+            signal_sum[self.OM_T[:,0] < self.om_ref/2] = 0
+            signal_sum_full = np.repeat(signal_sum[:, np.newaxis], self.signal_sb_FT.shape[1], axis=1)
+
+            # plt.plot(signal_sum)
+            # plt.savefig('a.png')
+            # exit()
+
+            where_off = signal_sum_full < dzeta_2 * np.max(signal_sum_full)
+            probe_modulation[where_off] = dzeta
+
+            signal_sb_FT_corrected = self.signal_sb_FT / probe_modulation
+            signal_sb_FT_corrected[where_off] = 0
+
+            sigma = self.sigma / np.abs(probe_modulation)
+            sigma[where_off] = 0
+
+            x_mask = (self.E[0, :] > self.rho_lo) & (self.E[0, :] < self.rho_hi)
+            y_mask = signal_sum > dzeta_2 * np.max(signal_sum_full)
+
+            if self.median_filter_when == 2:
+                signal_sb_FT_corrected = median_filter(np.real(signal_sb_FT_corrected),size=(3,3)) + 1j*median_filter(np.imag(signal_sb_FT_corrected),size=(3,3))  # WIDE PROBE VARIANT
+
+            E_rho = self.E[np.ix_(y_mask, x_mask)]
+            OM_T_rho = self.OM_T[np.ix_(y_mask, x_mask)]
+            sigma_rho = sigma[np.ix_(y_mask, x_mask)]
+            sigma_rho = np.abs(sigma_rho).astype(float)
+            signal_sb_FT_corrected_rho = signal_sb_FT_corrected[np.ix_(y_mask, x_mask)]
+
+            om_row_idx = np.argmin(np.abs(OM_T_rho[:, 0] - self.om_ref))
+            dE = E_rho[0, 1] - E_rho[0, 0]
+            roi_norm = np.sum(np.abs(signal_sb_FT_corrected_rho)[om_row_idx, :]) * dE
+
+            signal_sb_FT_corrected_rho = signal_sb_FT_corrected_rho / roi_norm
+            sigma_rho = sigma_rho / roi_norm
+
+            return signal_sb_FT_corrected, sigma, signal_sb_FT_corrected_rho, sigma_rho, E_rho, OM_T_rho
 
         where_off = np.abs(probe_modulation) < dzeta * np.max(np.abs(probe_modulation))
         probe_modulation[where_off] = dzeta
@@ -554,7 +596,7 @@ class RK_experiment:
 
             inferred_rho_params = {
                 'amps': np.asarray(amps_hat, dtype=float),
-                'mus': np.asarray([mu - self.om_ref*hbar for mu in mus_hat], dtype=float),
+                'mus': np.asarray(mus_hat, dtype=float),
                 'sigmas': np.asarray(sigmas_hat, dtype=float),
                 'betas': np.asarray(betas_hat, dtype=float),
                 'taus': np.asarray(taus_hat, dtype=float),
@@ -585,10 +627,6 @@ class RK_experiment:
 
         np.savez(f'single_output_temp/6mcmc/rho_inferred{suffix}.npz',
                  mat_complex=inferred_rho,extent=np.array([self.harmq_lo,self.harmq_hi,self.harmq_lo,self.harmq_hi]),RES=fid)
-
-        self.inferred_rho = inferred_rho
-        self.inferred_rho_params = inferred_rho_params
-        self.last_fidelity = fid
 
         return fid, inferred_rho_params
 

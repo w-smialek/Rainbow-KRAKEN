@@ -122,10 +122,16 @@ def model(x, y, sigma_obs, z_obs=None, n_peaks=2):
         'betas_now', dist.Normal(0.0, 5.0).expand([n_peaks]).to_event(1))
     taus_now = numpyro.sample(
         'taus_now', dist.Normal(0.0, 2.5).expand([n_peaks]).to_event(1))
+    # lambdas_now = numpyro.sample(
+    #     'lambdas_now',
+    #     dist.TransformedDistribution(
+    #         dist.Normal(np.log(4.0), 0.6).expand([n_peaks]).to_event(1),
+    #         transforms.ExpTransform(),
+    #     ),
     lambdas_now = numpyro.sample(
         'lambdas_now',
         dist.TransformedDistribution(
-            dist.Normal(np.log(4.0), 0.6).expand([n_peaks]).to_event(1),
+            dist.Normal(np.log(2.0), 1.0).expand([n_peaks]).to_event(1),
             transforms.ExpTransform(),
         ),
     )
