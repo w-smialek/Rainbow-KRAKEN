@@ -20,7 +20,7 @@ def combine_scans(rho_rawA,rho_rawB,rho_raw_sigmaA,rho_raw_sigmaB):
 
 E_lo = 24.5
 E_hi = 28.0
-T_reach = 150
+T_reach = 100
 E_res = 0.01
 N_T = 501
 alpha = 1000
@@ -33,8 +33,8 @@ harmq_hi = 25.5
 
 # Build the density matrix parameters
 amps = [1.0, 1.0]
-mus = [25.0 - 0.11, 25.0 + 0.11]
-sigmas = [0.06, 0.06]
+mus = [25.0 - 0.13, 25.0 + 0.13]
+sigmas = [0.08, 0.08]
 betas = [3, 3]
 taus = [1, 1]
 lambdas = [5, 5]
@@ -54,12 +54,23 @@ rho_params = {
     'etas': np.asarray(etas, dtype=float),
 }
 
+# # Probe pulse definition
+# A_probe = 0.6
+# probe_params = {
+#     'amps': np.asarray([0.3,0.3,0.3]) * A_probe,
+#     'oms': np.asarray([1.50 / hbar, 1.55 / hbar, 1.60 / hbar]),
+#     'sigmas': np.asarray([0.035 / hbar, 0.035 / hbar, 0.035 / hbar]),
+#     'phi0': 0.0,
+#     'phase_grad': 0.0,
+#     'phase_chirp': 0.0
+# }
+
 # Probe pulse definition
 A_probe = 0.6
 probe_params = {
-    'amps': np.asarray([0.3,0.3,0.3]) * A_probe,
-    'oms': np.asarray([1.50 / hbar, 1.55 / hbar, 1.60 / hbar]),
-    'sigmas': np.asarray([0.035 / hbar, 0.035 / hbar, 0.035 / hbar]),
+    'amps': np.asarray([1]) * A_probe,
+    'oms': np.asarray([1.55 / hbar]),
+    'sigmas': np.asarray([0.08 / hbar]),
     'phi0': 0.0,
     'phase_grad': 0.0,
     'phase_chirp': 0.0
@@ -102,7 +113,7 @@ rhodata_roiA, rhosigma_roiA, E1A, E2A, rho_rawA, rho_raw_sigmaA = experiment.pro
 # Reference pulse definition
 
 A_ref = 1.0
-om_ref = 1.46 / hbar
+om_ref = 1.47 / hbar
 s_ref = 0.025 / hbar
 
 experiment = RK_experiment(

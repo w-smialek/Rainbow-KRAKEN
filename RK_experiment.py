@@ -95,7 +95,7 @@ class RK_experiment:
         self.prrec_maxiter = 500
         self.prrec_tol = 1e-6
         self.prrec_lambda1 = 0.0
-        self.prrec_lambda2 = 0.005
+        self.prrec_lambda2 = 0.0#0.005
 
         # Probe correction parameters / MCMC data region parameters
         self.prcor_dzeta = 0.05 if self.ifWide else 0.25
@@ -175,7 +175,7 @@ class RK_experiment:
 
         self.rho_f = rho_f
 
-    def generate_signal(self,exp_signal=None):
+    def generate_signal(self,exp_signal=None,suffix=''):
         """Generate synthetic baseline and full signal with optional noise."""
 
         ### GENERATE SPECTRA
@@ -191,7 +191,7 @@ class RK_experiment:
 
         ### PLOT the upsampled spectra with probe/ref on one axis, xuv on another
 
-        np.savez('single_output_temp/1generate_signal/input_spectra.npz',
+        np.savez(f'single_output_temp/1generate_signal/input_spectra{suffix}.npz',
                  om_probe=self.om_probe,om_xuv=self.om_xuv,sp_probe=self.sp_probe,sp_ref=self.sp_ref,
                  sp_xuv=np.abs(self.rho_f(self.om_xuv*hbar + self.om_ref*hbar,self.om_xuv*hbar + self.om_ref*hbar)))
 
@@ -535,6 +535,7 @@ class RK_experiment:
 
         if self.ifWide:
             inferred_rho = rk.project_to_density_matrix(self.rho_raw,self.psd_sigma)
+            inferred_rho_params = None
         else:
 
             gc.collect()
@@ -551,30 +552,45 @@ class RK_experiment:
                 suffix=suffix
             )
 
+            inferred_rho_params = {
+                'amps': np.asarray(amps_hat, dtype=float),
+                'mus': np.asarray([mu - self.om_ref*hbar for mu in mus_hat], dtype=float),
+                'sigmas': np.asarray(sigmas_hat, dtype=float),
+                'betas': np.asarray(betas_hat, dtype=float),
+                'taus': np.asarray(taus_hat, dtype=float),
+                'lambdas': np.asarray(lambdas_hat, dtype=float),
+                'gammas': np.asarray(gamma_hat, dtype=np.complex128),
+                'etas': np.asarray(eta_hat, dtype=float),
+            }
+
             def rho_inferred(e1,e2):
                 return rk.rho_model(e1,e2,amps_hat,mus_hat,sigmas_hat,betas_hat,taus_hat,lambdas_hat,gamma_hat,eta_hat)
 
             inferred_rho = rho_inferred(self.E1interp, self.E2interp)
             inferred_rho = inferred_rho/np.trace(inferred_rho)
 
-        return inferred_rho
+        return inferred_rho, inferred_rho_params
     
-    def mcmc_fit(self):
+    def mcmc_fit(self,suffix=''):
 
-        inferred_rho = self._apply_mcmc(self.rhodata_roi, self.rhosigma_roi, self.E1, self.E2, suffix='')
+        inferred_rho, inferred_rho_params = self._apply_mcmc(self.rhodata_roi, self.rhosigma_roi, self.E1, self.E2, suffix=suffix)
     
-        np.savez('single_output_temp/6mcmc/data_rho_interp.npz',
+        np.savez(f'single_output_temp/6mcmc/data_rho_interp{suffix}.npz',
                  mat_complex=self.rho_raw,extent=np.array([self.harmq_lo,self.harmq_hi,self.harmq_lo,self.harmq_hi]))
         
-        np.savez('single_output_temp/6mcmc/data_sigma_interp.npz',
+        np.savez(f'single_output_temp/6mcmc/data_sigma_interp{suffix}.npz',
                  mat_abs=self.rho_raw_sigma,extent=np.array([self.harmq_lo,self.harmq_hi,self.harmq_lo,self.harmq_hi]))
         
         fid = rk.fidelity(self.ideal_rho, inferred_rho)
 
-        np.savez('single_output_temp/6mcmc/rho_inferred.npz',
+        np.savez(f'single_output_temp/6mcmc/rho_inferred{suffix}.npz',
                  mat_complex=inferred_rho,extent=np.array([self.harmq_lo,self.harmq_hi,self.harmq_lo,self.harmq_hi]),RES=fid)
 
-        return
+        self.inferred_rho = inferred_rho
+        self.inferred_rho_params = inferred_rho_params
+        self.last_fidelity = fid
+
+        return fid, inferred_rho_params
 
     def run_full_pipeline(self):
         self.generate_signal()

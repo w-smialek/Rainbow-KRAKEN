@@ -8,8 +8,8 @@ import re
 hbar = 6.582119569e-1
 
 
-font_path1 = Path(__file__).resolve().parent / 'fonts' / 'cmu.sans-serif-bold.ttf'
-font_path2 = Path(__file__).resolve().parent / 'fonts' / 'cmu.sans-serif-demi-condensed-demicondensed.ttf'
+font_path1 = './fonts/cmu.sans-serif-bold.ttf'
+font_path2 = './fonts/cmu.sans-serif-demi-condensed-demicondensed.ttf'
 fm.fontManager.addfont(str(font_path1))
 fm.fontManager.addfont(str(font_path2))
 cmu_sans_bold = fm.FontProperties(fname=str(font_path1)).get_name()
@@ -315,6 +315,43 @@ def plot_spectra(om_pr,
 	plt.close()
 	return
 
+def plot_fids(s_ref_list,
+				fids,
+				save_path=None,
+				show=False,
+				title='IR spectrum and photelectron signal',
+				x_label='Energy [eV]',
+				y_label='Amplitude [arb. u.]',
+				# probe_xlim=(0.8, 2.5),
+				if_square=False):
+
+
+	fig, ax1 = plt.subplots(figsize=(6.5, 5))
+	ax2 = None
+
+	# IR/Pump branch (infrared domain) - warm colors
+	color_probe = '#C41E3A' # '#D62728'      # Strong red-orange (crimson) - PRIMARY IR signal
+
+	line_probe_abs, = ax1.plot(s_ref_list * hbar, fids, 
+							label='Probe |spectrum|', linewidth=2, color=color_probe)
+
+	ax1.set_xlabel(x_label)
+	ax1.set_ylabel(y_label)
+	ax1.set_title(title, fontsize=12,y=1.03)
+	# ax1.set_xlim(probe_xlim)
+	ax1.grid(True, which='major', linestyle='--', linewidth=0.4, color='gray', alpha=0.35)
+
+	if if_square:
+		ax1.set_box_aspect(1)
+
+	fig.tight_layout()
+	if save_path is not None:
+		fig.savefig(save_path, dpi=300, bbox_inches='tight')
+	if show:
+		plt.show()
+	plt.close()
+	return
+
 def abs_plot(
 	mat_abs,
 	extent,
@@ -567,203 +604,46 @@ def create_stacked_overview_figure(im_paths, heights, gaps, fig_aspect, dpi=300,
 	plt.close()
 	return
 
-	# imgs = []
-	# for path in im_paths:
-	# 	imgs.append(plt.imread(path))
+file_path = 'single_output_temp/6mcmc/rho_ideal.npz'
+rho_ideal = np.load(file_path)
 
-	# fig = plt.figure(figsize=figsize)
-	# fig.patch.set_alpha(0.0)
+rho_ideal = complex_plot(
+	mat_complex=rho_ideal['mat_complex'],
+	extent=rho_ideal['extent'],
+	save_path='parameter_scan/pscan_output/rho_ideal.png',
+	show=False,
+	title='Initial Photoelectron Density Matrix',
+	x_label=r'Energy $\varepsilon_2$ [eV]',
+	y_label=r'Energy $\varepsilon_1$ [eV]',
+	# y_ticks=[-3.1,-1.55,0,1.55,3.1],
+	# y_tick_labels=[r'$-2\omega_r$',r'$-1\omega_r$',r'$0$',r'$1\omega_r$',r'$2\omega_r$'],
+	magnitude_cmap='turbo',
+	phase_cmap='twilight_shifted'
+)
 
-	# for im, box in zip(imgs,boxes):
-	# 	ax = fig.add_axes(box)
-	# 	ax.imshow(im)
-	# 	ax.set_axis_off()
-	# 	ax.set_facecolor((0, 0, 0, 0))
 
-	# if save_path is not None:
-	# 	fig.savefig(save_path, dpi=300, bbox_inches='tight', transparent=True)
-	# plt.close()
-	# return 
+file_path = 'single_output_temp/1generate_signal/input_spectra.npz'
+input_spectra = np.load(file_path)
 
-replot_images = True
-replot_thesis = False
+input_spectra = plot_spectra(
+			om_pr = input_spectra['om_probe'],
+			sp_pr = input_spectra['sp_probe'],
+			sp_ref = input_spectra['sp_ref'],
+			om_x = input_spectra['om_xuv'],
+			sp_x = input_spectra['sp_xuv'],
+			save_path = 'parameter_scan/pscan_output/input_spectra.png',
+			show=False,
+			title='IR Spectrum and Photelectron Populations',
+			x_label='Energy [eV]',
+			y_label='Amplitude [arb. u.]',
+			phase_label='Phase [rad]',
+			probe_title='Probe and Reference Spectra',
+			xuv_title=r'Photoelectron Populations $\rho(\varepsilon,\varepsilon)$',
+)
 
-if replot_images == True:
+for suffix in ['_it0','_it1']:
 
-	###
-	## 1GENERATE_SIGNAL
-	###
-
-	file_path = 'single_output_temp/1generate_signal/input_spectra.npz'
-	input_spectra = np.load(file_path)
-
-	input_spectra = plot_spectra(
-				om_pr = input_spectra['om_probe'],
-				sp_pr = input_spectra['sp_probe'],
-				sp_ref = input_spectra['sp_ref'],
-				om_x = input_spectra['om_xuv'],
-				sp_x = input_spectra['sp_xuv'],
-				save_path = 'plot_output/1generate_signal/input_spectra.png',
-				show=False,
-				title='IR Spectrum and Photelectron Populations',
-				x_label='Energy [eV]',
-				y_label='Amplitude [arb. u.]',
-				phase_label='Phase [rad]',
-				probe_title='Probe and Reference Spectra',
-				xuv_title=r'Photoelectron Populations $\rho(\varepsilon,\varepsilon)$',
-	)
-
-	file_path = 'single_output_temp/1generate_signal/exact_freqsig.npz'
-	exact_freqsig = np.load(file_path)
-
-	complex_plot(
-		mat_complex=exact_freqsig['mat_complex'],
-		extent=exact_freqsig['extent'],
-		save_path='plot_output/1generate_signal/exact_freqsig.png',
-		show=False,
-		title='Complex Array Plot',
-		x_label='X-axis Label (Placeholder)',
-		y_label='Y-axis Label (Placeholder)',
-		y_ticks=[-3.1,-1.55,0,1.55,3.1],
-		y_tick_labels=[r'$-2\omega_r$',r'$-1\omega_r$',r'$0$',r'$1\omega_r$',r'$2\omega_r$'],
-		magnitude_cmap='turbo',
-		phase_cmap='twilight_shifted'
-	)
-
-	file_path = 'single_output_temp/1generate_signal/exact_timesig.npz'
-	exact_timesig = np.load(file_path)
-
-	abs_plot(
-		mat_abs=exact_timesig['mat_abs'],
-		extent=exact_timesig['extent'],
-		save_path='plot_output/1generate_signal/exact_timesig.png',
-		show=False,
-		title='Complex Array Plot',
-		x_label='X-axis Label (Placeholder)',
-		y_label='Y-axis Label (Placeholder)',
-		# y_ticks=[-3.1,-1.55,0,1.55,3.1],
-		# y_tick_labels=[r'$-2\omega_r$',r'$-1\omega_r$',r'$0$',r'$1\omega_r$',r'$2\omega_r$'],
-		magnitude_cmap='turbo'
-	)
-
-	file_path = 'single_output_temp/1generate_signal/measured_timesig.npz'
-	measured_timesig = np.load(file_path)
-
-	measured_timesig = abs_plot(
-		mat_abs=measured_timesig['mat_abs'],
-		extent=measured_timesig['extent'],
-		save_path='plot_output/1generate_signal/measured_timesig.png',
-		show=False,
-		title='Time-resolved Signal',
-		x_label='Kinetic energy [eV]',
-		y_label='Time [fs]',
-		# y_ticks=[-3.1,-1.55,0,1.55,3.1],
-		# y_tick_labels=[r'$-2\omega_r$',r'$-1\omega_r$',r'$0$',r'$1\omega_r$',r'$2\omega_r$'],
-		magnitude_cmap='turbo',
-		caption = f'SNR: {measured_timesig['P_SNR']:.1f}\nTime res: {measured_timesig['T_res']:.2f} fs\nEnergy res: {measured_timesig['E_res']:.2f} eV',
-		captionsize=13,
-		cbar_title='Counts'
-	)
-
-	###
-	## 2PROCESS_DETREND
-	###
-
-	file_path = 'single_output_temp/2process_detrend/measured_freqsig.npz'
-	measured_freqsig = np.load(file_path)
-
-	complex_plot(
-		mat_complex=measured_freqsig['mat_complex'],
-		extent=measured_freqsig['extent'],
-		save_path='plot_output/2process_detrend/measured_freqsig.png',
-		show=False,
-		title='Complex Array Plot',
-		x_label='X-axis Label (Placeholder)',
-		y_label='Y-axis Label (Placeholder)',
-		y_ticks=[-3.1,-1.55,0,1.55,3.1],
-		y_tick_labels=[r'$-2\omega_r$',r'$-1\omega_r$',r'$0$',r'$1\omega_r$',r'$2\omega_r$'],
-		magnitude_cmap='turbo',
-		phase_cmap='twilight_shifted'
-	)
-
-	###
-	## 3KB_CORRECT
-	###
-
-	file_path = 'single_output_temp/3kb_correct/KB_before.npz'
-	KB_before = np.load(file_path)
-
-	complex_plot(
-		mat_complex=KB_before['mat_complex'],
-		extent=KB_before['extent'],
-		save_path='plot_output/3kb_correct/KB_before.png',
-		show=False,
-		title='Sideband ROI Before KB Correction',
-		x_label='Kinetic energy [eV]',
-		y_label='Indirect energy [eV]',
-		# y_ticks=[-3.1,-1.55,0,1.55,3.1],
-		# y_tick_labels=[r'$-2\omega_r$',r'$-1\omega_r$',r'$0$',r'$1\omega_r$',r'$2\omega_r$'],
-		magnitude_cmap='turbo',
-		phase_cmap='twilight_shifted',
-		caption = f'RES: {KB_before['RES']:.3f}',
-	)
-
-	file_path = 'single_output_temp/3kb_correct/KB_after.npz'
-	KB_after = np.load(file_path)
-
-	complex_plot(
-		mat_complex=KB_after['mat_complex'],
-		extent=KB_after['extent'],
-		save_path='plot_output/3kb_correct/KB_after.png',
-		show=False,
-		title='Sideband ROI After KB Correction',
-		x_label='Kinetic energy [eV]',
-		y_label='Indirect energy [eV]',
-		# y_ticks=[-3.1,-1.55,0,1.55,3.1],
-		# y_tick_labels=[r'$-2\omega_r$',r'$-1\omega_r$',r'$0$',r'$1\omega_r$',r'$2\omega_r$'],
-		magnitude_cmap='turbo',
-		phase_cmap='twilight_shifted',
-		caption = f'RES: {KB_after['RES']:.3f}',
-	)
-
-	file_path = 'single_output_temp/3kb_correct/zero_omega_comp.npz'
-	zero_omega_comp = np.load(file_path)
-
-	complex_plot(
-		mat_complex=zero_omega_comp['mat_complex'],
-		extent=zero_omega_comp['extent'],
-		save_path='plot_output/3kb_correct/zero_omega_comp.png',
-		show=False,
-		title='Complex Array Plot',
-		x_label='X-axis Label (Placeholder)',
-		y_label='Y-axis Label (Placeholder)',
-		# y_ticks=[-3.1,-1.55,0,1.55,3.1],
-		# y_tick_labels=[r'$-2\omega_r$',r'$-1\omega_r$',r'$0$',r'$1\omega_r$',r'$2\omega_r$'],
-		magnitude_cmap='turbo',
-		phase_cmap='twilight_shifted'
-	)
-
-	file_path = 'single_output_temp/3kb_correct/zero_omega_comp_sigma.npz'
-	zero_omega_comp_sigma = np.load(file_path)
-
-	abs_plot(
-		mat_abs=zero_omega_comp_sigma['mat_abs'],
-		extent=zero_omega_comp_sigma['extent'],
-		save_path='plot_output/3kb_correct/zero_omega_comp_sigma.png',
-		show=False,
-		title='Complex Array Plot',
-		x_label='X-axis Label (Placeholder)',
-		y_label='Y-axis Label (Placeholder)',
-		# y_ticks=[-3.1,-1.55,0,1.55,3.1],
-		# y_tick_labels=[r'$-2\omega_r$',r'$-1\omega_r$',r'$0$',r'$1\omega_r$',r'$2\omega_r$'],
-		magnitude_cmap='turbo'
-	)
-
-	###
-	## 4PROBE_REC
-	###
-
-	file_path = 'single_output_temp/4probe_rec/probe_sp_rec.npz'
+	file_path = f'single_output_temp/4probe_rec/probe_sp_rec{suffix}.npz'
 	probe_sp_rec = np.load(file_path)
 
 	plot_spectra(probe_sp_rec['om_probe'],
@@ -780,76 +660,78 @@ if replot_images == True:
 				phase_tick_labels=None,
 				phase_threshold=0.05,
 				show_ref_phase=True)
-
-	###
-	## 5PROBE_CORR
-	###
-
-	file_path = 'single_output_temp/5probe_corr/data_rho.npz'
-	data_rho = np.load(file_path)
+	
+	file_path = f'single_output_temp/6mcmc/rho_inferred{suffix}.npz'
+	rho_inferred = np.load(file_path)
 
 	complex_plot(
-		mat_complex=data_rho['mat_complex'],
-		extent=data_rho['extent'],
-		save_path='plot_output/5probe_corr/data_rho.png',
+		mat_complex=rho_inferred['mat_complex'],
+		extent=rho_inferred['extent'],
+		save_path=f'parameter_scan/pscan_output/rho_inferred{suffix}.png',
 		show=False,
-		title='Complex Array Plot',
-		x_label='X-axis Label (Placeholder)',
-		y_label='Y-axis Label (Placeholder)',
-		# y_ticks=[-3.1,-1.55,0,1.55,3.1],
-		# y_tick_labels=[r'$-2\omega_r$',r'$-1\omega_r$',r'$0$',r'$1\omega_r$',r'$2\omega_r$'],
-		magnitude_cmap='turbo',
-		phase_cmap='twilight_shifted'
-	)
-
-	file_path = 'single_output_temp/5probe_corr/data_sigma.npz'
-	data_sigma = np.load(file_path)
-
-	abs_plot(
-		mat_abs=data_sigma['mat_abs'],
-		extent=data_sigma['extent'],
-		save_path='plot_output/5probe_corr/data_sigma.png',
-		show=False,
-		title='Complex Array Plot',
-		x_label='X-axis Label (Placeholder)',
-		y_label='Y-axis Label (Placeholder)',
-		# y_ticks=[-3.1,-1.55,0,1.55,3.1],
-		# y_tick_labels=[r'$-2\omega_r$',r'$-1\omega_r$',r'$0$',r'$1\omega_r$',r'$2\omega_r$'],
-		magnitude_cmap='turbo'
-	)
-
-	###
-	## 6MCMC
-	###
-
-	file_path = 'single_output_temp/6mcmc/rho_ideal.npz'
-	rho_ideal = np.load(file_path)
-
-	rho_ideal = complex_plot(
-		mat_complex=rho_ideal['mat_complex'],
-		extent=rho_ideal['extent'],
-		save_path='plot_output/6mcmc/rho_ideal.png',
-		show=False,
-		title='Initial Photoelectron Density Matrix',
+		title='Inferred Density Matrix',
 		x_label=r'Energy $\varepsilon_2$ [eV]',
 		y_label=r'Energy $\varepsilon_1$ [eV]',
 		# y_ticks=[-3.1,-1.55,0,1.55,3.1],
 		# y_tick_labels=[r'$-2\omega_r$',r'$-1\omega_r$',r'$0$',r'$1\omega_r$',r'$2\omega_r$'],
 		magnitude_cmap='turbo',
-		phase_cmap='twilight_shifted'
+		phase_cmap='twilight_shifted',
+		caption = f'F = {rho_inferred['RES']:.3f}'
+	)
+	
+
+exit()
+
+s_ref_list = np.linspace(0.010,0.050,9) / hbar
+s_ref_list = np.linspace(0.060,0.080,3) / hbar
+
+# file_path = 'parameter_scan/s_ref_fids.npy'
+# fids = np.load(file_path)
+
+s_ref_list = np.array([0.01,0.015,0.02,0.025,0.03,0.035,0.04,0.045,0.05,0.06,0.07,0.08])/hbar
+fids = np.array([0.927,0.951,0.977,0.976,0.974,0.977,0.978,0.969,0.976,0.960,0.955,0.942])
+
+input_spectra = plot_fids(
+			s_ref_list,
+			fids,
+			save_path = f'parameter_scan/fids.png',
+			show=False,
+			title='Fids',
+			x_label=r'$\hbar\sigma_r$ [eV]',
+			y_label='Fidelity',
+)
+exit()
+
+for s_ref in s_ref_list:
+
+    suffix = f'_s_ref_{s_ref*hbar:.3f}'
+
+    file_path = f'single_output_temp/1generate_signal/input_spectra{suffix}.npz'
+    input_spectra = np.load(file_path)
+
+    input_spectra = plot_spectra(
+				om_pr = input_spectra['om_probe'],
+				sp_pr = input_spectra['sp_probe'],
+				sp_ref = input_spectra['sp_ref'],
+				om_x = input_spectra['om_xuv'],
+				sp_x = input_spectra['sp_xuv'],
+				save_path = f'parameter_scan/pscan_output/input_spectra{suffix}.png',
+				show=False,
+				title='IR Spectrum and Photelectron Populations',
+				x_label='Energy [eV]',
+				y_label='Amplitude [arb. u.]',
+				phase_label='Phase [rad]',
+				probe_title='Probe and Reference Spectra',
+				xuv_title=r'Photoelectron Populations $\rho(\varepsilon,\varepsilon)$',
 	)
 
-	#
-	# INTERP
-	#
+    file_path = f'single_output_temp/6mcmc/data_rho_interp{suffix}.npz'
+    data_rho_interp = np.load(file_path)
 
-	file_path = 'single_output_temp/6mcmc/data_rho_interp.npz'
-	data_rho_interp = np.load(file_path)
-
-	complex_plot(
+    complex_plot(
 		mat_complex=data_rho_interp['mat_complex'],
 		extent=data_rho_interp['extent'],
-		save_path='plot_output/6mcmc/data_rho_interp.png',
+		save_path=f'parameter_scan/pscan_output/data_rho_interp{suffix}.png',
 		show=False,
 		title=r'$\tilde S_{\text{corr}} (\varepsilon_2,\varepsilon_1)$',
 		x_label=r'Energy $\varepsilon_2$ [eV]',
@@ -860,26 +742,26 @@ if replot_images == True:
 		phase_cmap='twilight_shifted'
 	)
 
-	abs_plot(
-		mat_abs=np.abs(data_rho_interp['mat_complex']),
-		extent=data_rho_interp['extent'],
-		save_path='plot_output/6mcmc/data_rho_interp_abs.png',
-		show=False,
-		title=r'$ \left| \tilde S_{\text{corr}} (\varepsilon_2,\varepsilon_1) \right| $',
-		x_label=r'Energy $\varepsilon_2$ [eV]',
-		y_label=r'Energy $\varepsilon_1$ [eV]',
-		# y_ticks=[-3.1,-1.55,0,1.55,3.1],
-		# y_tick_labels=[r'$-2\omega_r$',r'$-1\omega_r$',r'$0$',r'$1\omega_r$',r'$2\omega_r$'],
-		magnitude_cmap='turbo',
-	)
+	# abs_plot(
+	# 	mat_abs=np.abs(data_rho_interp['mat_complex']),
+	# 	extent=data_rho_interp['extent'],
+	# 	save_path='plot_output/6mcmc/data_rho_interp_abs.png',
+	# 	show=False,
+	# 	title=r'$ \left| \tilde S_{\text{corr}} (\varepsilon_2,\varepsilon_1) \right| $',
+	# 	x_label=r'Energy $\varepsilon_2$ [eV]',
+	# 	y_label=r'Energy $\varepsilon_1$ [eV]',
+	# 	# y_ticks=[-3.1,-1.55,0,1.55,3.1],
+	# 	# y_tick_labels=[r'$-2\omega_r$',r'$-1\omega_r$',r'$0$',r'$1\omega_r$',r'$2\omega_r$'],
+	# 	magnitude_cmap='turbo',
+	# )
 
-	file_path = 'single_output_temp/6mcmc/data_sigma_interp.npz'
-	data_sigma_interp = np.load(file_path)
+    file_path = f'single_output_temp/6mcmc/data_sigma_interp{suffix}.npz'
+    data_sigma_interp = np.load(file_path)
 
-	abs_plot(
+    abs_plot(
 		mat_abs=data_sigma_interp['mat_abs'],
 		extent=data_sigma_interp['extent'],
-		save_path='plot_output/6mcmc/data_sigma_interp.png',
+		save_path=f'parameter_scan/pscan_output/data_sigma_interp{suffix}.png',
 		show=False,
 		title=r'$ \sigma (\varepsilon_2,\varepsilon_1)$',
 		x_label=r'Energy $\varepsilon_2$ [eV]',
@@ -893,19 +775,19 @@ if replot_images == True:
 	# INFERRED
 	#
 
-	posterior_data_raw = np.load('single_output_temp/6mcmc/mcmc_posterior.npz')
-	posterior_data = _rewrite_posterior_keys(posterior_data_raw)
-	posterior_data_raw.close()
+    posterior_data_raw = np.load(f'single_output_temp/6mcmc/mcmc_posterior{suffix}.npz')
+    posterior_data = _rewrite_posterior_keys(posterior_data_raw)
+    posterior_data_raw.close()
 
-	plot_posterior(posterior_data,save_path='plot_output/6mcmc/mcmc_posterior.png')
+    plot_posterior(posterior_data,save_path=f'parameter_scan/pscan_output/mcmc_posterior{suffix}.png')
 
-	file_path = 'single_output_temp/6mcmc/rho_inferred.npz'
-	rho_inferred = np.load(file_path)
+    file_path = f'single_output_temp/6mcmc/rho_inferred{suffix}.npz'
+    rho_inferred = np.load(file_path)
 
-	complex_plot(
+    complex_plot(
 		mat_complex=rho_inferred['mat_complex'],
 		extent=rho_inferred['extent'],
-		save_path='plot_output/6mcmc/rho_inferred.png',
+		save_path=f'parameter_scan/pscan_output/rho_inferred{suffix}.png',
 		show=False,
 		title='Inferred Density Matrix',
 		x_label=r'Energy $\varepsilon_2$ [eV]',
@@ -917,118 +799,16 @@ if replot_images == True:
 		caption = f'F = {rho_inferred['RES']:.3f}'
 	)
 
-	abs_plot(
-		mat_abs=np.abs(rho_inferred['mat_complex']),
-		extent=rho_inferred['extent'],
-		save_path='plot_output/6mcmc/rho_inferred_abs.png',
-		show=False,
-		title='Projected Density Matrix',
-		x_label=r'Energy $\varepsilon_2$ [eV]',
-		y_label=r'Energy $\varepsilon_1$ [eV]',
-		# y_ticks=[-3.1,-1.55,0,1.55,3.1],
-		# y_tick_labels=[r'$-2\omega_r$',r'$-1\omega_r$',r'$0$',r'$1\omega_r$',r'$2\omega_r$'],
-		magnitude_cmap='turbo',
-		caption = f'F = {rho_inferred['RES']:.3f}'
-	)
-
-###
-### THESIS FIGURES
-###
-
-if replot_thesis == True:
-
-	paths = [
-		('plot_output/1generate_signal/input_spectra.png',),
-		('plot_output/6mcmc/rho_ideal.png',),
-		('plot_output/1generate_signal/measured_timesig.png',),
-	]
-	heights = [3, 3.25, 3.5]
-	gaps = [0.3, 0.3, 0.3, 0.3]
-
-	overview_fig = create_stacked_overview_figure(
-		paths,
-		heights,
-		gaps,
-		fig_aspect= 0.75,
-		dpi=400,
-		save_path='plot_output/sim_output.png',
-	)
-
-	paths = [
-		('plot_output/3kb_correct/KB_before.png',),
-		('plot_output/3kb_correct/KB_after.png',),
-	]
-	heights = [3, 3]
-	gaps = [0.3, 0.3, 0.3]
-
-	overview_fig = create_stacked_overview_figure(
-		paths,
-		heights,
-		gaps,
-		fig_aspect=1,
-		dpi=450,
-		save_path='plot_output/KBcorr.png',
-	)
-
-	# paths = [
-	# 	('plot_output/6mcmc/data_rho_interp.png',),
-	# 	('plot_output/6mcmc/data_sigma_interp.png',),
-	# ]
-	# heights = [3, 3]
-	# gaps = [0.3, 0.3, 0.3]
-
-	# overview_fig = create_stacked_overview_figure(
-	# 	paths,
-	# 	heights,
-	# 	gaps,
-	# 	fig_aspect=1,
-	# 	dpi=300,
-	# 	save_path='plot_output/Scorr_e1e2.png',
+	# abs_plot(
+	# 	mat_abs=np.abs(rho_inferred['mat_complex']),
+	# 	extent=rho_inferred['extent'],
+	# 	save_path='plot_output/6mcmc/rho_inferred_abs.png',
+	# 	show=False,
+	# 	title='Projected Density Matrix',
+	# 	x_label=r'Energy $\varepsilon_2$ [eV]',
+	# 	y_label=r'Energy $\varepsilon_1$ [eV]',
+	# 	# y_ticks=[-3.1,-1.55,0,1.55,3.1],
+	# 	# y_tick_labels=[r'$-2\omega_r$',r'$-1\omega_r$',r'$0$',r'$1\omega_r$',r'$2\omega_r$'],
+	# 	magnitude_cmap='turbo',
+	# 	caption = f'F = {rho_inferred['RES']:.3f}'
 	# )
-
-	paths = [
-		('plot_output/6mcmc/data_rho_interp_abs.png','plot_output/6mcmc/data_sigma_interp.png')
-	]
-	heights = [3]
-	gaps = [0.3, 0.3]
-
-	overview_fig = create_stacked_overview_figure(
-		paths,
-		heights,
-		gaps,
-		fig_aspect=2,
-		dpi=500,
-		save_path='plot_output/Scorr_e1e2.png',
-	)
-
-	paths = [
-		('plot_output/6mcmc/mcmc_posterior.png',),
-		('plot_output/6mcmc/rho_inferred.png',),
-	]
-	heights = [3.16, 2]
-	gaps = [0.2, 0.3, 0.2]
-
-	overview_fig = create_stacked_overview_figure(
-		paths,
-		heights,
-		gaps,
-		fig_aspect=0.9,
-		dpi=600,
-		save_path='plot_output/posterior_inferred.png',
-	)
-
-	paths = [
-		('plot_output/1generate_signal/input_spectra.png',),
-		('plot_output/6mcmc/data_rho_interp_abs.png','plot_output/6mcmc/rho_inferred_abs.png')
-	]
-	heights = [3.1,3.2]
-	gaps = [0.2, 0.3, 0.2]
-
-	overview_fig = create_stacked_overview_figure(
-		paths,
-		heights,
-		gaps,
-		fig_aspect=1.1,
-		dpi=450,
-		save_path='plot_output/projected_result.png',
-	)
