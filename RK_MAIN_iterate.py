@@ -54,32 +54,6 @@ rho_params = {
     'etas': np.asarray(etas, dtype=float),
 }
 
-
-# # Build the density matrix parameters
-# amps = [1.0/2, 1.0]
-# mus = [25.0 - 0.13, 25.0 + 0.02]
-# sigmas = [0.07, 0.06]
-# betas = [2, 2]
-# taus = [-1, -1]
-# lambdas = [6, 6]
-# gammas = np.array([[1.0, 0.3],
-#                    [0.3, 1.0]])
-# etas = np.array([[1.0, 0.0],
-#                  [0.0, 1.0]])
-
-# rho_params_rec = {
-#     'amps': np.asarray(amps, dtype=float),
-#     'mus': np.asarray(mus, dtype=float),
-#     'sigmas': np.asarray(sigmas, dtype=float),
-#     'betas': np.asarray(betas, dtype=float),
-#     'taus': np.asarray(taus, dtype=float),
-#     'lambdas': np.asarray(lambdas, dtype=float),
-#     'gammas': np.asarray(gammas, dtype=np.complex128),
-#     'etas': np.asarray(etas, dtype=float),
-# }
-
-# print(rho_params_rec)
-
 experiment = RK_experiment(
     E_lo=E_lo,
     E_hi=E_hi,

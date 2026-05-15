@@ -7,23 +7,12 @@ E_bins = np.ravel(np.loadtxt('scan_data/E_bins.csv', delimiter=',', dtype=float)
 E_lo_cut = 10.5
 E_hi_cut = 14
 
-# energy_mask = (E_bins >= E_lo_cut) & (E_bins <= E_hi_cut)
-# E_bins = E_bins[energy_mask]
-# E_counts = E_counts[:, energy_mask]
+energy_mask = (E_bins >= E_lo_cut) & (E_bins <= E_hi_cut)
+E_bins = E_bins[energy_mask]
+E_counts = E_counts[:, energy_mask]
 
 N_zero_pad = 0# 2*250
 E_counts = np.pad(E_counts, ((N_zero_pad // 2, N_zero_pad // 2), (0, 0)), mode='constant')
-
-import matplotlib.pyplot as plt
-# plt.plot(E_bins,np.sum(E_counts,axis=0))
-# plt.grid(True)
-# plt.xlim([11.0,12.0])
-plt.imshow(E_counts)
-plt.savefig('aa.png')
-# print(E_bins.shape,E_counts.shape)
-print(E_bins[0])
-exit()
-
 
 E_lo = E_bins[0]
 E_hi = E_bins[-1]
