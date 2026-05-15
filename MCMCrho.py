@@ -10,6 +10,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 import gc
 
+numpyro.set_host_device_count(2)
+
 def _circular_mean(angles, axis=0):
     """Return circular mean for angles in radians, robust to +/-pi wrap."""
     angles = np.asarray(angles)
@@ -100,28 +102,42 @@ def model(x, y, sigma_obs, z_obs=None, n_peaks=2):
     amps_now = numpyro.sample(
         'amps',
         dist.TransformedDistribution(
-            dist.Normal(np.log(1.5), 0.6).expand([n_peaks]).to_event(1),
+            dist.Normal(np.log(1.5), 1.0).expand([n_peaks]).to_event(1),
             transforms.ExpTransform(),
         ),
     )
+    # mus_now = numpyro.sample(
+    #     'mus',
+    #     dist.TransformedDistribution(
+    #         dist.Normal(0.0, 1.3).expand([n_peaks]).to_event(1),
+    #         [transforms.SigmoidTransform(), transforms.AffineTransform(24.0, 2.0)],
+    #     ),
+    # )
     mus_now = numpyro.sample(
         'mus',
         dist.TransformedDistribution(
-            dist.Normal(0.0, 1.0).expand([n_peaks]).to_event(1),
-            [transforms.SigmoidTransform(), transforms.AffineTransform(24.0, 2.0)],
+            dist.Normal(0.0, 1.3).expand([n_peaks]).to_event(1),
+            [transforms.SigmoidTransform(), transforms.AffineTransform(10.5, 2.0)],
         ),
     )
+    # sigmas_now = numpyro.sample(
+    #     'sigmas',
+    #     dist.TransformedDistribution(
+    #         dist.Normal(np.log(0.06), 0.35).expand([n_peaks]).to_event(1),
+    #         transforms.ExpTransform(),
+    #     ),
+    # )
     sigmas_now = numpyro.sample(
         'sigmas',
         dist.TransformedDistribution(
-            dist.Normal(np.log(0.06), 0.35).expand([n_peaks]).to_event(1),
+            dist.Normal(np.log(0.1), 0.35).expand([n_peaks]).to_event(1),
             transforms.ExpTransform(),
         ),
     )
     betas_now = numpyro.sample(
-        'betas_now', dist.Normal(0.0, 5.0).expand([n_peaks]).to_event(1))
+        'betas_now', dist.Normal(0.0, 3.0).expand([n_peaks]).to_event(1))
     taus_now = numpyro.sample(
-        'taus_now', dist.Normal(0.0, 2.5).expand([n_peaks]).to_event(1))
+        'taus_now', dist.Normal(0.0, 1.5).expand([n_peaks]).to_event(1))
     # lambdas_now = numpyro.sample(
     #     'lambdas_now',
     #     dist.TransformedDistribution(

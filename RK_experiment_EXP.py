@@ -101,8 +101,8 @@ class RK_experiment:
         self.prcor_dzeta = 0.05 if self.ifWide else 0.25
         # self.rho_lo = 24.0 + om_ref*hbar
         # self.rho_hi = 26.0 + om_ref*hbar
-        self.rho_lo = 24.5 + om_ref*hbar
-        self.rho_hi = 25.5 + om_ref*hbar
+        self.rho_lo = 12.5#24.5 + om_ref*hbar
+        self.rho_hi = 14.0#25.5 + om_ref*hbar
         self.useflat = False
 
         # Rho retrieval parameters
@@ -269,6 +269,13 @@ class RK_experiment:
             self.signal = self.rng.poisson(signal_clean).astype(float)
         self.signal -= self.b # NOISE FLOOR SHOULD BE QUITE PRECISELY MEASURED BY CAPTURING WITH LASER OFF
 
+        if exp_signal is not None:
+            self.signal = exp_signal
+
+        np.savez('single_output_temp/1generate_signal/measured_timesig.npz',
+                 mat_abs=self.signal,extent=np.array([self.E_lo,self.E_hi,-self.T_reach,self.T_reach]),
+                 P_SNR=0.00,N_T=self.N_T,N_E=self.N_E,T_res=2*self.T_reach/self.N_T,E_res=self.E_res)
+
         ### CUT INTO MB AND SB
 
         sb_lo_idx = np.argmin(np.abs(self.E_range - self.sb_lo))
@@ -331,6 +338,9 @@ class RK_experiment:
         sigma_energy = np.sqrt(tot_rician_full / 2)
         self.sigma = np.repeat(sigma_energy[np.newaxis, :], self.signal_sb_FT.shape[0], axis=0)
 
+        if self.median_filter_when == 1:
+            self.signal_sb_FT = median_filter(np.real(self.signal_sb_FT),size=(3,3)) + 1j*median_filter(np.imag(self.signal_sb_FT),size=(3,3))
+
         amp_corr = np.zeros_like(self.signal_sb_FT)
         for j in range(self.N_E):
             col_now = np.abs(self.signal_sb_FT[:,j])
@@ -348,22 +358,19 @@ class RK_experiment:
                  mat_complex=signal_sb_FT_ROI,extent=np.array([self.rho_lo,self.rho_hi,self.y_lo*hbar,self.y_hi*hbar]),
                  RES=np.sum(np.abs(self.signal_ft0_ROI - signal_sb_FT_ROI)**2) / np.sum(np.abs(self.signal_ft0_ROI)**2))
         
-        if self.median_filter_when == 1:
-            self.signal_sb_FT = median_filter(np.real(self.signal_sb_FT),size=(3,3)) + 1j*median_filter(np.imag(self.signal_sb_FT),size=(3,3))
-
         # rk.plot_mat(np.abs(self.signal_ft0_ROI -  signal_sb_FT_ROI ) / np.max(np.abs(self.signal_ft0_ROI)), extent=[self.E_lo,self.E_hi,hbar*self.OM_T[0,0],hbar*self.OM_T[-1,0]],
         #         saveloc='single_output_temp/pipeline_diag/signal_FT_sb_KB_corr_diff.png', xlabel='Kinetic energy $E_f$ (eV)',ylabel='Indirect energy $\\hbar \\omega_\\tau$ (eV)', show=False,title='FT of the sideband signal', 
         #         caption=f'RES = {np.sum(np.abs(self.signal_ft0_ROI - signal_sb_FT_ROI)) / np.sum(np.abs(self.signal_ft0_ROI)):.4f}')
 
         W = np.repeat((np.abs(self.sp_tot(em_axis_mid/hbar) / em_axis_mid)**2)[:,np.newaxis], signal_sb_FT_ROI.shape[1], axis=1)
-        P_SIG = median_filter(np.abs(signal_sb_FT_ROI)**2,size=(4,4))
+        P_SIG = np.abs(signal_sb_FT_ROI)**2#median_filter(np.abs(signal_sb_FT_ROI)**2,size=(4,4))
         P_NOISE = (self.sigma[i0:i1,e0:e1])**2
         P_NOISE[P_SIG==0] = 0
 
         self.P_SNR = np.sum(P_SIG*W)/np.sum(P_NOISE*W)
 
         np.savez('single_output_temp/1generate_signal/measured_timesig.npz',
-                 mat_abs=self.signal,extent=np.array([self.E_lo,self.E_hi,-self.T_reach,self.T_reach]),
+                 mat_abs=np.minimum(self.signal,20),extent=np.array([self.E_lo,self.E_hi,-self.T_reach,self.T_reach]),
                  P_SNR=self.P_SNR,N_T=self.N_T,N_E=self.N_E,T_res=2*self.T_reach/self.N_T,E_res=self.E_res)
 
 
@@ -623,7 +630,7 @@ class RK_experiment:
         inferred_rho, inferred_rho_params = self._apply_mcmc(self.rhodata_roi, self.rhosigma_roi, self.E1, self.E2, suffix=suffix)
     
         np.savez(f'single_output_temp/6mcmc/data_rho_interp{suffix}.npz',
-                 mat_complex=self.rho_raw,extent=np.array([self.harmq_lo,self.harmq_hi,self.harmq_lo,self.harmq_hi]))
+                 mat_complex=self.rho_raw,extent=np.array([self.harmq_lo+self.om_ref,self.harmq_hi+self.om_ref,self.harmq_lo+self.om_ref,self.harmq_hi+self.om_ref]))
         
         np.savez(f'single_output_temp/6mcmc/data_sigma_interp{suffix}.npz',
                  mat_abs=self.rho_raw_sigma,extent=np.array([self.harmq_lo,self.harmq_hi,self.harmq_lo,self.harmq_hi]))

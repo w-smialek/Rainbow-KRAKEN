@@ -664,7 +664,7 @@ if replot_images == True:
 	file_path = 'single_output_temp/1generate_signal/measured_timesig.npz'
 	measured_timesig = np.load(file_path)
 
-	measured_timesig = abs_plot(
+	_ = abs_plot(
 		mat_abs=measured_timesig['mat_abs'],
 		extent=measured_timesig['extent'],
 		save_path='plot_output/1generate_signal/measured_timesig.png',
@@ -675,10 +675,56 @@ if replot_images == True:
 		# y_ticks=[-3.1,-1.55,0,1.55,3.1],
 		# y_tick_labels=[r'$-2\omega_r$',r'$-1\omega_r$',r'$0$',r'$1\omega_r$',r'$2\omega_r$'],
 		magnitude_cmap='turbo',
-		caption = f'SNR: {measured_timesig['P_SNR']:.1f}\nTime res: {measured_timesig['T_res']:.2f} fs\nEnergy res: {measured_timesig['E_res']:.2f} eV',
+		caption = f'SNR: {measured_timesig['P_SNR']:.1f}\nTime res: {measured_timesig['T_res']:.2f} fs\nEnergy res: {measured_timesig['E_res']:.3f} eV',
 		captionsize=13,
 		cbar_title='Counts'
 	)
+
+
+	# fig, ax1 = plt.subplots(figsize=(13, 5))
+	
+	# probe_abs = np.abs(np.sum(measured_timesig['mat_abs'][:,80:],axis=1))
+	# om_pr = np.linspace(-50,50,251)
+	# caption = None
+	# x_label = 'Time [fs]'
+	# title = 'Sum of Spectrometer Counts in the Sideband Region'
+	# y_label = 'Counts'
+
+	# # IR/Pump branch (infrared domain) - warm colors
+	# color_probe = '#C41E3A' # '#D62728'      # Strong red-orange (crimson) - PRIMARY IR signal
+	# color_reference = '#0047AB' # '#1F77B4'  # Professional blue - REFERENCE/CALIBRATION
+
+	# line_probe_abs, = ax1.plot(om_pr, probe_abs, 
+	# 						label='Probe |spectrum|', linewidth=2, color=color_reference)
+
+	# ax1.set_xlabel(x_label)
+	# ax1.set_ylabel(y_label)
+	# # ax1.set_title(probe_title, fontsize=12)
+	# # ax1.set_xlim(probe_xlim)
+	# # ax1.grid(True, alpha=0.3)
+	# ax1.grid(True, which='major', linestyle='--', linewidth=0.4, color='gray', alpha=0.35)
+
+	# if caption is not None:
+	# 	ax1.text(
+	# 		0.02,
+	# 		0.98,
+	# 		caption,
+	# 		transform=ax1.transAxes,
+	# 		fontsize=15,
+	# 		verticalalignment="top",
+	# 		horizontalalignment="left",
+	# 		color="black",
+	# 		weight="bold"
+	# 	)
+
+	# ax1.plot([0,2.67],[100,100])
+
+	# fig.suptitle(title, fontsize=20, weight='bold')
+	# fig.tight_layout()
+	# fig.savefig('aa.png', dpi=300, bbox_inches='tight')
+	# plt.close()
+
+	# exit()
 
 	###
 	## 2PROCESS_DETREND
@@ -687,18 +733,30 @@ if replot_images == True:
 	file_path = 'single_output_temp/2process_detrend/measured_freqsig.npz'
 	measured_freqsig = np.load(file_path)
 
-	complex_plot(
-		mat_complex=measured_freqsig['mat_complex'],
+	# complex_plot(
+	# 	mat_complex=measured_freqsig['mat_complex'],
+	# 	extent=measured_freqsig['extent'],
+	# 	save_path='plot_output/2process_detrend/measured_freqsig.png',
+	# 	show=False,
+	# 	title='Complex Array Plot',
+	# 	x_label='X-axis Label (Placeholder)',
+	# 	y_label='Y-axis Label (Placeholder)',
+	# 	y_ticks=[-3.1,-1.55,0,1.55,3.1],
+	# 	y_tick_labels=[r'$-2\omega_r$',r'$-1\omega_r$',r'$0$',r'$1\omega_r$',r'$2\omega_r$'],
+	# 	magnitude_cmap='turbo',
+	# 	phase_cmap='twilight_shifted'
+	# )
+	abs_plot(
+		mat_abs=np.abs(measured_freqsig['mat_complex']),
 		extent=measured_freqsig['extent'],
 		save_path='plot_output/2process_detrend/measured_freqsig.png',
 		show=False,
-		title='Complex Array Plot',
-		x_label='X-axis Label (Placeholder)',
-		y_label='Y-axis Label (Placeholder)',
+		title='Fourier transform magnitude',
+		x_label='Kinetic energy [eV]',
+		y_label='Frequency',
 		y_ticks=[-3.1,-1.55,0,1.55,3.1],
 		y_tick_labels=[r'$-2\omega_r$',r'$-1\omega_r$',r'$0$',r'$1\omega_r$',r'$2\omega_r$'],
 		magnitude_cmap='turbo',
-		phase_cmap='twilight_shifted'
 	)
 
 	###
@@ -744,20 +802,33 @@ if replot_images == True:
 	file_path = 'single_output_temp/3kb_correct/zero_omega_comp.npz'
 	zero_omega_comp = np.load(file_path)
 
-	complex_plot(
-		mat_complex=zero_omega_comp['mat_complex'],
+	# complex_plot(
+	# 	mat_complex=zero_omega_comp['mat_complex'],
+	# 	extent=zero_omega_comp['extent'],
+	# 	save_path='plot_output/3kb_correct/zero_omega_comp.png',
+	# 	show=False,
+	# 	title='Complex Array Plot',
+	# 	x_label='X-axis Label (Placeholder)',
+	# 	y_label='Y-axis Label (Placeholder)',
+	# 	# y_ticks=[-3.1,-1.55,0,1.55,3.1],
+	# 	# y_tick_labels=[r'$-2\omega_r$',r'$-1\omega_r$',r'$0$',r'$1\omega_r$',r'$2\omega_r$'],
+	# 	magnitude_cmap='turbo',
+	# 	phase_cmap='twilight_shifted'
+	# )
+	abs_plot(
+		mat_abs=np.abs(zero_omega_comp['mat_complex']),
 		extent=zero_omega_comp['extent'],
 		save_path='plot_output/3kb_correct/zero_omega_comp.png',
 		show=False,
-		title='Complex Array Plot',
-		x_label='X-axis Label (Placeholder)',
-		y_label='Y-axis Label (Placeholder)',
-		# y_ticks=[-3.1,-1.55,0,1.55,3.1],
-		# y_tick_labels=[r'$-2\omega_r$',r'$-1\omega_r$',r'$0$',r'$1\omega_r$',r'$2\omega_r$'],
+		title='Fourier transform magnitude',
+		x_label='Kinetic energy [eV]',
+		y_label='Frequency',
+		y_ticks=[0.06,0.12,0.18],
+		y_tick_labels=[r'$0.06 \omega_r$',r'$0.12\omega_r$',r'$0.18\omega_r$'],
 		magnitude_cmap='turbo',
-		phase_cmap='twilight_shifted'
 	)
 
+	exit()
 	file_path = 'single_output_temp/3kb_correct/zero_omega_comp_sigma.npz'
 	zero_omega_comp_sigma = np.load(file_path)
 

@@ -21,9 +21,9 @@ s_ref = 0.025 / hbar
 # experiment.prcor_dzeta = 0.4
 
 # Probe pulse definition
-A_probe = 0.9
+A_probe = 1.2
 probe_params = {
-    'amps': np.asarray([0.2,0.3,0.2]) * A_probe,
+    'amps': np.asarray([0.2,0.2,0.2]) * A_probe,
     'oms': np.asarray([1.55 / hbar, 1.50 / hbar, 1.68 / hbar]),
     'sigmas': np.asarray([0.08 / hbar,0.05 / hbar,0.045 / hbar]),
     'phi0': 0.0,
@@ -55,30 +55,30 @@ rho_params = {
 }
 
 
-# Build the density matrix parameters
-amps = [1.0/2, 1.0]
-mus = [25.0 - 0.17, 25.0 + 0.01]
-sigmas = [0.07, 0.06]
-betas = [2, 2]
-taus = [-1, -1]
-lambdas = [0, 0]
-gammas = np.array([[1.0, 0.3],
-                   [0.3, 1.0]])
-etas = np.array([[1.0, 0.0],
-                 [0.0, 1.0]])
+# # Build the density matrix parameters
+# amps = [1.0/2, 1.0]
+# mus = [25.0 - 0.13, 25.0 + 0.02]
+# sigmas = [0.07, 0.06]
+# betas = [2, 2]
+# taus = [-1, -1]
+# lambdas = [6, 6]
+# gammas = np.array([[1.0, 0.3],
+#                    [0.3, 1.0]])
+# etas = np.array([[1.0, 0.0],
+#                  [0.0, 1.0]])
 
-rho_params_rec = {
-    'amps': np.asarray(amps, dtype=float),
-    'mus': np.asarray(mus, dtype=float),
-    'sigmas': np.asarray(sigmas, dtype=float),
-    'betas': np.asarray(betas, dtype=float),
-    'taus': np.asarray(taus, dtype=float),
-    'lambdas': np.asarray(lambdas, dtype=float),
-    'gammas': np.asarray(gammas, dtype=np.complex128),
-    'etas': np.asarray(etas, dtype=float),
-}
+# rho_params_rec = {
+#     'amps': np.asarray(amps, dtype=float),
+#     'mus': np.asarray(mus, dtype=float),
+#     'sigmas': np.asarray(sigmas, dtype=float),
+#     'betas': np.asarray(betas, dtype=float),
+#     'taus': np.asarray(taus, dtype=float),
+#     'lambdas': np.asarray(lambdas, dtype=float),
+#     'gammas': np.asarray(gammas, dtype=np.complex128),
+#     'etas': np.asarray(etas, dtype=float),
+# }
 
-print(rho_params_rec)
+# print(rho_params_rec)
 
 experiment = RK_experiment(
     E_lo=E_lo,
@@ -97,12 +97,14 @@ experiment = RK_experiment(
     s_ref=s_ref,
 )
 suffix = ''
+experiment.useflat=True
 experiment.define_pulses(probe_params)
 experiment.define_model(rho_params)
 experiment.generate_signal()
 experiment.process_and_detrend()
 experiment.kb_correct()
-experiment.probe_reconstruct(rho_params_rec=rho_params_rec,suffix=suffix)
+experiment
+# experiment.probe_reconstruct(rho_params_rec=rho_params_rec,suffix=suffix)
 experiment.probe_sp_correct()
 fid, rho_params_rec = experiment.mcmc_fit()
 print(rho_params_rec)
@@ -123,14 +125,14 @@ experiment = RK_experiment(
     om_ref=om_ref,
     s_ref=s_ref,
 )
-suffix = '_it1'
+suffix = '0_it1'
 experiment.define_pulses(probe_params)
 experiment.define_model(rho_params)
 experiment.generate_signal()
 experiment.process_and_detrend()
 experiment.kb_correct()
 experiment.probe_reconstruct(rho_params_rec=rho_params_rec,suffix=suffix)
-experiment.probe_sp_correct()
+experiment.probe_sp_correct(suffix=suffix)
 fid, rho_params_rec = experiment.mcmc_fit(suffix=suffix)
 print(rho_params_rec)
 
@@ -150,14 +152,14 @@ experiment = RK_experiment(
     om_ref=om_ref,
     s_ref=s_ref,
 )
-suffix = '_it2'
+suffix = '0_it2'
 experiment.define_pulses(probe_params)
 experiment.define_model(rho_params)
 experiment.generate_signal()
 experiment.process_and_detrend()
 experiment.kb_correct()
 experiment.probe_reconstruct(rho_params_rec=rho_params_rec,suffix=suffix)
-experiment.probe_sp_correct()
+experiment.probe_sp_correct(suffix=suffix)
 fid, rho_params_rec = experiment.mcmc_fit(suffix=suffix)
 
 experiment = RK_experiment(
@@ -176,14 +178,14 @@ experiment = RK_experiment(
     om_ref=om_ref,
     s_ref=s_ref,
 )
-suffix = '_it3'
+suffix = '0_it3'
 experiment.define_pulses(probe_params)
 experiment.define_model(rho_params)
 experiment.generate_signal()
 experiment.process_and_detrend()
 experiment.kb_correct()
 experiment.probe_reconstruct(rho_params_rec=rho_params_rec,suffix=suffix)
-experiment.probe_sp_correct()
+experiment.probe_sp_correct(suffix=suffix)
 fid, rho_params_rec = experiment.mcmc_fit(suffix=suffix)
 
 experiment = RK_experiment(
@@ -202,38 +204,12 @@ experiment = RK_experiment(
     om_ref=om_ref,
     s_ref=s_ref,
 )
-suffix = '_it4'
+suffix = '0_it4'
 experiment.define_pulses(probe_params)
 experiment.define_model(rho_params)
 experiment.generate_signal()
 experiment.process_and_detrend()
 experiment.kb_correct()
 experiment.probe_reconstruct(rho_params_rec=rho_params_rec,suffix=suffix)
-experiment.probe_sp_correct()
-fid, rho_params_rec = experiment.mcmc_fit(suffix=suffix)
-
-experiment = RK_experiment(
-    E_lo=E_lo,
-    E_hi=E_hi,
-    T_reach=T_reach,
-    E_res=E_res,
-    N_T=N_T,
-    alpha=alpha,
-    b=b,
-    sb_lo=sideband_lo,
-    sb_hi=sideband_hi,
-    harmq_lo=harmq_lo,
-    harmq_hi=harmq_hi,
-    A_ref=A_ref,
-    om_ref=om_ref,
-    s_ref=s_ref,
-)
-suffix = '_it5'
-experiment.define_pulses(probe_params)
-experiment.define_model(rho_params)
-experiment.generate_signal()
-experiment.process_and_detrend()
-experiment.kb_correct()
-experiment.probe_reconstruct(rho_params_rec=rho_params_rec,suffix=suffix)
-experiment.probe_sp_correct()
+experiment.probe_sp_correct(suffix=suffix)
 fid, rho_params_rec = experiment.mcmc_fit(suffix=suffix)
